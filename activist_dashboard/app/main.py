@@ -26,9 +26,10 @@ scheduler = BackgroundScheduler(timezone=config.TIMEZONE)
 
 
 def _run_initial_refresh():
-    """Kick off a first data pull in the background so the page isn't empty."""
+    """Kick off a first full pull (filings, news, market data, scores) in the
+    background so the page populates within minutes of a deploy."""
     try:
-        pipeline.refresh_data()
+        pipeline.startup_full_refresh()
     except Exception as e:  # pragma: no cover
         print(f"[startup] initial refresh failed: {e}")
 
@@ -122,8 +123,16 @@ def api_refresh():
     return {"ok": True, **result}
 
 
-@app.post("/api/send-test-digest")
+@app.api_route("/api/send-test-digest", methods=["GET", "POST"])
 def api_send_test_digest():
-    """Send the digest right now to all subscribers (for testing the email)."""
+    """Send the digest right now to all subscribers (for testing the email).
+    Accepts GET too so it can be triggered from a browser address bar."""
+    subs = database.get_subscribers()
+    if not subs:
+        return {"ok": False,
+                "message": "No subscribers yet. Add your email on the "
+                           "dashboard first, then try again."}
     sent = emailer.send_digest()
-    return {"ok": True, "sent": sent}
+    return {"ok": True, "sent": sent,
+            "message": f"Digest sent to {sent} of {len(subs)} subscriber(s). "
+                       f"Check your inbox (and spam folder)."}
