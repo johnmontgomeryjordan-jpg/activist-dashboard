@@ -1,22 +1,13 @@
 """
-Orchestration: the jobs the scheduler and startup routine call.
-
-  refresh_data()             -- every REFRESH_MINUTES: EDGAR + news + rescore.
-  refresh_market_data()      -- market cap / TSR / P-B via Yahoo (see note).
-  daily_rescore_and_digest() -- the 4pm ET job: rescore + email.
-  startup_full_refresh()     -- once after boot.
-
-NOTE on market data: Yahoo Finance rate-limits/blocks requests from cloud hosts
-like Render (HTTP 429), so the market-based signals are disabled in the hosted
-demo and scoring runs on SEC filings + news (the reliable core). To re-enable on
-a host Yahoo permits, add `refresh_market_data()` back into the two jobs below.
+Orchestration jobs. Market data (Yahoo) is intentionally NOT called here because
+Yahoo rate-limits cloud hosts like Render and the failing sweep was crashing the
+container before scoring could save. Scoring runs on SEC filings + news.
 """
 import time
 import traceback
 
 from . import config, database, universe, edgar, news, market, scoring, emailer
 
-# Loaded once; refreshed when the process restarts.
 _UNIVERSE = None
 
 
@@ -24,7 +15,6 @@ def get_universe():
     global _UNIVERSE
     if _UNIVERSE is None:
         _UNIVERSE = universe.load_universe()
-        # Seed the companies table so scoring has rows even before market data.
         for c in _UNIVERSE:
             if c["cik"]:
                 database.upsert_company(c["cik"], c["ticker"], c["name"])
@@ -32,7 +22,7 @@ def get_universe():
 
 
 def refresh_data(max_companies=None):
-    """Fast refresh: EDGAR filings + news headlines, then rescore."""
+    """EDGAR filings + news headlines, then rescore. NO Yahoo calls."""
     uni = get_universe()
     try:
         n_news = news.ingest(uni, limit=40)
@@ -55,20 +45,9 @@ def refresh_data(max_companies=None):
 
 
 def refresh_market_data(max_companies=None):
-    """Market cap / P:B / TSR via Yahoo. Currently unused on Render because
-    Yahoo blocks cloud IPs; kept for hosts that allow it."""
-    uni = get_universe()
-    subset = uni[:max_companies] if max_companies else uni
-    done = 0
-    for c in subset:
-        try:
-            market.refresh_company(c["cik"], c["ticker"], c["name"])
-            done += 1
-            time.sleep(0.2)
-        except Exception:
-            traceback.print_exc()
-    print(f"[market] refreshed {done} companies")
-    return done
+    """Deliberately disabled on Render (Yahoo blocks cloud IPs). No-op."""
+    print("[market] skipped (Yahoo disabled on this host)")
+    return 0
 
 
 def daily_rescore_and_digest():
@@ -79,8 +58,8 @@ def daily_rescore_and_digest():
 
 
 def startup_full_refresh():
-    """Run once shortly after boot: pull filings + news and score. Does NOT
-    send email and does NOT hit Yahoo (blocked on Render)."""
+    """Runs once after boot. Filings + news only — no Yahoo, no crash."""
+    print("[boot] VERSION=no-yahoo  starting filings+news refresh")
     refresh_data()
 
 
