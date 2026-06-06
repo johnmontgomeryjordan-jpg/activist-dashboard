@@ -2,9 +2,14 @@
 Orchestration: the jobs the scheduler and startup routine call.
 
   refresh_data()             -- every REFRESH_MINUTES: EDGAR + news + rescore.
-  refresh_market_data()      -- market cap / TSR / P-B via Yahoo (slower).
-  daily_rescore_and_digest() -- the 4pm ET job: market data, rescore, email.
-  startup_full_refresh()     -- once after boot: everything except email.
+  refresh_market_data()      -- market cap / TSR / P-B via Yahoo (see note).
+  daily_rescore_and_digest() -- the 4pm ET job: rescore + email.
+  startup_full_refresh()     -- once after boot.
+
+NOTE on market data: Yahoo Finance rate-limits/blocks requests from cloud hosts
+like Render (HTTP 429), so the market-based signals are disabled in the hosted
+demo and scoring runs on SEC filings + news (the reliable core). To re-enable on
+a host Yahoo permits, add `refresh_market_data()` back into the two jobs below.
 """
 import time
 import traceback
@@ -27,7 +32,7 @@ def get_universe():
 
 
 def refresh_data(max_companies=None):
-    """Fast refresh: EDGAR filings + news headlines. Called every 30 min."""
+    """Fast refresh: EDGAR filings + news headlines, then rescore."""
     uni = get_universe()
     try:
         n_news = news.ingest(uni, limit=40)
@@ -40,7 +45,6 @@ def refresh_data(max_companies=None):
     except Exception:
         traceback.print_exc()
         n_filings = 0
-    # Re-run scoring with whatever data we have.
     try:
         flagged = scoring.recompute_all()
     except Exception:
@@ -51,7 +55,8 @@ def refresh_data(max_companies=None):
 
 
 def refresh_market_data(max_companies=None):
-    """Slow refresh: market cap / P:B / TSR via Yahoo. Called once daily."""
+    """Market cap / P:B / TSR via Yahoo. Currently unused on Render because
+    Yahoo blocks cloud IPs; kept for hosts that allow it."""
     uni = get_universe()
     subset = uni[:max_companies] if max_companies else uni
     done = 0
@@ -59,7 +64,7 @@ def refresh_market_data(max_companies=None):
         try:
             market.refresh_company(c["cik"], c["ticker"], c["name"])
             done += 1
-            time.sleep(0.2)  # be gentle with Yahoo
+            time.sleep(0.2)
         except Exception:
             traceback.print_exc()
     print(f"[market] refreshed {done} companies")
@@ -67,27 +72,16 @@ def refresh_market_data(max_companies=None):
 
 
 def daily_rescore_and_digest():
-    """The 4pm-ET job: refresh market data, rescore, send digest."""
-    refresh_market_data()
+    """The 4pm-ET job: rescore on fresh filings/news, then send the digest."""
     refresh_data()
     sent = emailer.send_digest()
     return sent
 
 
 def startup_full_refresh():
-    """
-    Run once shortly after the server starts: pull filings + news, then market
-    data, then rescore -- so the dashboard shows full, market-informed scores
-    within minutes of a deploy instead of waiting for the daily 4pm ET job.
-    Does NOT send any email.
-    """
-    refresh_data()            # filings + news + first-pass scores (fast)
-    refresh_market_data()     # market cap / TSR / P-B (slower)
-    try:
-        flagged = scoring.recompute_all()   # final scores with market signals
-        print(f"[startup] full refresh complete; flagged={len(flagged)}")
-    except Exception:
-        traceback.print_exc()
+    """Run once shortly after boot: pull filings + news and score. Does NOT
+    send email and does NOT hit Yahoo (blocked on Render)."""
+    refresh_data()
 
 
 if __name__ == "__main__":
