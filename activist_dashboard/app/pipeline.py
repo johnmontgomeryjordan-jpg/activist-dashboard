@@ -1,11 +1,10 @@
 """
-Orchestration: the two recurring jobs the scheduler calls.
+Orchestration: the jobs the scheduler and startup routine call.
 
-  refresh_data()   -- every REFRESH_MINUTES: pull EDGAR + news (fast).
-  daily_rescore()  -- once/day before the digest: refresh market data & rescore.
-
-Kept separate from the scheduler so they can also be triggered manually
-(via the API '/api/refresh' button or `python -m app.pipeline`).
+  refresh_data()             -- every REFRESH_MINUTES: EDGAR + news + rescore.
+  refresh_market_data()      -- market cap / TSR / P-B via Yahoo (slower).
+  daily_rescore_and_digest() -- the 4pm ET job: market data, rescore, email.
+  startup_full_refresh()     -- once after boot: everything except email.
 """
 import time
 import traceback
@@ -73,6 +72,22 @@ def daily_rescore_and_digest():
     refresh_data()
     sent = emailer.send_digest()
     return sent
+
+
+def startup_full_refresh():
+    """
+    Run once shortly after the server starts: pull filings + news, then market
+    data, then rescore -- so the dashboard shows full, market-informed scores
+    within minutes of a deploy instead of waiting for the daily 4pm ET job.
+    Does NOT send any email.
+    """
+    refresh_data()            # filings + news + first-pass scores (fast)
+    refresh_market_data()     # market cap / TSR / P-B (slower)
+    try:
+        flagged = scoring.recompute_all()   # final scores with market signals
+        print(f"[startup] full refresh complete; flagged={len(flagged)}")
+    except Exception:
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
