@@ -1,14 +1,17 @@
 """
-Financial news ingestion via a free-tier news API.
+Financial news ingestion via a free-tier news API (NewsAPI or GNews).
 
-Supports two providers (set NEWS_PROVIDER in .env):
-  * newsapi  -> https://newsapi.org  (free dev tier, 100 req/day)
-  * gnews    -> https://gnews.io      (free tier, 100 req/day)
+Relevance strategy (tuned to cut noise):
+  1. Ask the API to match our activist/distress terms in the HEADLINE only.
+  2. Re-check each headline against TITLE_KEYWORDS locally (defense in depth).
+  3. Drop law-firm "deadline alert / class action" solicitation spam.
+  4. De-duplicate the same story coming from multiple outlets.
 
-We only ever store and display: headline, source, date, and a link out to the
-original article. Article body text is never reproduced (per the brief).
+We only ever store/display headline, source, date, and a link out. Never the
+article body.
 """
 import hashlib
+import re
 
 import requests
 
@@ -17,19 +20,51 @@ from . import config, database
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 GNEWS_URL = "https://gnews.io/api/v4/search"
 
-# A compact query that OR's the most useful distress/activist terms. Kept short
-# because free tiers limit query length and request volume.
-QUERY = ('"activist investor" OR "proxy fight" OR "earnings miss" OR '
-         '"guidance cut" OR "CEO departure" OR "write-down" OR "short seller" OR '
-         '"shareholder pressure" OR restructuring')
+# Sent to the API; restricted to the headline via searchIn/in = title.
+QUERY = ('"activist investor" OR "proxy fight" OR "short seller" OR '
+         '"earnings miss" OR "guidance cut" OR "profit warning" OR '
+         '"write-down" OR impairment OR restructuring OR '
+         '"strategic review" OR "steps down" OR "stake in"')
+
+# A headline must contain at least one of these to be kept.
+TITLE_KEYWORDS = [
+    "activist", "proxy fight", "proxy battle", "short seller", "short-seller",
+    "shareholder", "earnings miss", "misses earnings", "guidance cut",
+    "cuts guidance", "lowers guidance", "profit warning", "write-down",
+    "writedown", "impairment", "restructuring", "layoff", "job cuts",
+    "strategic review", "spinoff", "spin-off", "steps down", "ceo",
+    "ousted", "stake in", "board seat", "breakup", "poison pill",
+    "turnaround", "activist investor", "guidance",
+]
+
+# Drop these — mostly law-firm investor solicitations, not real news.
+EXCLUDE_PATTERNS = [
+    "deadline alert", "investor alert", "class action", "law firm", "lawsuit",
+    "lead plaintiff", "encourages investors", "reminds investors",
+    "investigation on behalf", "shareholder rights", "rosen law", "pomerantz",
+    "bragar", "kessler", "levi & korsinsky", "robbins", "schall law",
+    "securities fraud", "contact the firm", "notifies investors",
+]
 
 
-def _hash(url):
-    return hashlib.sha1(url.encode("utf-8")).hexdigest()
+def _hash(s):
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()
+
+
+def _norm_title(t):
+    return re.sub(r"\s+", " ", (t or "").strip().lower())
+
+
+def _is_relevant(title):
+    t = _norm_title(title)
+    if not t:
+        return False
+    if any(bad in t for bad in EXCLUDE_PATTERNS):
+        return False
+    return any(kw in t for kw in TITLE_KEYWORDS)
 
 
 def fetch_headlines(limit=40):
-    """Return a list of normalized news dicts. Empty list if no key configured."""
     if not config.NEWS_API_KEY:
         return []
     if config.NEWS_PROVIDER == "gnews":
@@ -40,6 +75,7 @@ def fetch_headlines(limit=40):
 def _fetch_newsapi(limit):
     params = {
         "q": QUERY,
+        "searchIn": "title",          # require the term in the headline
         "language": "en",
         "sortBy": "publishedAt",
         "pageSize": min(limit, 100),
@@ -54,11 +90,12 @@ def _fetch_newsapi(limit):
     out = []
     for a in data.get("articles", []):
         url = a.get("url") or ""
-        if not url:
+        title = a.get("title") or ""
+        if not url or not _is_relevant(title):
             continue
         out.append({
             "id": _hash(url),
-            "headline": a.get("title") or "(no title)",
+            "headline": title,
             "source": (a.get("source") or {}).get("name") or "",
             "published_at": a.get("publishedAt") or "",
             "url": url,
@@ -69,6 +106,7 @@ def _fetch_newsapi(limit):
 def _fetch_gnews(limit):
     params = {
         "q": QUERY,
+        "in": "title",                # require the term in the headline
         "lang": "en",
         "max": min(limit, 100),
         "sortby": "publishedAt",
@@ -83,11 +121,12 @@ def _fetch_gnews(limit):
     out = []
     for a in data.get("articles", []):
         url = a.get("url") or ""
-        if not url:
+        title = a.get("title") or ""
+        if not url or not _is_relevant(title):
             continue
         out.append({
             "id": _hash(url),
-            "headline": a.get("title") or "(no title)",
+            "headline": title,
             "source": (a.get("source") or {}).get("name") or "",
             "published_at": a.get("publishedAt") or "",
             "url": url,
@@ -96,13 +135,10 @@ def _fetch_gnews(limit):
 
 
 def _match_tickers(headline, companies):
-    """Tag a headline with any monitored company whose name appears in it."""
     text = headline.lower()
     matched = []
     for c in companies:
         name = (c.get("name") or "").lower()
-        # Use the first word of the company name (e.g. "Boeing") as a loose match,
-        # plus an exact ticker token match.
         short = name.split()[0] if name else ""
         ticker = (c.get("ticker") or "").lower()
         if short and len(short) > 3 and short in text:
@@ -113,9 +149,16 @@ def _match_tickers(headline, companies):
 
 
 def ingest(companies, limit=40):
-    """Fetch headlines, tag them to companies, store. Returns count ingested."""
+    """Fetch headlines, drop duplicates by title, tag to companies, store."""
     articles = fetch_headlines(limit)
+    seen_titles = set()
+    kept = 0
     for a in articles:
+        key = _norm_title(a["headline"])
+        if key in seen_titles:
+            continue
+        seen_titles.add(key)
         a["matched_tickers"] = ",".join(_match_tickers(a["headline"], companies))
         database.upsert_news(a)
-    return len(articles)
+        kept += 1
+    return kept
