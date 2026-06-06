@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Activist Vulnerability — Early Warning Dashboard</title>
+<title>FGS Global — Activist Vulnerability Early Warning Dashboard</title>
 <style>
   :root {
     --bg: #0f1419; --panel: #1a2129; --panel2: #222c36;
     --text: #e6edf3; --muted: #8b98a5; --line: #2d3742;
     --accent: #3fa7ff; --hot: #ff5c5c; --warn: #ffb547; --ok: #3ddc84;
+    --brand: #00b15a;
   }
   * { box-sizing: border-box; }
   body {
@@ -16,13 +17,19 @@
     background: var(--bg); color: var(--text); font-size: 14px;
   }
   header {
-    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    padding: 16px 24px; border-bottom: 1px solid var(--line);
     display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
   }
-  header h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  .brand { color: var(--brand); font-weight: 800; font-size: 20px; letter-spacing: .3px; }
+  header h1 { font-size: 17px; margin: 4px 0 0; font-weight: 650; }
   header .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
   .status { color: var(--muted); font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
   .status b { color: var(--text); }
+  .tabs { display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--bg); }
+  .tab { padding: 12px 18px; cursor: pointer; color: var(--muted); font-weight: 600; font-size: 14px;
+    border-bottom: 2px solid transparent; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--brand); }
   .wrap { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
@@ -45,8 +52,9 @@
   .score.hot { color: var(--hot); } .score.warn { color: var(--warn); } .score.mid { color: var(--accent); }
   .mcap { color: var(--muted); font-variant-numeric: tabular-nums; }
   .signals { color: #cdd8e2; }
-  .pill-link a { color: var(--accent); text-decoration: none; }
-  .pill-link a:hover { text-decoration: underline; }
+  .pill-link a, .co-link { color: var(--accent); text-decoration: none; }
+  .pill-link a:hover, .co-link:hover { text-decoration: underline; }
+  .co-name { font-weight: 650; }
   .section-title { font-size: 16px; margin: 26px 0 12px; font-weight: 650; }
   .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
   button { background: var(--accent); color: #04121f; border: none; padding: 8px 14px;
@@ -63,24 +71,40 @@
   .msg.ok { color: var(--ok); } .msg.err { color: var(--hot); }
   .empty { padding: 24px 16px; color: var(--muted); text-align: center; }
   .updated { color: var(--muted); font-size: 12px; }
+  .about { max-width: 900px; }
+  .about h2 { font-size: 18px; margin: 22px 0 8px; }
+  .about h3 { font-size: 14px; text-transform: uppercase; letter-spacing: .5px; color: var(--brand); margin: 26px 0 10px; }
+  .about p, .about li { color: #cdd8e2; line-height: 1.6; }
+  .about ul { padding-left: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-top: 12px; }
+  .legend td, .legend th { padding: 8px 12px; }
+  .pts { color: var(--hot); font-weight: 700; text-align: center; white-space: nowrap; }
+  .src { color: var(--muted); }
+  .lead { font-size: 15px; color: var(--text); }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; background:var(--panel2); color:var(--muted); margin-right:6px;}
 </style>
 </head>
 <body>
 <header>
   <div>
+    <div class="brand">FGS Global</div>
     <h1>Activist Vulnerability — Early Warning Dashboard</h1>
-    <div class="sub">Proactive activist-defense intelligence · public data only (SEC EDGAR · news API · Yahoo Finance)</div>
+    <div class="sub">Proactive activist-defense intelligence · public data only (SEC EDGAR · news API)</div>
   </div>
   <div class="status" id="status">Loading…</div>
 </header>
 
-<div class="wrap">
+<div class="tabs">
+  <div class="tab active" id="tabbtn-dashboard" onclick="showTab('dashboard')">Dashboard</div>
+  <div class="tab" id="tabbtn-about" onclick="showTab('about')">How it works</div>
+</div>
+
+<div class="wrap" id="tab-dashboard">
   <div class="toolbar">
     <button id="refreshBtn" onclick="manualRefresh()">↻ Refresh now</button>
     <span class="updated" id="updated"></span>
   </div>
 
-  <!-- TOP: Live Intelligence Feed -->
   <div class="row">
     <div class="panel">
       <h2>Live News Feed — activist / distress keywords</h2>
@@ -92,7 +116,6 @@
     </div>
   </div>
 
-  <!-- BOTTOM: Companies to Pitch -->
   <div class="section-title">Companies to Pitch — ranked by vulnerability score</div>
   <div class="panel">
     <table>
@@ -108,17 +131,86 @@
     </table>
   </div>
 
-  <!-- Email subscription -->
   <div class="subscribe">
     <h2>Daily email digest</h2>
     <p>Get the day's top 5 headlines and top 5 companies to pitch, sent automatically at 4:00 PM ET.</p>
     <div class="toolbar" style="margin-bottom:0;">
-      <input type="email" id="emailInput" placeholder="you@yourfirm.com" />
+      <input type="email" id="emailInput" placeholder="you@fgsglobal.com" />
       <button onclick="subscribe()">Subscribe</button>
       <button class="ghost" onclick="unsubscribe()">Unsubscribe</button>
+      <button class="ghost" onclick="sendTestDigest()">Send test digest now</button>
       <span class="msg" id="subMsg"></span>
     </div>
   </div>
+</div>
+
+<div class="wrap about" id="tab-about" style="display:none;">
+  <h2>What this is</h2>
+  <p class="lead">An early-warning system that scans U.S. public companies for signs of
+  activist-investor vulnerability <em>before</em> an activist surfaces — so FGS can
+  reach out proactively. It runs entirely on free, public data and refreshes itself
+  automatically.</p>
+
+  <h3>How vulnerability is scored</h3>
+  <p>Every company is scored on a rolling 90-day window. Each signal adds points; a
+  company is flagged once it reaches the threshold (currently <b id="aboutThreshold">3</b>).
+  The highest scorers become the “Companies to Pitch” shortlist.</p>
+  <div class="card">
+    <table class="legend">
+      <thead><tr><th>Signal</th><th class="pts">Points</th><th>Source</th></tr></thead>
+      <tbody>
+        <tr><td>CEO / C-suite departure (8-K)</td><td class="pts">2</td><td class="src">SEC EDGAR</td></tr>
+        <tr><td>Earnings miss or guidance cut (8-K / 10-Q)</td><td class="pts">2</td><td class="src">SEC EDGAR</td></tr>
+        <tr><td>Goodwill impairment / write-down (8-K / 10-K)</td><td class="pts">2</td><td class="src">SEC EDGAR</td></tr>
+        <tr><td>Layoff / restructuring announcement (8-K)</td><td class="pts">1</td><td class="src">SEC EDGAR</td></tr>
+        <tr><td>Negative activist / restructuring headline</td><td class="pts">1</td><td class="src">News API</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:12px 0 0; color:var(--muted); font-size:13px;">
+      Reading the score: <span class="pill" style="color:#ff8a8a;">6–7 high</span>
+      <span class="pill" style="color:#ffce85;">4–5 elevated</span>
+      <span class="pill" style="color:#9fd0ff;">3 watch</span>
+      — a 7 means multiple distress signals stacked in 90 days (e.g. a CEO exit
+      <em>and</em> an earnings miss <em>and</em> an impairment).
+    </p>
+  </div>
+
+  <h3>Where the data comes from</h3>
+  <ul>
+    <li><b>SEC EDGAR</b> — official filings (8-K, 10-K, 10-Q) for the full S&amp;P 1500.
+      We read each filing's event codes and classify the distress signals above.
+      This is the core, most reliable signal.</li>
+    <li><b>Financial news API</b> — headlines filtered to activist / distress topics
+      (CEO changes, activist stakes, guidance cuts, write-downs). We show the
+      headline, outlet, date and a link out — never the article text.</li>
+  </ul>
+
+  <h3>How often it updates</h3>
+  <ul>
+    <li><b>Every 30 minutes</b> — news headlines and EDGAR filings refresh, and scores recompute.</li>
+    <li><b>Daily at 4:00 PM ET</b> — an email digest of the day's top headlines and top
+      companies goes to all subscribers.</li>
+  </ul>
+
+  <h3>How it's built</h3>
+  <p>A Python (FastAPI) backend pulls the data, runs the scoring, and serves this
+  page; data is stored in a lightweight database; the whole thing is deployed on a
+  hosted web service with a shareable URL. No paid data feeds are used.</p>
+
+  <h3>On the roadmap (paid-data version)</h3>
+  <p>Some signals need proprietary or licensed market data and are intentionally left
+  out of this proof-of-concept. They’re natural next additions if FGS wants them:</p>
+  <ul>
+    <li>Total-shareholder-return underperformance (1- / 3-year vs. peers) and a market-cap filter.</li>
+    <li>Valuation signals (low price-to-book, conglomerate / sum-of-the-parts discount).</li>
+    <li>SG&amp;A vs. named proxy peers, M&amp;A track record, CEO pay vs. performance, full peer benchmarking.</li>
+  </ul>
+
+  <p style="color:var(--muted); font-size:13px; margin-top:24px;">
+    This is a proof-of-concept demo. Signal classification is a strong first pass but
+    will occasionally mis-tag a filing, so the shortlist is a lead-generation
+    starting point for a human to review — not a final determination.
+  </p>
 </div>
 
 <script>
@@ -131,6 +223,17 @@ const fmtCap = n => {
 };
 const fmtDate = s => { if (!s) return ""; try { return new Date(s).toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch(e){ return s; } };
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const secUrl = (cik, ticker) => {
+  if (cik) return `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(cik)}&type=8-K&dateb=&owner=include&count=40`;
+  return `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=${encodeURIComponent(ticker||"")}&type=8-K&owner=include&count=40`;
+};
+
+function showTab(name) {
+  document.getElementById("tab-dashboard").style.display = (name==="dashboard")?"block":"none";
+  document.getElementById("tab-about").style.display = (name==="about")?"block":"none";
+  document.getElementById("tabbtn-dashboard").classList.toggle("active", name==="dashboard");
+  document.getElementById("tabbtn-about").classList.toggle("active", name==="about");
+}
 
 async function loadStatus() {
   try {
@@ -139,6 +242,8 @@ async function loadStatus() {
       `Universe <b>${s.universe_size}</b> · Threshold <b>${s.threshold}+</b> · Window <b>${s.window_days}d</b> · ` +
       `Refresh <b>${s.refresh_minutes}m</b> · Subscribers <b>${s.subscribers}</b> · ` +
       `News <b>${s.news_enabled?"on":"off"}</b> · Email <b>${s.email_enabled?"on":"off"}</b>`;
+    const at = document.getElementById("aboutThreshold");
+    if (at) at.textContent = s.threshold;
   } catch(e){}
 }
 
@@ -177,9 +282,10 @@ async function loadShortlist() {
       const link = c.top_item_url
         ? `<span class="pill-link"><a href="${esc(c.top_item_url)}" target="_blank" rel="noopener">${esc(c.top_item_title)||"view"}</a></span>`
         : "—";
+      const co = `<a class="co-link co-name" href="${esc(secUrl(c.cik, c.ticker))}" target="_blank" rel="noopener" title="View SEC filings">${esc(c.company)}</a>`;
       return `<tr>
         <td>${i+1}</td>
-        <td><b>${esc(c.company)}</b><div class="meta">${esc(c.ticker)}</div></td>
+        <td>${co}<div class="meta">${esc(c.ticker)}</div></td>
         <td class="mcap">${fmtCap(c.market_cap)}</td>
         <td class="score ${cls}">${c.score}</td>
         <td class="signals">${esc(c.signals)}</td>
@@ -220,13 +326,24 @@ async function unsubscribe() {
   } catch(e){ msg.textContent = "Network error"; msg.className = "msg err"; }
 }
 
+async function sendTestDigest() {
+  const msg = document.getElementById("subMsg");
+  msg.textContent = "Sending…"; msg.className = "msg";
+  try {
+    const r = await fetch("/api/send-test-digest", {method:"POST"});
+    const d = await r.json();
+    msg.textContent = d.message || (d.ok ? "Sent." : "Error");
+    msg.className = "msg " + (d.ok ? "ok" : "err");
+  } catch(e){ msg.textContent = "Network error"; msg.className = "msg err"; }
+}
+
 async function refreshAll() {
   await Promise.all([loadStatus(), loadFeed(), loadShortlist()]);
   document.getElementById("updated").textContent = "Last updated " + new Date().toLocaleTimeString();
 }
 
 refreshAll();
-setInterval(refreshAll, 5 * 60 * 1000); // auto-refresh the view every 5 min
+setInterval(refreshAll, 5 * 60 * 1000);
 </script>
 </body>
 </html>
