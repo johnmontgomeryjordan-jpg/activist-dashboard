@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Activist Vulnerability — Early Warning Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a2129; --panel2: #222c36;
+    --text: #e6edf3; --muted: #8b98a5; --line: #2d3742;
+    --accent: #3fa7ff; --hot: #ff5c5c; --warn: #ffb547; --ok: #3ddc84;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .status { color: var(--muted); font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .status b { color: var(--text); }
+  .wrap { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px;
+    margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line); color: var(--muted); }
+  .feed { max-height: 460px; overflow-y: auto; }
+  .item { padding: 11px 16px; border-bottom: 1px solid var(--line); }
+  .item:last-child { border-bottom: none; }
+  .item a { color: var(--text); text-decoration: none; font-weight: 550; }
+  .item a:hover { color: var(--accent); text-decoration: underline; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .tag { display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 11px;
+    background: var(--panel2); color: var(--muted); }
+  .tag.sig { background: rgba(255,92,92,.15); color: #ff8a8a; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; position: sticky; top: 0; background: var(--panel); }
+  .score { font-weight: 700; font-size: 16px; }
+  .score.hot { color: var(--hot); } .score.warn { color: var(--warn); } .score.mid { color: var(--accent); }
+  .mcap { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .signals { color: #cdd8e2; }
+  .pill-link a { color: var(--accent); text-decoration: none; }
+  .pill-link a:hover { text-decoration: underline; }
+  .section-title { font-size: 16px; margin: 26px 0 12px; font-weight: 650; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  button { background: var(--accent); color: #04121f; border: none; padding: 8px 14px;
+    border-radius: 7px; font-weight: 600; cursor: pointer; font-size: 13px; }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: default; }
+  input[type=email] { background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    padding: 8px 12px; border-radius: 7px; font-size: 13px; min-width: 240px; }
+  .subscribe { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-top: 26px; }
+  .subscribe h2 { font-size: 14px; margin: 0 0 4px; }
+  .subscribe p { color: var(--muted); margin: 0 0 12px; font-size: 13px; }
+  .msg { font-size: 13px; margin-left: 4px; }
+  .msg.ok { color: var(--ok); } .msg.err { color: var(--hot); }
+  .empty { padding: 24px 16px; color: var(--muted); text-align: center; }
+  .updated { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Activist Vulnerability — Early Warning Dashboard</h1>
+    <div class="sub">Proactive activist-defense intelligence · public data only (SEC EDGAR · news API · Yahoo Finance)</div>
+  </div>
+  <div class="status" id="status">Loading…</div>
+</header>
+
+<div class="wrap">
+  <div class="toolbar">
+    <button id="refreshBtn" onclick="manualRefresh()">↻ Refresh now</button>
+    <span class="updated" id="updated"></span>
+  </div>
+
+  <!-- TOP: Live Intelligence Feed -->
+  <div class="row">
+    <div class="panel">
+      <h2>Live News Feed — activist / distress keywords</h2>
+      <div class="feed" id="newsFeed"><div class="empty">Loading headlines…</div></div>
+    </div>
+    <div class="panel">
+      <h2>Live EDGAR Filings — 8-K / 10-K / 10-Q</h2>
+      <div class="feed" id="filingFeed"><div class="empty">Loading filings…</div></div>
+    </div>
+  </div>
+
+  <!-- BOTTOM: Companies to Pitch -->
+  <div class="section-title">Companies to Pitch — ranked by vulnerability score</div>
+  <div class="panel">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Company / Ticker</th><th>Market Cap</th><th>Score</th>
+          <th>Key Signals</th><th>Latest Item</th><th>First Flagged</th>
+        </tr>
+      </thead>
+      <tbody id="shortlist">
+        <tr><td colspan="7" class="empty">Loading shortlist…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Email subscription -->
+  <div class="subscribe">
+    <h2>Daily email digest</h2>
+    <p>Get the day's top 5 headlines and top 5 companies to pitch, sent automatically at 4:00 PM ET.</p>
+    <div class="toolbar" style="margin-bottom:0;">
+      <input type="email" id="emailInput" placeholder="you@yourfirm.com" />
+      <button onclick="subscribe()">Subscribe</button>
+      <button class="ghost" onclick="unsubscribe()">Unsubscribe</button>
+      <span class="msg" id="subMsg"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+const fmtCap = n => {
+  if (n == null) return "—";
+  if (n >= 1e12) return "$" + (n/1e12).toFixed(2) + "T";
+  if (n >= 1e9)  return "$" + (n/1e9).toFixed(1) + "B";
+  if (n >= 1e6)  return "$" + (n/1e6).toFixed(0) + "M";
+  return "$" + n;
+};
+const fmtDate = s => { if (!s) return ""; try { return new Date(s).toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch(e){ return s; } };
+const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function loadStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    document.getElementById("status").innerHTML =
+      `Universe <b>${s.universe_size}</b> · Threshold <b>${s.threshold}+</b> · Window <b>${s.window_days}d</b> · ` +
+      `Refresh <b>${s.refresh_minutes}m</b> · Subscribers <b>${s.subscribers}</b> · ` +
+      `News <b>${s.news_enabled?"on":"off"}</b> · Email <b>${s.email_enabled?"on":"off"}</b>`;
+  } catch(e){}
+}
+
+async function loadFeed() {
+  try {
+    const d = await (await fetch("/api/feed")).json();
+    const nf = document.getElementById("newsFeed");
+    nf.innerHTML = d.news.length ? d.news.map(n => `
+      <div class="item">
+        <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
+        <div class="meta"><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div>
+      </div>`).join("") : `<div class="empty">No headlines yet. Add a NEWS_API_KEY and click “Refresh now”.</div>`;
+
+    const ff = document.getElementById("filingFeed");
+    ff.innerHTML = d.filings.length ? d.filings.map(f => {
+      const sigs = (f.signals||"").split(",").filter(Boolean)
+        .map(s => `<span class="tag sig">${esc(s.replace(/_/g," "))}</span>`).join(" ");
+      return `<div class="item">
+        <a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.company)} — ${esc(f.title)}</a>
+        <div class="meta"><span class="tag">${esc(f.ticker)||esc(f.form)}</span><span>${fmtDate(f.filed_at)}</span>${sigs}</div>
+      </div>`;
+    }).join("") : `<div class="empty">No filings yet — the first EDGAR pull runs on startup and may take a minute.</div>`;
+  } catch(e){}
+}
+
+async function loadShortlist() {
+  try {
+    const d = await (await fetch("/api/shortlist")).json();
+    const tb = document.getElementById("shortlist");
+    if (!d.companies.length) {
+      tb.innerHTML = `<tr><td colspan="7" class="empty">No companies have crossed the threshold yet. Scores build as filings arrive.</td></tr>`;
+      return;
+    }
+    tb.innerHTML = d.companies.map((c, i) => {
+      const cls = c.score >= 6 ? "hot" : c.score >= 4 ? "warn" : "mid";
+      const link = c.top_item_url
+        ? `<span class="pill-link"><a href="${esc(c.top_item_url)}" target="_blank" rel="noopener">${esc(c.top_item_title)||"view"}</a></span>`
+        : "—";
+      return `<tr>
+        <td>${i+1}</td>
+        <td><b>${esc(c.company)}</b><div class="meta">${esc(c.ticker)}</div></td>
+        <td class="mcap">${fmtCap(c.market_cap)}</td>
+        <td class="score ${cls}">${c.score}</td>
+        <td class="signals">${esc(c.signals)}</td>
+        <td>${link}</td>
+        <td class="mcap">${esc(c.first_flagged)}</td>
+      </tr>`;
+    }).join("");
+  } catch(e){}
+}
+
+async function manualRefresh() {
+  const btn = document.getElementById("refreshBtn");
+  btn.disabled = true; btn.textContent = "Refreshing…";
+  try { await fetch("/api/refresh", {method:"POST"}); } catch(e){}
+  await refreshAll();
+  btn.disabled = false; btn.textContent = "↻ Refresh now";
+}
+
+async function subscribe() {
+  const email = document.getElementById("emailInput").value;
+  const msg = document.getElementById("subMsg");
+  try {
+    const r = await fetch("/api/subscribe", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({email})});
+    const d = await r.json();
+    msg.textContent = d.ok ? d.message : (d.error||"Error");
+    msg.className = "msg " + (d.ok ? "ok" : "err");
+    if (d.ok) loadStatus();
+  } catch(e){ msg.textContent = "Network error"; msg.className = "msg err"; }
+}
+
+async function unsubscribe() {
+  const email = document.getElementById("emailInput").value;
+  const msg = document.getElementById("subMsg");
+  try {
+    const r = await fetch("/api/unsubscribe", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({email})});
+    const d = await r.json();
+    msg.textContent = d.message || "Done"; msg.className = "msg ok"; loadStatus();
+  } catch(e){ msg.textContent = "Network error"; msg.className = "msg err"; }
+}
+
+async function refreshAll() {
+  await Promise.all([loadStatus(), loadFeed(), loadShortlist()]);
+  document.getElementById("updated").textContent = "Last updated " + new Date().toLocaleTimeString();
+}
+
+refreshAll();
+setInterval(refreshAll, 5 * 60 * 1000); // auto-refresh the view every 5 min
+</script>
+</body>
+</html>

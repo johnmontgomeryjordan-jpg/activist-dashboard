@@ -1,0 +1,31 @@
+# Render.com Blueprint. With this file in your repo, Render can create the whole
+# service automatically: New + > Blueprint > pick this repo. You only paste in
+# the secret values (API keys) afterward in the dashboard.
+services:
+  - type: web
+    name: activist-dashboard
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: SEC_USER_AGENT
+        sync: false          # e.g. "YourFirm Demo (you@yourfirm.com)"
+      - key: NEWS_PROVIDER
+        value: newsapi
+      - key: NEWS_API_KEY
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: resend
+      - key: EMAIL_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false          # e.g. "digest@yourdomain.com"
+      - key: EMAIL_FROM_NAME
+        value: Activist Vulnerability Dashboard
+      - key: MIN_MARKET_CAP
+        value: "1000000000"
+      - key: SCORE_THRESHOLD
+        value: "3"
+      - key: PYTHON_VERSION
+        value: "3.11.9"
