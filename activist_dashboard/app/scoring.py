@@ -44,6 +44,14 @@ SIGNAL_LABELS = {
 }
 
 
+def _pad_cik(cik):
+    """Normalize a CIK to the 10-digit zero-padded form used in the filings
+    table, so company<->filing lookups always match."""
+    if not cik:
+        return cik
+    return str(cik).lstrip("0").zfill(10)
+
+
 def _bottom_quartile_threshold(companies):
     vals = sorted(c["tsr_3y"] for c in companies if c.get("tsr_3y") is not None)
     if len(vals) < 4:
@@ -59,7 +67,8 @@ def score_company(company, window_days, q3_threshold):
     triggered = []
     top_item = None
 
-    filings = database.filings_in_window(cik, window_days)
+    # Filings are stored under the 10-digit padded CIK; normalize before lookup.
+    filings = database.filings_in_window(_pad_cik(cik), window_days)
     # Each distinct signal type counts once (avoid double-counting repeat filings).
     seen_signals = set()
     for f in filings:
