@@ -1,34 +1,34 @@
 """
-Predictive target-attractiveness scoring (Phase 2: + valuation & total return).
+Predictive target-attractiveness scoring.
 
-Structural, peer-relative within sector (2-digit SIC):
-  Cheap valuation: price-to-book in bottom quartile of sector ...... 2  (Stooq)
+Structural, peer-relative within sector (2-digit SIC), from free SEC XBRL:
   Operating margin in bottom quartile of sector ................... 2
-  1-year total return in bottom quartile of sector ............... 1  (Stooq)
-  3-year total return in bottom quartile of sector ............... 1  (Stooq)
   ROA in bottom quartile of sector ............................... 1
   Revenue shrinking or bottom-quartile growth .................... 1
   SG&A % of revenue in top quartile (bloated costs) .............. 1
   Cash/assets in top quartile (lazy, cash-hoarding) ............. 1
   Debt/assets in bottom quartile (under-levered) ................ 1
+Valuation (from Alpha Vantage shortlist enrichment):
+  Cheap: price-to-book < 1.5x (absolute) ......................... 2
+  (cheap_pb / TSR signals stay dormant unless full price coverage exists)
 Event accelerants (recent filings/news), 1 each:
   CEO/exec departure, earnings miss, impairment, layoffs, neg. headline
 
-If Stooq price data is unavailable, the valuation/return signals are simply
-skipped and scoring runs on fundamentals + events. Flagged at/above
-SCORE_THRESHOLD; top SHORTLIST_SIZE surfaced. Peer quartiles need >= MIN_PEERS.
+Flagged at/above SCORE_THRESHOLD; top SHORTLIST_SIZE surfaced. Peer quartiles
+need >= MIN_PEERS companies with the metric.
 """
 from . import config, database
 
 MIN_PEERS = 5
 
-STRUCT_POINTS = {"cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1, "weak_tsr_3y": 1,
+STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1, "weak_tsr_3y": 1,
                  "low_roa": 1, "weak_growth": 1, "high_sga": 1, "cash_hoard": 1,
                  "underlevered": 1}
 EVENT_POINTS = {"ceo_departure": 1, "earnings_miss": 1, "impairment": 1,
                 "layoffs": 1, "news_negative": 1}
 
 LABELS = {
+    "cheap_abs": "cheap (low price-to-book < 1.5x)",
     "cheap_pb": "cheap vs peers (low price-to-book)",
     "low_margin": "low margin vs peers",
     "weak_tsr_1y": "weak 1-yr stock return vs peers",
@@ -121,7 +121,9 @@ def recompute_all():
             v = r.get(metric)
             return q3 is not None and v is not None and v >= q3
 
-        if r.get("pb_ratio") is not None and r["pb_ratio"] > 0 and low("pb_ratio"):
+        if r.get("pb_ratio") is not None and 0 < r["pb_ratio"] < 1.5:
+            trig.append("cheap_abs")
+        elif r.get("pb_ratio") is not None and r["pb_ratio"] > 0 and low("pb_ratio"):
             trig.append("cheap_pb")
         if low("operating_margin"):
             trig.append("low_margin")
