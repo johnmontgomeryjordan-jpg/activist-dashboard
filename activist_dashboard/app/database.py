@@ -1,8 +1,9 @@
 """
-SQLite storage. Companies (incl. price-derived market_cap / P-B / TSR), filings,
-news, scores, subscribers, and SEC XBRL fundamentals (incl. shares + book
-equity used with Stooq prices for valuation signals).
+SQLite storage: companies (incl. market_cap/P-B), filings, news, scores,
+subscribers, SEC XBRL fundamentals, and stored Alpha Vantage OVERVIEW blobs
+(for the company detail view).
 """
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -35,6 +36,9 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     revenue REAL, revenue_growth REAL, operating_margin REAL, sga_pct REAL,
     roa REAL, cash_to_assets REAL, debt_to_assets REAL,
     shares REAL, book_equity REAL, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS av_overview (
+    cik TEXT PRIMARY KEY, ticker TEXT, data TEXT, updated_at TEXT
 );
 """
 
@@ -78,14 +82,11 @@ def upsert_company(cik, ticker, name, market_cap=None, pb_ratio=None,
 
 
 def set_company_market(cik, market_cap=None, pb_ratio=None, tsr_1y=None, tsr_3y=None):
-    """Update only the price-derived fields (used by the Stooq price step)."""
     with get_conn() as conn:
         conn.execute(
             """UPDATE companies SET
-                 market_cap=COALESCE(?, market_cap),
-                 pb_ratio=COALESCE(?, pb_ratio),
-                 tsr_1y=COALESCE(?, tsr_1y),
-                 tsr_3y=COALESCE(?, tsr_3y),
+                 market_cap=COALESCE(?, market_cap), pb_ratio=COALESCE(?, pb_ratio),
+                 tsr_1y=COALESCE(?, tsr_1y), tsr_3y=COALESCE(?, tsr_3y),
                  updated_at=? WHERE cik=?""",
             (market_cap, pb_ratio, tsr_1y, tsr_3y, now_iso(), cik),
         )
@@ -123,6 +124,34 @@ def get_all_fundamentals():
         return [dict(r) for r in conn.execute("SELECT * FROM fundamentals")]
 
 
+def get_fundamentals_one(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM fundamentals WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+# --- Alpha Vantage overview --------------------------------------------------
+def upsert_av_overview(cik, ticker, data_dict):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO av_overview (cik,ticker,data,updated_at) VALUES (?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 ticker=excluded.ticker, data=excluded.data, updated_at=excluded.updated_at""",
+            (cik, ticker, json.dumps(data_dict), now_iso()),
+        )
+
+
+def get_av_overview(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT data FROM av_overview WHERE cik=?", (cik,)).fetchone()
+        if not r:
+            return {}
+        try:
+            return json.loads(r["data"])
+        except (ValueError, TypeError):
+            return {}
+
+
 # --- Filings -----------------------------------------------------------------
 def upsert_filing(f):
     with get_conn() as conn:
@@ -147,6 +176,13 @@ def filings_in_window(cik, days):
         return [dict(r) for r in conn.execute(
             "SELECT * FROM filings WHERE cik=? AND filed_at>=? ORDER BY filed_at DESC",
             (cik, cutoff))]
+
+
+def get_filings_by_cik(cik, limit=12):
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM filings WHERE cik=? ORDER BY filed_at DESC LIMIT ?",
+            (cik, limit))]
 
 
 # --- News --------------------------------------------------------------------
@@ -176,6 +212,13 @@ def news_for_ticker_in_window(ticker, days):
             (cutoff, f"%,{ticker},%"))]
 
 
+def get_news_for_ticker(ticker, limit=10):
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            """SELECT * FROM news WHERE (','||matched_tickers||',') LIKE ?
+               ORDER BY published_at DESC LIMIT ?""", (f"%,{ticker},%", limit))]
+
+
 # --- Scores ------------------------------------------------------------------
 def replace_scores(rows):
     with get_conn() as conn:
@@ -198,6 +241,12 @@ def get_scores(limit=15):
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM scores ORDER BY score DESC, company ASC LIMIT ?", (limit,))]
+
+
+def get_score_one(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM scores WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
 
 
 # --- Subscribers -------------------------------------------------------------
