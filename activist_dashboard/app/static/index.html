@@ -6,82 +6,97 @@
 <title>FGS Global — Activist Vulnerability Early Warning Dashboard</title>
 <style>
   :root {
-    --bg: #0f1419; --panel: #1a2129; --panel2: #222c36;
-    --text: #e6edf3; --muted: #8b98a5; --line: #2d3742;
-    --accent: #3fa7ff; --hot: #ff5c5c; --warn: #ffb547; --ok: #3ddc84;
-    --brand: #00b15a;
+    --bg:#0f1419; --panel:#1a2129; --panel2:#222c36; --text:#e6edf3; --muted:#8b98a5;
+    --line:#2d3742; --accent:#3fa7ff; --hot:#ff5c5c; --warn:#ffb547; --ok:#3ddc84; --brand:#00b15a;
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg); color: var(--text); font-size: 14px;
-  }
-  header {
-    padding: 16px 24px; border-bottom: 1px solid var(--line);
-    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;
-  }
-  .brand { color: var(--brand); font-weight: 800; font-size: 20px; letter-spacing: .3px; }
-  header h1 { font-size: 17px; margin: 4px 0 0; font-weight: 650; }
-  header .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
-  .status { color: var(--muted); font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
-  .status b { color: var(--text); }
-  .tabs { display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--line); background: var(--bg); }
-  .tab { padding: 12px 18px; cursor: pointer; color: var(--muted); font-weight: 600; font-size: 14px;
-    border-bottom: 2px solid transparent; }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: var(--text); border-bottom-color: var(--brand); }
-  .wrap { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-  @media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .5px;
-    margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line); color: var(--muted); }
-  .feed { max-height: 460px; overflow-y: auto; }
-  .item { padding: 11px 16px; border-bottom: 1px solid var(--line); }
-  .item:last-child { border-bottom: none; }
-  .item a { color: var(--text); text-decoration: none; font-weight: 550; }
-  .item a:hover { color: var(--accent); text-decoration: underline; }
-  .meta { color: var(--muted); font-size: 12px; margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; }
-  .tag { display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 11px;
-    background: var(--panel2); color: var(--muted); }
-  .tag.sig { background: rgba(255,92,92,.15); color: #ff8a8a; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; position: sticky; top: 0; background: var(--panel); }
-  .score { font-weight: 700; font-size: 16px; }
-  .score.hot { color: var(--hot); } .score.warn { color: var(--warn); } .score.mid { color: var(--accent); }
-  .mcap { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .signals { color: #cdd8e2; }
-  .pill-link a, .co-link { color: var(--accent); text-decoration: none; }
-  .pill-link a:hover, .co-link:hover { text-decoration: underline; }
-  .co-name { font-weight: 650; }
-  .section-title { font-size: 16px; margin: 26px 0 12px; font-weight: 650; }
-  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
-  button { background: var(--accent); color: #04121f; border: none; padding: 8px 14px;
-    border-radius: 7px; font-weight: 600; cursor: pointer; font-size: 13px; }
-  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
-  button:disabled { opacity: .5; cursor: default; }
-  input[type=email] { background: var(--panel2); border: 1px solid var(--line); color: var(--text);
-    padding: 8px 12px; border-radius: 7px; font-size: 13px; min-width: 240px; }
-  .subscribe { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-    padding: 16px; margin-top: 26px; }
-  .subscribe h2 { font-size: 14px; margin: 0 0 4px; }
-  .subscribe p { color: var(--muted); margin: 0 0 12px; font-size: 13px; }
-  .msg { font-size: 13px; margin-left: 4px; }
-  .msg.ok { color: var(--ok); } .msg.err { color: var(--hot); }
-  .empty { padding: 24px 16px; color: var(--muted); text-align: center; }
-  .updated { color: var(--muted); font-size: 12px; }
-  .about { max-width: 900px; }
-  .about h2 { font-size: 18px; margin: 22px 0 8px; }
-  .about h3 { font-size: 14px; text-transform: uppercase; letter-spacing: .5px; color: var(--brand); margin: 26px 0 10px; }
-  .about p, .about li { color: #cdd8e2; line-height: 1.6; }
-  .about ul { padding-left: 20px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-top: 12px; }
-  .legend td, .legend th { padding: 8px 12px; }
-  .pts { color: var(--hot); font-weight: 700; text-align: center; white-space: nowrap; }
-  .src { color: var(--muted); }
-  .lead { font-size: 15px; color: var(--text); }
-  .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; background:var(--panel2); color:var(--muted); margin-right:6px;}
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text); font-size:14px; }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex;
+    align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+  .brand { color:var(--brand); font-weight:800; font-size:20px; letter-spacing:.3px; }
+  header h1 { font-size:17px; margin:4px 0 0; font-weight:650; }
+  header .sub { color:var(--muted); font-size:12px; margin-top:2px; }
+  .status { color:var(--muted); font-size:12px; display:flex; gap:16px; flex-wrap:wrap; }
+  .status b { color:var(--text); }
+  .tabs { display:flex; gap:4px; padding:0 24px; border-bottom:1px solid var(--line); }
+  .tab { padding:12px 18px; cursor:pointer; color:var(--muted); font-weight:600;
+    border-bottom:2px solid transparent; }
+  .tab:hover { color:var(--text); }
+  .tab.active { color:var(--text); border-bottom-color:var(--brand); }
+  .wrap { padding:20px 24px; max-width:1400px; margin:0 auto; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:900px){ .row{ grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.5px; margin:0;
+    padding:12px 16px; border-bottom:1px solid var(--line); color:var(--muted); }
+  .feed { max-height:460px; overflow-y:auto; }
+  .item { padding:11px 16px; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:none; }
+  .item a { color:var(--text); text-decoration:none; font-weight:550; }
+  .item a:hover { color:var(--accent); text-decoration:underline; }
+  .meta { color:var(--muted); font-size:12px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; background:var(--panel2); color:var(--muted); }
+  .tag.sig { background:rgba(255,92,92,.15); color:#ff8a8a; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; position:sticky; top:0; background:var(--panel); }
+  .score { font-weight:700; font-size:16px; }
+  .score.hot{color:var(--hot);} .score.warn{color:var(--warn);} .score.mid{color:var(--accent);}
+  .mcap { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .signals { color:#cdd8e2; }
+  .pill-link a { color:var(--accent); text-decoration:none; }
+  .pill-link a:hover { text-decoration:underline; }
+  .co-link { color:var(--accent); cursor:pointer; font-weight:650; }
+  .co-link:hover { text-decoration:underline; }
+  .section-title { font-size:16px; margin:26px 0 12px; font-weight:650; }
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  button { background:var(--accent); color:#04121f; border:none; padding:8px 14px; border-radius:7px; font-weight:600; cursor:pointer; font-size:13px; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+  input[type=email] { background:var(--panel2); border:1px solid var(--line); color:var(--text); padding:8px 12px; border-radius:7px; font-size:13px; min-width:240px; }
+  .subscribe { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin-top:26px; }
+  .subscribe h2 { font-size:14px; margin:0 0 4px; }
+  .subscribe p { color:var(--muted); margin:0 0 12px; font-size:13px; }
+  .msg { font-size:13px; margin-left:4px; } .msg.ok{color:var(--ok);} .msg.err{color:var(--hot);}
+  .empty { padding:24px 16px; color:var(--muted); text-align:center; }
+  .updated { color:var(--muted); font-size:12px; }
+  .hint { color:var(--muted); font-size:12px; margin:0 0 12px; }
+  .about { max-width:920px; }
+  .about h2 { font-size:18px; margin:22px 0 8px; }
+  .about h3 { font-size:14px; text-transform:uppercase; letter-spacing:.5px; color:var(--brand); margin:26px 0 10px; }
+  .about p,.about li { color:#cdd8e2; line-height:1.6; }
+  .about ul { padding-left:20px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; margin-top:12px; }
+  .legend td,.legend th { padding:8px 12px; }
+  .pts { color:var(--hot); font-weight:700; text-align:center; white-space:nowrap; }
+  .src { color:var(--muted); }
+  .lead { font-size:15px; color:var(--text); }
+  .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; background:var(--panel2); color:var(--muted); margin-right:6px; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; z-index:50;
+    align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 16px; }
+  .overlay.open { display:flex; }
+  .modal { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:100%; max-width:840px; }
+  .modal-head { padding:18px 22px; border-bottom:1px solid var(--line); display:flex;
+    justify-content:space-between; align-items:flex-start; gap:12px; position:sticky; top:0; background:var(--panel); border-radius:12px 12px 0 0; }
+  .modal-head h2 { margin:0; font-size:19px; }
+  .modal-head .sub { color:var(--muted); font-size:12px; margin-top:3px; }
+  .modal-body { padding:18px 22px; }
+  .close-x { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:7px; padding:6px 11px; }
+  .mh3 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:20px 0 8px; }
+  .desc { color:#cdd8e2; line-height:1.6; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  @media (max-width:640px){ .grid{ grid-template-columns:repeat(2,1fr);} }
+  .kv { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:9px 11px; }
+  .kv .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.3px; }
+  .kv .v { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:2px; }
+  .scorebadge { font-size:22px; font-weight:800; }
+  .siglist { display:flex; flex-wrap:wrap; gap:6px; }
+  .siglist .tag.sig { font-size:12px; padding:3px 9px; }
+  .dlist a { color:var(--text); text-decoration:none; font-weight:550; }
+  .dlist a:hover { color:var(--accent); text-decoration:underline; }
+  .dlist .row2 { padding:9px 0; border-bottom:1px solid var(--line); }
+  .dlist .row2:last-child { border-bottom:none; }
 </style>
 </head>
 <body>
@@ -89,7 +104,7 @@
   <div>
     <div class="brand">FGS Global</div>
     <h1>Activist Vulnerability — Early Warning Dashboard</h1>
-    <div class="sub">Proactive activist-defense intelligence · public data only (SEC EDGAR · news API)</div>
+    <div class="sub">Predictive activist-defense intelligence · public data (SEC EDGAR · SEC XBRL · news API · Alpha Vantage)</div>
   </div>
   <div class="status" id="status">Loading…</div>
 </header>
@@ -117,13 +132,12 @@
   </div>
 
   <div class="section-title">Companies to Pitch — ranked by vulnerability score</div>
+  <p class="hint">Click any company to open its full profile — overview, financials, recent filings &amp; news.</p>
   <div class="panel">
     <table>
       <thead>
-        <tr>
-          <th>#</th><th>Company / Ticker</th><th>Market Cap</th><th>Score</th>
-          <th>Key Signals</th><th>Latest Item</th><th>First Flagged</th>
-        </tr>
+        <tr><th>#</th><th>Company / Ticker</th><th>Market Cap</th><th>Score</th>
+            <th>Key Signals</th><th>Latest Item</th><th>First Flagged</th></tr>
       </thead>
       <tbody id="shortlist">
         <tr><td colspan="7" class="empty">Loading shortlist…</td></tr>
@@ -146,204 +160,228 @@
 
 <div class="wrap about" id="tab-about" style="display:none;">
   <h2>What this is</h2>
-  <p class="lead">An early-warning system that scans U.S. public companies for signs of
-  activist-investor vulnerability <em>before</em> an activist surfaces — so FGS can
-  reach out proactively. It runs entirely on free, public data and refreshes itself
-  automatically.</p>
+  <p class="lead">A <em>predictive</em> screen that finds companies likely to attract an
+  activist investor — <em>before</em> the activist starts building a position — so FGS
+  can get in the door early. It ranks the entire S&amp;P 1500 on the structural traits
+  activists screen for, measured against each company's industry peers, using free
+  public data.</p>
 
-  <h3>How vulnerability is scored</h3>
-  <p>Every company is scored on a rolling 90-day window. Each signal adds points; a
-  company is flagged once it reaches the threshold (currently <b id="aboutThreshold">3</b>).
-  The highest scorers become the “Companies to Pitch” shortlist.</p>
+  <h3>How the score works</h3>
+  <p>Each company is scored on traits measured <b>relative to its industry peers</b>
+  (grouped by SIC code), plus recent event "accelerants" that signal it's time to
+  reach out. Flagged at/above the threshold (currently <b id="aboutThreshold">4</b>);
+  the highest scorers become the shortlist.</p>
   <div class="card">
     <table class="legend">
-      <thead><tr><th>Signal</th><th class="pts">Points</th><th>Source</th></tr></thead>
+      <thead><tr><th>Signal</th><th class="pts">Pts</th><th>Source</th></tr></thead>
       <tbody>
-        <tr><td>CEO / C-suite departure (8-K)</td><td class="pts">2</td><td class="src">SEC EDGAR</td></tr>
-        <tr><td>Earnings miss or guidance cut (8-K / 10-Q)</td><td class="pts">2</td><td class="src">SEC EDGAR</td></tr>
-        <tr><td>Goodwill impairment / write-down (8-K / 10-K)</td><td class="pts">2</td><td class="src">SEC EDGAR</td></tr>
-        <tr><td>Layoff / restructuring announcement (8-K)</td><td class="pts">1</td><td class="src">SEC EDGAR</td></tr>
-        <tr><td>Negative activist / restructuring headline</td><td class="pts">1</td><td class="src">News API</td></tr>
+        <tr><td>Cheap valuation (low price-to-book)</td><td class="pts">2</td><td class="src">Alpha Vantage</td></tr>
+        <tr><td>Operating margin in bottom quartile of sector</td><td class="pts">2</td><td class="src">SEC XBRL</td></tr>
+        <tr><td>Low return on assets vs peers</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
+        <tr><td>Shrinking / weak revenue growth</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
+        <tr><td>Bloated SG&amp;A vs peers</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
+        <tr><td>Cash-heavy balance sheet (lazy capital)</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
+        <tr><td>Under-levered balance sheet</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
+        <tr><td>Event accelerants: CEO exit, earnings miss, impairment, layoffs, activist headline</td><td class="pts">1 ea</td><td class="src">EDGAR · News</td></tr>
       </tbody>
     </table>
     <p style="margin:12px 0 0; color:var(--muted); font-size:13px;">
-      Reading the score: <span class="pill" style="color:#ff8a8a;">6–7 high</span>
-      <span class="pill" style="color:#ffce85;">4–5 elevated</span>
-      <span class="pill" style="color:#9fd0ff;">3 watch</span>
-      — a 7 means multiple distress signals stacked in 90 days (e.g. a CEO exit
-      <em>and</em> an earnings miss <em>and</em> an impairment).
+      Reading the score: <span class="pill" style="color:#ff8a8a;">7+ high</span>
+      <span class="pill" style="color:#ffce85;">5–6 elevated</span>
+      <span class="pill" style="color:#9fd0ff;">4 watch</span>
+      — higher means more activist-attractive traits stacked together.
     </p>
   </div>
 
-  <h3>Where the data comes from</h3>
+  <h3>Where the data comes from (all free)</h3>
   <ul>
-    <li><b>SEC EDGAR</b> — official filings (8-K, 10-K, 10-Q) for the full S&amp;P 1500.
-      We read each filing's event codes and classify the distress signals above.
-      This is the core, most reliable signal.</li>
-    <li><b>Financial news API</b> — headlines filtered to activist / distress topics
-      (CEO changes, activist stakes, guidance cuts, write-downs). We show the
-      headline, outlet, date and a link out — never the article text.</li>
+    <li><b>SEC XBRL financials</b> — each company's actual reported revenue, margins,
+      SG&amp;A, returns, and balance sheet, compared to industry peers. The core of the
+      predictive screen.</li>
+    <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events (CEO changes, impairments,
+      guidance cuts) used as timing accelerants and shown in the live feed.</li>
+    <li><b>Financial news API</b> — activist / distress headlines (headline + outlet +
+      link only).</li>
+    <li><b>Alpha Vantage</b> — market cap, valuation multiples, and a company overview,
+      pulled for the shortlisted companies to power the detail view.</li>
   </ul>
+
+  <h3>The company detail view</h3>
+  <p>Click any flagged company to open a full profile: a plain-English overview, the
+  exact signals it triggered, SEC-derived financials and Alpha Vantage market data,
+  its recent SEC filings, and recent related news — everything needed to prep a pitch.</p>
 
   <h3>How often it updates</h3>
   <ul>
-    <li><b>Every 30 minutes</b> — news headlines and EDGAR filings refresh, and scores recompute.</li>
-    <li><b>Daily at 4:00 PM ET</b> — an email digest of the day's top headlines and top
-      companies goes to all subscribers.</li>
+    <li><b>Every 30 minutes</b> — news + EDGAR filings refresh and scores recompute.</li>
+    <li><b>Daily</b> — full SEC fundamentals refresh, shortlist enrichment, and the
+      4:00 PM ET email digest.</li>
   </ul>
 
-  <h3>How it's built</h3>
-  <p>A Python (FastAPI) backend pulls the data, runs the scoring, and serves this
-  page; data is stored in a lightweight database; the whole thing is deployed on a
-  hosted web service with a shareable URL. No paid data feeds are used.</p>
-
-  <h3>On the roadmap (paid-data version)</h3>
-  <p>Some signals need proprietary or licensed market data and are intentionally left
-  out of this proof-of-concept. They’re natural next additions if FGS wants them:</p>
+  <h3>Current limits &amp; roadmap</h3>
   <ul>
-    <li>Total-shareholder-return underperformance (1- / 3-year vs. peers) and a market-cap filter.</li>
-    <li>Valuation signals (low price-to-book, conglomerate / sum-of-the-parts discount).</li>
-    <li>SG&amp;A vs. named proxy peers, M&amp;A track record, CEO pay vs. performance, full peer benchmarking.</li>
+    <li><b>Valuation coverage:</b> on the free data tier, market-cap/valuation is pulled
+      for the shortlist (not all 1,500). A paid market-data tier would extend valuation
+      and multi-year total-return signals across the whole universe.</li>
+    <li><b>Classification</b> is a strong first pass but can occasionally mis-tag a
+      filing, so the shortlist is a lead-generation starting point for human review —
+      not a final determination.</li>
   </ul>
+</div>
 
-  <p style="color:var(--muted); font-size:13px; margin-top:24px;">
-    This is a proof-of-concept demo. Signal classification is a strong first pass but
-    will occasionally mis-tag a filing, so the shortlist is a lead-generation
-    starting point for a human to review — not a final determination.
-  </p>
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeCompany()">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <h2 id="mTitle">Company</h2>
+        <div class="sub" id="mSub"></div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span class="score scorebadge" id="mScore"></span>
+        <button class="close-x" onclick="closeCompany()">✕ Close</button>
+      </div>
+    </div>
+    <div class="modal-body" id="mBody"><div class="empty">Loading…</div></div>
+  </div>
 </div>
 
 <script>
-const fmtCap = n => {
-  if (n == null) return "—";
-  if (n >= 1e12) return "$" + (n/1e12).toFixed(2) + "T";
-  if (n >= 1e9)  return "$" + (n/1e9).toFixed(1) + "B";
-  if (n >= 1e6)  return "$" + (n/1e6).toFixed(0) + "M";
-  return "$" + n;
-};
-const fmtDate = s => { if (!s) return ""; try { return new Date(s).toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch(e){ return s; } };
-const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const secUrl = (cik, ticker) => {
-  if (cik) return `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(cik)}&type=8-K&dateb=&owner=include&count=40`;
-  return `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company=${encodeURIComponent(ticker||"")}&type=8-K&owner=include&count=40`;
-};
+const fmtCap = n => { if(n==null) return "—";
+  if(n>=1e12) return "$"+(n/1e12).toFixed(2)+"T"; if(n>=1e9) return "$"+(n/1e9).toFixed(1)+"B";
+  if(n>=1e6) return "$"+(n/1e6).toFixed(0)+"M"; return "$"+n; };
+const fmtPct = n => n==null? "—" : (n*100).toFixed(1)+"%";
+const fmtNum = n => n==null? "—" : (typeof n==="number"? n.toLocaleString(undefined,{maximumFractionDigits:2}) : n);
+const fmtDate = s => { if(!s) return ""; try{return new Date(s).toLocaleDateString(undefined,{month:"short",day:"numeric"});}catch(e){return s;} };
+const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const secUrl = cik => `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(cik)}&type=&dateb=&owner=include&count=40`;
 
-function showTab(name) {
-  document.getElementById("tab-dashboard").style.display = (name==="dashboard")?"block":"none";
-  document.getElementById("tab-about").style.display = (name==="about")?"block":"none";
+function showTab(name){
+  document.getElementById("tab-dashboard").style.display = name==="dashboard"?"block":"none";
+  document.getElementById("tab-about").style.display = name==="about"?"block":"none";
   document.getElementById("tabbtn-dashboard").classList.toggle("active", name==="dashboard");
   document.getElementById("tabbtn-about").classList.toggle("active", name==="about");
 }
-
-async function loadStatus() {
-  try {
-    const s = await (await fetch("/api/status")).json();
+async function loadStatus(){
+  try{ const s=await (await fetch("/api/status")).json();
     document.getElementById("status").innerHTML =
-      `Universe <b>${s.universe_size}</b> · Threshold <b>${s.threshold}+</b> · Window <b>${s.window_days}d</b> · ` +
-      `Refresh <b>${s.refresh_minutes}m</b> · Subscribers <b>${s.subscribers}</b> · ` +
+      `Universe <b>${s.universe_size}</b> · Threshold <b>${s.threshold}+</b> · Window <b>${s.window_days}d</b> · `+
+      `Refresh <b>${s.refresh_minutes}m</b> · Subscribers <b>${s.subscribers}</b> · `+
       `News <b>${s.news_enabled?"on":"off"}</b> · Email <b>${s.email_enabled?"on":"off"}</b>`;
-    const at = document.getElementById("aboutThreshold");
-    if (at) at.textContent = s.threshold;
-  } catch(e){}
+    const at=document.getElementById("aboutThreshold"); if(at) at.textContent=s.threshold;
+  }catch(e){}
 }
-
-async function loadFeed() {
-  try {
-    const d = await (await fetch("/api/feed")).json();
-    const nf = document.getElementById("newsFeed");
-    nf.innerHTML = d.news.length ? d.news.map(n => `
-      <div class="item">
-        <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
-        <div class="meta"><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div>
-      </div>`).join("") : `<div class="empty">No headlines yet. Add a NEWS_API_KEY and click “Refresh now”.</div>`;
-
-    const ff = document.getElementById("filingFeed");
-    ff.innerHTML = d.filings.length ? d.filings.map(f => {
-      const sigs = (f.signals||"").split(",").filter(Boolean)
-        .map(s => `<span class="tag sig">${esc(s.replace(/_/g," "))}</span>`).join(" ");
-      return `<div class="item">
-        <a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.company)} — ${esc(f.title)}</a>
-        <div class="meta"><span class="tag">${esc(f.ticker)||esc(f.form)}</span><span>${fmtDate(f.filed_at)}</span>${sigs}</div>
-      </div>`;
-    }).join("") : `<div class="empty">No filings yet — the first EDGAR pull runs on startup and may take a minute.</div>`;
-  } catch(e){}
+async function loadFeed(){
+  try{ const d=await (await fetch("/api/feed")).json();
+    const nf=document.getElementById("newsFeed");
+    nf.innerHTML = d.news.length ? d.news.map(n=>`<div class="item">
+      <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
+      <div class="meta"><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div></div>`).join("")
+      : `<div class="empty">No headlines yet.</div>`;
+    const ff=document.getElementById("filingFeed");
+    ff.innerHTML = d.filings.length ? d.filings.map(f=>{
+      const sigs=(f.signals||"").split(",").filter(Boolean).map(s=>`<span class="tag sig">${esc(s.replace(/_/g," "))}</span>`).join(" ");
+      return `<div class="item"><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.company)} — ${esc(f.title)}</a>
+        <div class="meta"><span class="tag">${esc(f.ticker)||esc(f.form)}</span><span>${fmtDate(f.filed_at)}</span>${sigs}</div></div>`;
+    }).join("") : `<div class="empty">No filings yet.</div>`;
+  }catch(e){}
 }
-
-async function loadShortlist() {
-  try {
-    const d = await (await fetch("/api/shortlist")).json();
-    const tb = document.getElementById("shortlist");
-    if (!d.companies.length) {
-      tb.innerHTML = `<tr><td colspan="7" class="empty">No companies have crossed the threshold yet. Scores build as filings arrive.</td></tr>`;
-      return;
-    }
-    tb.innerHTML = d.companies.map((c, i) => {
-      const cls = c.score >= 6 ? "hot" : c.score >= 4 ? "warn" : "mid";
-      const link = c.top_item_url
-        ? `<span class="pill-link"><a href="${esc(c.top_item_url)}" target="_blank" rel="noopener">${esc(c.top_item_title)||"view"}</a></span>`
-        : "—";
-      const co = `<a class="co-link co-name" href="${esc(secUrl(c.cik, c.ticker))}" target="_blank" rel="noopener" title="View SEC filings">${esc(c.company)}</a>`;
-      return `<tr>
-        <td>${i+1}</td>
+async function loadShortlist(){
+  try{ const d=await (await fetch("/api/shortlist")).json();
+    const tb=document.getElementById("shortlist");
+    if(!d.companies.length){ tb.innerHTML=`<tr><td colspan="7" class="empty">No companies flagged yet. Scores build as data loads.</td></tr>`; return; }
+    tb.innerHTML = d.companies.map((c,i)=>{
+      const cls=c.score>=7?"hot":c.score>=5?"warn":"mid";
+      const link=c.top_item_url?`<span class="pill-link"><a href="${esc(c.top_item_url)}" target="_blank" rel="noopener">${esc(c.top_item_title)||"view"}</a></span>`:"—";
+      const co=`<span class="co-link" onclick="openCompany('${esc(c.cik)}')">${esc(c.company)}</span>`;
+      return `<tr><td>${i+1}</td>
         <td>${co}<div class="meta">${esc(c.ticker)}</div></td>
         <td class="mcap">${fmtCap(c.market_cap)}</td>
         <td class="score ${cls}">${c.score}</td>
         <td class="signals">${esc(c.signals)}</td>
         <td>${link}</td>
-        <td class="mcap">${esc(c.first_flagged)}</td>
-      </tr>`;
+        <td class="mcap">${esc(c.first_flagged)}</td></tr>`;
     }).join("");
-  } catch(e){}
+  }catch(e){}
 }
-
-async function manualRefresh() {
-  const btn = document.getElementById("refreshBtn");
-  btn.disabled = true; btn.textContent = "Refreshing…";
-  try { await fetch("/api/refresh", {method:"POST"}); } catch(e){}
-  await refreshAll();
-  btn.disabled = false; btn.textContent = "↻ Refresh now";
+async function openCompany(cik){
+  const ov=document.getElementById("overlay"); ov.classList.add("open");
+  document.getElementById("mTitle").textContent="Loading…";
+  document.getElementById("mSub").textContent=""; document.getElementById("mScore").textContent="";
+  document.getElementById("mBody").innerHTML=`<div class="empty">Loading company profile…</div>`;
+  try{
+    const d=await (await fetch("/api/company?cik="+encodeURIComponent(cik))).json();
+    if(!d.ok){ document.getElementById("mBody").innerHTML=`<div class="empty">Could not load this company.</div>`; return; }
+    document.getElementById("mTitle").textContent = d.company + (d.ticker?` (${d.ticker})`:"");
+    const o=d.overview||{};
+    document.getElementById("mSub").innerHTML =
+      [o.sector,o.industry,o.exchange].filter(Boolean).map(esc).join(" · ") +
+      (d.first_flagged?` · first flagged ${esc(d.first_flagged)}`:"");
+    const sc=d.score, cls=sc>=7?"hot":sc>=5?"warn":"mid";
+    const sb=document.getElementById("mScore"); sb.textContent=sc; sb.className="score scorebadge "+cls;
+    const f=d.financials||{};
+    const sigs=(d.signals||"").split(" + ").filter(Boolean).map(s=>`<span class="tag sig">${esc(s)}</span>`).join(" ");
+    const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    const filings=(d.filings||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.company)} — ${esc(x.title)}</a>
+        <div class="meta"><span class="tag">${esc(x.form)}</span><span>${fmtDate(x.filed_at)}</span></div></div>`).join("") || `<div class="empty">No recent filings on record.</div>`;
+    const news=(d.news||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.headline)}</a>
+        <div class="meta"><span class="tag">${esc(x.source)||"news"}</span><span>${fmtDate(x.published_at)}</span></div></div>`).join("") || `<div class="empty">No recent matched news.</div>`;
+    document.getElementById("mBody").innerHTML = `
+      ${o.description?`<div class="mh3">Overview</div><div class="desc">${esc(o.description)}</div>`:""}
+      <div class="mh3">Why it's flagged</div><div class="siglist">${sigs||"—"}</div>
+      <div class="mh3">Financials</div>
+      <div class="grid">
+        ${kv("Market cap", fmtCap(d.market_cap))}
+        ${kv("Price / book", fmtNum(f.pb_ratio))}
+        ${kv("P / E", fmtNum(f.pe_ratio))}
+        ${kv("Revenue", fmtCap(f.revenue))}
+        ${kv("Revenue growth", fmtPct(f.revenue_growth))}
+        ${kv("Operating margin", fmtPct(f.operating_margin))}
+        ${kv("Profit margin", fmtPct(f.profit_margin))}
+        ${kv("Return on assets", fmtPct(f.roa))}
+        ${kv("Return on equity", fmtPct(f.return_on_equity))}
+        ${kv("SG&amp;A % of revenue", fmtPct(f.sga_pct))}
+        ${kv("Cash / assets", fmtPct(f.cash_to_assets))}
+        ${kv("Debt / assets", fmtPct(f.debt_to_assets))}
+        ${kv("Dividend yield", fmtPct(f.dividend_yield))}
+        ${kv("52-wk range", (f.week52_low!=null&&f.week52_high!=null)?("$"+fmtNum(f.week52_low)+" – $"+fmtNum(f.week52_high)):"—")}
+        ${kv("Analyst target", f.analyst_target!=null?("$"+fmtNum(f.analyst_target)):"—")}
+      </div>
+      <div class="mh3">Recent SEC filings</div><div class="dlist">${filings}</div>
+      <div class="mh3">Recent news</div><div class="dlist">${news}</div>
+      <div style="margin-top:18px;"><a class="pill-link" href="${secUrl(cik)}" target="_blank" rel="noopener"><span style="color:var(--accent)">View all SEC filings on EDGAR →</span></a></div>
+    `;
+  }catch(e){ document.getElementById("mBody").innerHTML=`<div class="empty">Network error loading company.</div>`; }
 }
-
-async function subscribe() {
-  const email = document.getElementById("emailInput").value;
-  const msg = document.getElementById("subMsg");
-  try {
-    const r = await fetch("/api/subscribe", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({email})});
-    const d = await r.json();
-    msg.textContent = d.ok ? d.message : (d.error||"Error");
-    msg.className = "msg " + (d.ok ? "ok" : "err");
-    if (d.ok) loadStatus();
-  } catch(e){ msg.textContent = "Network error"; msg.className = "msg err"; }
+function closeCompany(){ document.getElementById("overlay").classList.remove("open"); }
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeCompany(); });
+async function manualRefresh(){
+  const b=document.getElementById("refreshBtn"); b.disabled=true; b.textContent="Refreshing…";
+  try{ await fetch("/api/refresh",{method:"POST"}); }catch(e){}
+  await refreshAll(); b.disabled=false; b.textContent="↻ Refresh now";
 }
-
-async function unsubscribe() {
-  const email = document.getElementById("emailInput").value;
-  const msg = document.getElementById("subMsg");
-  try {
-    const r = await fetch("/api/unsubscribe", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({email})});
-    const d = await r.json();
-    msg.textContent = d.message || "Done"; msg.className = "msg ok"; loadStatus();
-  } catch(e){ msg.textContent = "Network error"; msg.className = "msg err"; }
+async function subscribe(){
+  const email=document.getElementById("emailInput").value, msg=document.getElementById("subMsg");
+  try{ const r=await fetch("/api/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})});
+    const d=await r.json(); msg.textContent=d.ok?d.message:(d.error||"Error"); msg.className="msg "+(d.ok?"ok":"err"); if(d.ok)loadStatus();
+  }catch(e){ msg.textContent="Network error"; msg.className="msg err"; }
 }
-
-async function sendTestDigest() {
-  const msg = document.getElementById("subMsg");
-  msg.textContent = "Sending…"; msg.className = "msg";
-  try {
-    const r = await fetch("/api/send-test-digest", {method:"POST"});
-    const d = await r.json();
-    msg.textContent = d.message || (d.ok ? "Sent." : "Error");
-    msg.className = "msg " + (d.ok ? "ok" : "err");
-  } catch(e){ msg.textContent = "Network error"; msg.className = "msg err"; }
+async function unsubscribe(){
+  const email=document.getElementById("emailInput").value, msg=document.getElementById("subMsg");
+  try{ const r=await fetch("/api/unsubscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})});
+    const d=await r.json(); msg.textContent=d.message||"Done"; msg.className="msg ok"; loadStatus();
+  }catch(e){ msg.textContent="Network error"; msg.className="msg err"; }
 }
-
-async function refreshAll() {
-  await Promise.all([loadStatus(), loadFeed(), loadShortlist()]);
-  document.getElementById("updated").textContent = "Last updated " + new Date().toLocaleTimeString();
+async function sendTestDigest(){
+  const msg=document.getElementById("subMsg"); msg.textContent="Sending…"; msg.className="msg";
+  try{ const r=await fetch("/api/send-test-digest",{method:"POST"}); const d=await r.json();
+    msg.textContent=d.message||(d.ok?"Sent.":"Error"); msg.className="msg "+(d.ok?"ok":"err");
+  }catch(e){ msg.textContent="Network error"; msg.className="msg err"; }
 }
-
-refreshAll();
-setInterval(refreshAll, 5 * 60 * 1000);
+async function refreshAll(){
+  await Promise.all([loadStatus(),loadFeed(),loadShortlist()]);
+  document.getElementById("updated").textContent="Last updated "+new Date().toLocaleTimeString();
+}
+refreshAll(); setInterval(refreshAll, 5*60*1000);
 </script>
 </body>
 </html>
