@@ -1,21 +1,20 @@
 """
-Orchestration + SEC XBRL fundamentals + Stooq prices for the predictive screen.
+Orchestration + SEC XBRL fundamentals + Alpha Vantage enrichment.
 
 Jobs:
   refresh_data()             -- EDGAR filings + news + rescore (fast, every 30m).
   refresh_fundamentals()     -- SEC XBRL fundamentals + sector + shares + equity.
-  refresh_prices()           -- Stooq daily prices -> market cap, P/B, 1y/3y TSR.
-  daily_rescore_and_digest() -- 4pm ET: data + fundamentals + prices, rescore, email.
-  startup_full_refresh()     -- once after boot: data, fundamentals, prices, score.
+  refresh_enrichment()       -- Alpha Vantage: market cap + P/B for the shortlist.
+  daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
+  startup_full_refresh()     -- once after boot: data, fundamentals, enrich, score.
 
-Fundamentals come from SEC's free APIs; prices from Stooq (free, keyless). Both
-degrade gracefully: if a source is unreachable, those signals are simply absent
-and scoring continues on whatever data is available.
+Fundamentals come from SEC's free APIs. Market cap + P/B for the shortlist come
+from Alpha Vantage's free tier (keyed, works from cloud hosts). Both degrade
+gracefully: missing data is skipped and scoring continues on what's available.
 """
+import os
 import time
 import gc
-import csv
-import io
 import traceback
 from datetime import datetime, timedelta
 
@@ -28,7 +27,7 @@ _UNIVERSE = None
 _HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
 _SUB_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
-_STOOQ_URL = "https://stooq.com/q/d/l/?s={sym}.us&i=d"
+_AV_URL = "https://www.alphavantage.co/query"
 _sec = requests.Session(); _sec.headers.update(_HEADERS)
 _web = requests.Session(); _web.headers.update({"User-Agent": "Mozilla/5.0 (compatible; ActivistDashboard/1.0)"})
 
@@ -155,71 +154,7 @@ def _sic2(cik10):
     return sic[:2] if len(sic) >= 2 else None
 
 
-def _stooq_history(ticker):
-    sym = ticker.lower().replace(".", "-")
-    r = _get(_web, _STOOQ_URL.format(sym=sym))
-    if not r or not r.text or r.text.strip().lower().startswith("<") \
-            or "no data" in r.text[:50].lower():
-        return []
-    out = []
-    try:
-        for row in csv.DictReader(io.StringIO(r.text)):
-            d = row.get("Date"); c = row.get("Close")
-            if d and c and c not in ("", "N/D"):
-                out.append((d, float(c)))
-    except (ValueError, KeyError):
-        return []
-    return out
-
-
-def _close_near(hist, days_ago):
-    if not hist:
-        return None
-    target = (datetime.utcnow() - timedelta(days=days_ago)).date().isoformat()
-    prior = None
-    for d, c in hist:
-        if d <= target:
-            prior = c
-        else:
-            break
-    return prior
-
-
-def refresh_prices(max_companies=None):
-    funds = {f["cik"]: f for f in database.get_all_fundamentals()}
-    uni = get_universe()
-    subset = uni[:max_companies] if max_companies else uni
-    done = 0
-    for i, c in enumerate(subset):
-        tk = c.get("ticker"); cik10 = _pad(c.get("cik")) if c.get("cik") else None
-        if not tk or not cik10:
-            continue
-        hist = _stooq_history(tk)
-        time.sleep(0.15)
-        if not hist:
-            continue
-        last = hist[-1][1]
-        c1 = _close_near(hist, 365); c3 = _close_near(hist, 365 * 3)
-        tsr_1y = (last - c1) / c1 if (c1 and c1 > 0) else None
-        tsr_3y = (last - c3) / c3 if (c3 and c3 > 0) else None
-        f = funds.get(cik10, {})
-        shares = f.get("shares"); equity = f.get("book_equity")
-        mcap = last * shares if (shares and shares > 0) else None
-        pb = (mcap / equity) if (mcap and equity and equity > 0) else None
-        database.set_company_market(cik10, market_cap=mcap, pb_ratio=pb,
-                                    tsr_1y=tsr_1y, tsr_3y=tsr_3y)
-        done += 1
-        if i % 100 == 0:
-            gc.collect()
-    print(f"[prices] fetched {done}/{len(subset)} from Stooq")
-    try:
-        flagged = scoring.recompute_all()
-        print(f"[prices] rescore complete; flagged={len(flagged)}")
-    except Exception:
-        traceback.print_exc()
-    return done
-
-
+# ---- universe + jobs --------------------------------------------------------
 def get_universe():
     global _UNIVERSE
     if _UNIVERSE is None:
@@ -285,17 +220,73 @@ def refresh_fundamentals(max_companies=None):
 def daily_rescore_and_digest():
     refresh_data()
     refresh_fundamentals()
-    refresh_prices()
+    refresh_enrichment()
     return emailer.send_digest()
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=xbrl-stooq-predictive  starting refresh")
+    print("[boot] VERSION=xbrl-av-predictive  starting refresh")
     refresh_data()
     refresh_fundamentals()
-    refresh_prices()
+    refresh_enrichment()
+
+
+# ---- Alpha Vantage enrichment (shortlist only; free tier ~25 calls/day) ------
+def _av_key():
+    return os.getenv("ALPHAVANTAGE_API_KEY", "")
+
+
+def _av_float(v):
+    if v in (None, "", "None", "-", "NaN"):
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _unpad(cik):
+    try:
+        return str(int(cik))
+    except (ValueError, TypeError):
+        return cik
+
+
+def refresh_enrichment():
+    """Fetch market cap + P/B for the current shortlist via Alpha Vantage and
+    rescore. Best-effort: missing/rate-limited names are simply skipped."""
+    key = _av_key()
+    if not key:
+        print("[enrich] no ALPHAVANTAGE_API_KEY set; skipping")
+        return 0
+    shortlist = database.get_scores(limit=config.SHORTLIST_SIZE)
+    done = 0
+    for s in shortlist:
+        tk = s.get("ticker"); cik = s.get("cik")
+        if not tk or not cik:
+            continue
+        try:
+            r = _web.get(_AV_URL, params={"function": "OVERVIEW", "symbol": tk,
+                                          "apikey": key}, timeout=25)
+            d = r.json() if r.status_code == 200 else {}
+        except (requests.RequestException, ValueError):
+            d = {}
+        if d and "Symbol" in d:
+            mcap = _av_float(d.get("MarketCapitalization"))
+            pb = _av_float(d.get("PriceToBookRatio"))
+            database.set_company_market(_unpad(cik), market_cap=mcap, pb_ratio=pb)
+            done += 1
+        time.sleep(13)  # respect the ~5 requests/minute free limit
+    print(f"[enrich] Alpha Vantage enriched {done}/{len(shortlist)} shortlisted")
+    try:
+        flagged = scoring.recompute_all()
+        print(f"[enrich] rescore complete; flagged={len(flagged)}")
+    except Exception:
+        traceback.print_exc()
+    return done
 
 
 if __name__ == "__main__":
     database.init_db()
+    refresh_enrichment.__doc__  # no-op
     refresh_data()
