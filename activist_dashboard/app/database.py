@@ -1,65 +1,40 @@
 """
-SQLite storage. Zero configuration -- a single file on disk. Holds the company
-universe, ingested filings & news, daily scores, and the email subscriber list.
+SQLite storage. Holds the company universe, ingested filings & news, daily
+scores, the email subscriber list, and (new) SEC XBRL fundamentals used by the
+predictive peer-relative scoring model.
 """
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import config
 
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companies (
-    cik         TEXT PRIMARY KEY,
-    ticker      TEXT,
-    name        TEXT,
-    market_cap  REAL,
-    pb_ratio    REAL,
-    tsr_1y      REAL,
-    tsr_3y      REAL,
-    updated_at  TEXT
+    cik TEXT PRIMARY KEY, ticker TEXT, name TEXT, market_cap REAL,
+    pb_ratio REAL, tsr_1y REAL, tsr_3y REAL, updated_at TEXT
 );
-
 CREATE TABLE IF NOT EXISTS filings (
-    id          TEXT PRIMARY KEY,         -- accession number
-    cik         TEXT,
-    ticker      TEXT,
-    company     TEXT,
-    form        TEXT,
-    filed_at    TEXT,
-    title       TEXT,
-    url         TEXT,
-    signals     TEXT,                     -- comma-separated signal keys
-    ingested_at TEXT
+    id TEXT PRIMARY KEY, cik TEXT, ticker TEXT, company TEXT, form TEXT,
+    filed_at TEXT, title TEXT, url TEXT, signals TEXT, ingested_at TEXT
 );
-
 CREATE TABLE IF NOT EXISTS news (
-    id          TEXT PRIMARY KEY,         -- hash of url
-    headline    TEXT,
-    source      TEXT,
-    published_at TEXT,
-    url         TEXT,
-    matched_tickers TEXT,                 -- comma-separated tickers (may be empty)
-    ingested_at TEXT
+    id TEXT PRIMARY KEY, headline TEXT, source TEXT, published_at TEXT,
+    url TEXT, matched_tickers TEXT, ingested_at TEXT
 );
-
 CREATE TABLE IF NOT EXISTS scores (
-    cik          TEXT PRIMARY KEY,
-    ticker       TEXT,
-    company      TEXT,
-    market_cap   REAL,
-    score        INTEGER,
-    signals      TEXT,                    -- human-readable list of triggers
-    top_item_title TEXT,
-    top_item_url   TEXT,
-    first_flagged TEXT,
-    updated_at   TEXT
+    cik TEXT PRIMARY KEY, ticker TEXT, company TEXT, market_cap REAL,
+    score INTEGER, signals TEXT, top_item_title TEXT, top_item_url TEXT,
+    first_flagged TEXT, updated_at TEXT
 );
-
 CREATE TABLE IF NOT EXISTS subscribers (
-    email        TEXT PRIMARY KEY,
-    created_at   TEXT
+    email TEXT PRIMARY KEY, created_at TEXT
+);
+CREATE TABLE IF NOT EXISTS fundamentals (
+    cik TEXT PRIMARY KEY, ticker TEXT, sector TEXT,
+    revenue REAL, revenue_growth REAL, operating_margin REAL, sga_pct REAL,
+    roa REAL, cash_to_assets REAL, debt_to_assets REAL, updated_at TEXT
 );
 """
 
@@ -89,17 +64,15 @@ def upsert_company(cik, ticker, name, market_cap=None, pb_ratio=None,
                    tsr_1y=None, tsr_3y=None):
     with get_conn() as conn:
         conn.execute(
-            """INSERT INTO companies (cik, ticker, name, market_cap, pb_ratio,
-                   tsr_1y, tsr_3y, updated_at)
+            """INSERT INTO companies (cik,ticker,name,market_cap,pb_ratio,tsr_1y,tsr_3y,updated_at)
                VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(cik) DO UPDATE SET
-                   ticker=excluded.ticker,
-                   name=excluded.name,
-                   market_cap=COALESCE(excluded.market_cap, companies.market_cap),
-                   pb_ratio=COALESCE(excluded.pb_ratio, companies.pb_ratio),
-                   tsr_1y=COALESCE(excluded.tsr_1y, companies.tsr_1y),
-                   tsr_3y=COALESCE(excluded.tsr_3y, companies.tsr_3y),
-                   updated_at=excluded.updated_at""",
+                 ticker=excluded.ticker, name=excluded.name,
+                 market_cap=COALESCE(excluded.market_cap, companies.market_cap),
+                 pb_ratio=COALESCE(excluded.pb_ratio, companies.pb_ratio),
+                 tsr_1y=COALESCE(excluded.tsr_1y, companies.tsr_1y),
+                 tsr_3y=COALESCE(excluded.tsr_3y, companies.tsr_3y),
+                 updated_at=excluded.updated_at""",
             (cik, ticker, name, market_cap, pb_ratio, tsr_1y, tsr_3y, now_iso()),
         )
 
@@ -109,17 +82,40 @@ def get_companies():
         return [dict(r) for r in conn.execute("SELECT * FROM companies")]
 
 
+# --- Fundamentals ------------------------------------------------------------
+def upsert_fundamentals(cik, ticker, sector, m):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO fundamentals
+               (cik,ticker,sector,revenue,revenue_growth,operating_margin,
+                sga_pct,roa,cash_to_assets,debt_to_assets,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 ticker=excluded.ticker, sector=excluded.sector,
+                 revenue=excluded.revenue, revenue_growth=excluded.revenue_growth,
+                 operating_margin=excluded.operating_margin, sga_pct=excluded.sga_pct,
+                 roa=excluded.roa, cash_to_assets=excluded.cash_to_assets,
+                 debt_to_assets=excluded.debt_to_assets, updated_at=excluded.updated_at""",
+            (cik, ticker, sector, m.get("revenue"), m.get("revenue_growth"),
+             m.get("operating_margin"), m.get("sga_pct"), m.get("roa"),
+             m.get("cash_to_assets"), m.get("debt_to_assets"), now_iso()),
+        )
+
+
+def get_all_fundamentals():
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM fundamentals")]
+
+
 # --- Filings -----------------------------------------------------------------
 def upsert_filing(f):
     with get_conn() as conn:
         conn.execute(
             """INSERT OR IGNORE INTO filings
-               (id, cik, ticker, company, form, filed_at, title, url, signals,
-                ingested_at)
+               (id,cik,ticker,company,form,filed_at,title,url,signals,ingested_at)
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (f["id"], f["cik"], f.get("ticker"), f["company"], f["form"],
-             f["filed_at"], f["title"], f["url"], f.get("signals", ""),
-             now_iso()),
+             f["filed_at"], f["title"], f["url"], f.get("signals", ""), now_iso()),
         )
 
 
@@ -142,7 +138,7 @@ def upsert_news(n):
     with get_conn() as conn:
         conn.execute(
             """INSERT OR IGNORE INTO news
-               (id, headline, source, published_at, url, matched_tickers, ingested_at)
+               (id,headline,source,published_at,url,matched_tickers,ingested_at)
                VALUES (?,?,?,?,?,?,?)""",
             (n["id"], n["headline"], n["source"], n["published_at"], n["url"],
              n.get("matched_tickers", ""), now_iso()),
@@ -159,15 +155,13 @@ def news_for_ticker_in_window(ticker, days):
     cutoff = _cutoff(days)
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
-            """SELECT * FROM news
-               WHERE published_at>=? AND (','||matched_tickers||',') LIKE ?
-               ORDER BY published_at DESC""",
+            """SELECT * FROM news WHERE published_at>=?
+               AND (','||matched_tickers||',') LIKE ? ORDER BY published_at DESC""",
             (cutoff, f"%,{ticker},%"))]
 
 
 # --- Scores ------------------------------------------------------------------
 def replace_scores(rows):
-    """Rewrite the scores table, preserving first_flagged for existing companies."""
     with get_conn() as conn:
         existing = {r["cik"]: r["first_flagged"]
                     for r in conn.execute("SELECT cik, first_flagged FROM scores")}
@@ -176,35 +170,30 @@ def replace_scores(rows):
             first = existing.get(r["cik"], r["first_flagged"])
             conn.execute(
                 """INSERT INTO scores
-                   (cik, ticker, company, market_cap, score, signals,
-                    top_item_title, top_item_url, first_flagged, updated_at)
+                   (cik,ticker,company,market_cap,score,signals,top_item_title,
+                    top_item_url,first_flagged,updated_at)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (r["cik"], r["ticker"], r["company"], r["market_cap"], r["score"],
-                 r["signals"], r["top_item_title"], r["top_item_url"],
-                 first, now_iso()),
+                 r["signals"], r["top_item_title"], r["top_item_url"], first, now_iso()),
             )
 
 
 def get_scores(limit=15):
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT * FROM scores ORDER BY score DESC, market_cap DESC LIMIT ?",
-            (limit,))]
+            "SELECT * FROM scores ORDER BY score DESC, company ASC LIMIT ?", (limit,))]
 
 
 # --- Subscribers -------------------------------------------------------------
 def add_subscriber(email):
     with get_conn() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO subscribers (email, created_at) VALUES (?,?)",
-            (email.strip().lower(), now_iso()),
-        )
+        conn.execute("INSERT OR IGNORE INTO subscribers (email,created_at) VALUES (?,?)",
+                     (email.strip().lower(), now_iso()))
 
 
 def remove_subscriber(email):
     with get_conn() as conn:
-        conn.execute("DELETE FROM subscribers WHERE email=?",
-                     (email.strip().lower(),))
+        conn.execute("DELETE FROM subscribers WHERE email=?", (email.strip().lower(),))
 
 
 def get_subscribers():
@@ -213,5 +202,4 @@ def get_subscribers():
 
 
 def _cutoff(days):
-    from datetime import timedelta
     return (datetime.utcnow() - timedelta(days=days)).isoformat()
