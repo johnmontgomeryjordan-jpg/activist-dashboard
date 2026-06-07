@@ -4,13 +4,9 @@ Orchestration + SEC XBRL fundamentals + Alpha Vantage enrichment.
 Jobs:
   refresh_data()             -- EDGAR filings + news + rescore (fast, every 30m).
   refresh_fundamentals()     -- SEC XBRL fundamentals + sector + shares + equity.
-  refresh_enrichment()       -- Alpha Vantage: market cap + P/B for the shortlist.
+  refresh_enrichment()       -- Alpha Vantage: market cap + P/B + overview (shortlist).
   daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
   startup_full_refresh()     -- once after boot: data, fundamentals, enrich, score.
-
-Fundamentals come from SEC's free APIs. Market cap + P/B for the shortlist come
-from Alpha Vantage's free tier (keyed, works from cloud hosts). Both degrade
-gracefully: missing data is skipped and scoring continues on what's available.
 """
 import os
 import time
@@ -253,8 +249,9 @@ def _unpad(cik):
 
 
 def refresh_enrichment():
-    """Fetch market cap + P/B for the current shortlist via Alpha Vantage and
-    rescore. Best-effort: missing/rate-limited names are simply skipped."""
+    """Fetch market cap + P/B + full company overview for the current shortlist
+    via Alpha Vantage, store them, and rescore. Paces calls under the free
+    ~5/min limit with one backoff; missing/rate-limited names are skipped."""
     key = _av_key()
     if not key:
         print("[enrich] no ALPHAVANTAGE_API_KEY set; skipping")
@@ -265,18 +262,17 @@ def refresh_enrichment():
         tk = s.get("ticker"); cik = s.get("cik")
         if not tk or not cik:
             continue
-        try:
-            r = _web.get(_AV_URL, params={"function": "OVERVIEW", "symbol": tk,
-                                          "apikey": key}, timeout=25)
-            d = r.json() if r.status_code == 200 else {}
-        except (requests.RequestException, ValueError):
-            d = {}
+        d = _av_overview(tk, key)
+        if d is None:                      # rate-limited -> wait a minute, retry once
+            time.sleep(60)
+            d = _av_overview(tk, key)
         if d and "Symbol" in d:
             mcap = _av_float(d.get("MarketCapitalization"))
             pb = _av_float(d.get("PriceToBookRatio"))
             database.set_company_market(_unpad(cik), market_cap=mcap, pb_ratio=pb)
+            database.upsert_av_overview(cik, tk, d)
             done += 1
-        time.sleep(13)  # respect the ~5 requests/minute free limit
+        time.sleep(20)                     # ~3/min, under the free 5/min limit
     print(f"[enrich] Alpha Vantage enriched {done}/{len(shortlist)} shortlisted")
     try:
         flagged = scoring.recompute_all()
@@ -286,7 +282,19 @@ def refresh_enrichment():
     return done
 
 
+def _av_overview(ticker, key):
+    """Return the OVERVIEW dict, {} on blank, or None if rate-limited (retry)."""
+    try:
+        r = _web.get(_AV_URL, params={"function": "OVERVIEW", "symbol": ticker,
+                                      "apikey": key}, timeout=25)
+        d = r.json() if r.status_code == 200 else {}
+    except (requests.RequestException, ValueError):
+        return {}
+    if isinstance(d, dict) and ("Note" in d or "Information" in d):
+        return None
+    return d
+
+
 if __name__ == "__main__":
     database.init_db()
-    refresh_enrichment.__doc__  # no-op
     refresh_data()
