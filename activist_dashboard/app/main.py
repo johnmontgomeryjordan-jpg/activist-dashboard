@@ -1,9 +1,6 @@
 """
-FastAPI application: serves the dashboard, the JSON API, the subscribe endpoint,
-and runs the background scheduler (30-min refresh + 4pm-ET digest).
-
-Run locally:   uvicorn app.main:app --reload
-In production:  uvicorn app.main:app --host 0.0.0.0 --port $PORT
+FastAPI app: serves the dashboard, JSON API (incl. per-company detail), the
+subscribe endpoint, and runs the background scheduler.
 """
 import re
 import threading
@@ -26,8 +23,6 @@ scheduler = BackgroundScheduler(timezone=config.TIMEZONE)
 
 
 def _run_initial_refresh():
-    """Kick off a first full pull (filings, news, market data, scores) in the
-    background so the page populates within minutes of a deploy."""
     try:
         pipeline.startup_full_refresh()
     except Exception as e:  # pragma: no cover
@@ -38,22 +33,14 @@ def _run_initial_refresh():
 async def lifespan(app: FastAPI):
     database.init_db()
     pipeline.get_universe()
-
-    # 30-minute data refresh (EDGAR + news + rescore)
-    scheduler.add_job(
-        pipeline.refresh_data,
-        IntervalTrigger(minutes=config.REFRESH_MINUTES),
-        id="refresh", replace_existing=True, max_instances=1,
-    )
-    # Daily 4pm ET: refresh market data, rescore, send digest
-    scheduler.add_job(
-        pipeline.daily_rescore_and_digest,
-        CronTrigger(hour=config.DIGEST_HOUR_ET, minute=0,
-                    timezone=config.TIMEZONE),
-        id="digest", replace_existing=True, max_instances=1,
-    )
+    scheduler.add_job(pipeline.refresh_data,
+                      IntervalTrigger(minutes=config.REFRESH_MINUTES),
+                      id="refresh", replace_existing=True, max_instances=1)
+    scheduler.add_job(pipeline.daily_rescore_and_digest,
+                      CronTrigger(hour=config.DIGEST_HOUR_ET, minute=0,
+                                  timezone=config.TIMEZONE),
+                      id="digest", replace_existing=True, max_instances=1)
     scheduler.start()
-    # Non-blocking first refresh so the server starts immediately.
     threading.Thread(target=_run_initial_refresh, daemon=True).start()
     yield
     scheduler.shutdown(wait=False)
@@ -70,17 +57,70 @@ def index():
 
 @app.get("/api/feed")
 def api_feed():
-    """Live intelligence feed: recent news (left) + recent filings (right)."""
-    return {
-        "news": database.recent_news(limit=25),
-        "filings": database.recent_filings(limit=25),
-    }
+    return {"news": database.recent_news(limit=25),
+            "filings": database.recent_filings(limit=25)}
 
 
 @app.get("/api/shortlist")
 def api_shortlist():
-    """Ranked 'Companies to Pitch'."""
     return {"companies": database.get_scores(limit=config.SHORTLIST_SIZE)}
+
+
+@app.get("/api/company")
+def api_company(cik: str):
+    """Full detail for one flagged company: overview, signals, financials,
+    recent filings, recent news."""
+    score = database.get_score_one(cik)
+    if not score:
+        return JSONResponse({"ok": False, "error": "Company not found."},
+                            status_code=404)
+    ticker = score.get("ticker")
+    fund = database.get_fundamentals_one(cik)
+    av = database.get_av_overview(cik)
+
+    def avf(key):
+        v = av.get(key)
+        if v in (None, "", "None", "-", "NaN"):
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return v
+
+    return {
+        "ok": True,
+        "ticker": ticker,
+        "company": score.get("company"),
+        "score": score.get("score"),
+        "signals": score.get("signals"),
+        "first_flagged": score.get("first_flagged"),
+        "market_cap": score.get("market_cap"),
+        "overview": {
+            "description": av.get("Description"),
+            "sector": av.get("Sector"),
+            "industry": av.get("Industry"),
+            "exchange": av.get("Exchange"),
+        },
+        "financials": {
+            "revenue": fund.get("revenue"),
+            "revenue_growth": fund.get("revenue_growth"),
+            "operating_margin": fund.get("operating_margin"),
+            "sga_pct": fund.get("sga_pct"),
+            "roa": fund.get("roa"),
+            "cash_to_assets": fund.get("cash_to_assets"),
+            "debt_to_assets": fund.get("debt_to_assets"),
+            "pe_ratio": avf("PERatio"),
+            "pb_ratio": avf("PriceToBookRatio"),
+            "profit_margin": avf("ProfitMargin"),
+            "dividend_yield": avf("DividendYield"),
+            "week52_high": avf("52WeekHigh"),
+            "week52_low": avf("52WeekLow"),
+            "analyst_target": avf("AnalystTargetPrice"),
+            "return_on_equity": avf("ReturnOnEquityTTM"),
+        },
+        "filings": database.get_filings_by_cik(cik, limit=12),
+        "news": database.get_news_for_ticker(ticker, limit=10) if ticker else [],
+    }
 
 
 @app.get("/api/status")
@@ -118,20 +158,16 @@ async def api_unsubscribe(request: Request):
 
 @app.post("/api/refresh")
 def api_refresh():
-    """Manual trigger (button on the dashboard) for an immediate data pull."""
     result = pipeline.refresh_data()
     return {"ok": True, **result}
 
 
 @app.api_route("/api/send-test-digest", methods=["GET", "POST"])
 def api_send_test_digest():
-    """Send the digest right now to all subscribers (for testing the email).
-    Accepts GET too so it can be triggered from a browser address bar."""
     subs = database.get_subscribers()
     if not subs:
-        return {"ok": False,
-                "message": "No subscribers yet. Add your email on the "
-                           "dashboard first, then try again."}
+        return {"ok": False, "message": "No subscribers yet. Add your email on "
+                "the dashboard first, then try again."}
     sent = emailer.send_digest()
     return {"ok": True, "sent": sent,
             "message": f"Digest sent to {sent} of {len(subs)} subscriber(s). "
