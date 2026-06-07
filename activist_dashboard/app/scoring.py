@@ -1,143 +1,148 @@
 """
-Vulnerability scoring model.
+Predictive target-attractiveness scoring.
 
-Point system (per the brief):
+Scores every company on the STRUCTURAL traits activists screen for when picking
+targets -- measured RELATIVE TO INDUSTRY PEERS (same 2-digit SIC group) using
+free SEC XBRL fundamentals -- plus event "accelerants" that say pitch them now.
 
-    CEO / C-suite departure (8-K)................. 2
-      + stock drops 5%+ on the announcement....... +1 bonus
-    Earnings miss or guidance cut (8-K/10-Q)...... 2
-    Goodwill impairment / write-down (8-K/10-K)... 2
-    Layoff announcement (8-K)..................... 1
-    Negative activist/restructuring headline...... 1
-    1-year TSR negative........................... 1
-    3-year TSR in bottom quartile of universe..... 1
-    Low P/B (< 1.5x).............................. 1
+  Structural (peer-relative)
+    Operating margin in bottom quartile of sector ........ 2
+    ROA in bottom quartile of sector ..................... 1
+    Revenue shrinking or bottom-quartile growth .......... 1
+    SG&A % of revenue in top quartile (bloated costs) .... 1
+    Cash/assets in top quartile (lazy, cash-hoarding) .... 1
+    Debt/assets in bottom quartile (under-levered) ....... 1
+  Event accelerants (recent filings / news)
+    CEO/exec departure, earnings miss, impairment,
+    layoffs, negative activist headline .................. 1 each
 
-Scores use a rolling SCORE_WINDOW_DAYS (default 90) window and are recomputed
-daily. Companies at/above SCORE_THRESHOLD (default 3) are flagged. The top
-SHORTLIST_SIZE are surfaced as 'Companies to Pitch'.
+Flagged at/above SCORE_THRESHOLD; top SHORTLIST_SIZE surfaced. Peer quartiles
+need >= MIN_PEERS companies with the metric or the signal is skipped.
+Valuation & total-return signals arrive in Phase 2 (free Stooq prices).
 """
-from . import config, database, market
+from . import config, database
 
-POINTS = {
-    "ceo_departure": 2,
-    "ceo_drop_bonus": 1,
-    "earnings_miss": 2,
-    "impairment": 2,
-    "layoffs": 1,
-    "news_negative": 1,
-    "tsr_1y_negative": 1,
-    "tsr_3y_bottom_quartile": 1,
-    "low_pb": 1,
-}
+MIN_PEERS = 5
 
-SIGNAL_LABELS = {
-    "ceo_departure": "CEO/exec departure",
-    "ceo_drop_bonus": "stock dropped 5%+ on the news",
-    "earnings_miss": "earnings miss / guidance cut",
-    "impairment": "impairment / write-down",
-    "layoffs": "layoffs / restructuring",
+STRUCT_POINTS = {"low_margin": 2, "low_roa": 1, "weak_growth": 1,
+                 "high_sga": 1, "cash_hoard": 1, "underlevered": 1}
+EVENT_POINTS = {"ceo_departure": 1, "earnings_miss": 1, "impairment": 1,
+                "layoffs": 1, "news_negative": 1}
+
+LABELS = {
+    "low_margin": "low margin vs peers",
+    "low_roa": "low return on assets vs peers",
+    "weak_growth": "shrinking / weak revenue growth",
+    "high_sga": "bloated SG&A vs peers",
+    "cash_hoard": "cash-heavy balance sheet",
+    "underlevered": "under-levered balance sheet",
+    "ceo_departure": "recent CEO/exec departure",
+    "earnings_miss": "recent earnings miss / guidance cut",
+    "impairment": "recent impairment / write-down",
+    "layoffs": "recent layoffs / restructuring",
     "news_negative": "negative activist headline",
-    "tsr_1y_negative": "negative 1-yr TSR",
-    "tsr_3y_bottom_quartile": "bottom-quartile 3-yr TSR",
-    "low_pb": "low price-to-book",
 }
 
 
 def _pad_cik(cik):
-    """Normalize a CIK to the 10-digit zero-padded form used in the filings
-    table, so company<->filing lookups always match."""
-    if not cik:
-        return cik
-    return str(cik).lstrip("0").zfill(10)
+    return str(cik).lstrip("0").zfill(10) if cik else cik
 
 
-def _bottom_quartile_threshold(companies):
-    vals = sorted(c["tsr_3y"] for c in companies if c.get("tsr_3y") is not None)
-    if len(vals) < 4:
-        return None
-    idx = max(0, int(0.25 * len(vals)) - 1)
-    return vals[idx]
+def _quantiles(values):
+    vals = sorted(v for v in values if v is not None)
+    if len(vals) < MIN_PEERS:
+        return None, None
+    def pct(p):
+        idx = min(len(vals) - 1, max(0, int(round(p * (len(vals) - 1)))))
+        return vals[idx]
+    return pct(0.25), pct(0.75)
 
 
-def score_company(company, window_days, q3_threshold):
-    """Return (score:int, triggered_keys:list, top_item:dict|None)."""
-    cik = company["cik"]
-    ticker = company.get("ticker")
-    triggered = []
-    top_item = None
+def _sector_thresholds(funds):
+    by_sector = {}
+    for f in funds:
+        by_sector.setdefault(f.get("sector") or "??", []).append(f)
+    metrics = ["operating_margin", "roa", "revenue_growth", "sga_pct",
+               "cash_to_assets", "debt_to_assets"]
+    th = {}
+    for sec, rows in by_sector.items():
+        th[sec] = {m: _quantiles([r.get(m) for r in rows]) for m in metrics}
+    return th
 
-    # Filings are stored under the 10-digit padded CIK; normalize before lookup.
-    filings = database.filings_in_window(_pad_cik(cik), window_days)
-    # Each distinct signal type counts once (avoid double-counting repeat filings).
-    seen_signals = set()
-    for f in filings:
+
+def _event_signals(cik, ticker):
+    triggered = set()
+    top = None
+    for f in database.filings_in_window(_pad_cik(cik), config.SCORE_WINDOW_DAYS):
         for sig in (f.get("signals") or "").split(","):
             sig = sig.strip()
-            if sig and sig in POINTS and sig not in seen_signals:
-                seen_signals.add(sig)
-                triggered.append(sig)
-                if top_item is None:
-                    top_item = {"title": f"{f['company']} — {f['title']}",
-                                "url": f["url"]}
-        # CEO drop bonus: if this filing is a CEO departure, check price reaction.
-        if "ceo_departure" in (f.get("signals") or "") and \
-                "ceo_drop_bonus" not in seen_signals and ticker:
-            change = market.price_change_on_date(ticker, f["filed_at"])
-            if change is not None and change <= -0.05:
-                seen_signals.add("ceo_drop_bonus")
-                triggered.append("ceo_drop_bonus")
-
-    # News-based signal
-    news = database.news_for_ticker_in_window(ticker, window_days) if ticker else []
-    if news and "news_negative" not in seen_signals:
-        seen_signals.add("news_negative")
-        triggered.append("news_negative")
-        if top_item is None:
-            n = news[0]
-            top_item = {"title": n["headline"], "url": n["url"]}
-
-    # Market-based signals
-    if company.get("tsr_1y") is not None and company["tsr_1y"] < 0:
-        triggered.append("tsr_1y_negative")
-    if (q3_threshold is not None and company.get("tsr_3y") is not None
-            and company["tsr_3y"] <= q3_threshold):
-        triggered.append("tsr_3y_bottom_quartile")
-    if company.get("pb_ratio") is not None and 0 < company["pb_ratio"] < 1.5:
-        triggered.append("low_pb")
-
-    score = sum(POINTS[s] for s in triggered)
-    return score, triggered, top_item
+            if sig in EVENT_POINTS:
+                triggered.add(sig)
+                if top is None:
+                    top = {"title": f"{f['company']} — {f['title']}", "url": f["url"]}
+    if ticker:
+        nws = database.news_for_ticker_in_window(ticker, config.SCORE_WINDOW_DAYS)
+        if nws:
+            triggered.add("news_negative")
+            if top is None:
+                top = {"title": nws[0]["headline"], "url": nws[0]["url"]}
+    return triggered, top
 
 
 def recompute_all():
-    """
-    Score every in-universe company, write the shortlist to the scores table.
-    Returns the list of flagged company dicts.
-    """
-    companies = database.get_companies()
-    in_universe = [c for c in companies
-                   if market.passes_universe_filter(c.get("market_cap"))]
-    # If market caps haven't been fetched yet (e.g. first run / offline),
-    # fall back to scoring everyone so the demo still produces output.
-    pool = in_universe if in_universe else companies
+    funds = database.get_all_fundamentals()
+    companies = {_pad_cik(c["cik"]): c for c in database.get_companies()}
+    th = _sector_thresholds(funds)
 
-    q3 = _bottom_quartile_threshold(pool)
     rows = []
-    for c in pool:
-        score, triggered, top = score_company(c, config.SCORE_WINDOW_DAYS, q3)
-        if score >= config.SCORE_THRESHOLD:
-            rows.append({
-                "cik": c["cik"],
-                "ticker": c.get("ticker"),
-                "company": c.get("name"),
-                "market_cap": c.get("market_cap"),
-                "score": score,
-                "signals": " + ".join(SIGNAL_LABELS[s] for s in triggered),
-                "top_item_title": top["title"] if top else "",
-                "top_item_url": top["url"] if top else "",
-                "first_flagged": database.now_iso()[:10],
-            })
-    rows.sort(key=lambda r: (r["score"], r["market_cap"] or 0), reverse=True)
+    for f in funds:
+        t = th.get(f.get("sector") or "??", {})
+        triggered = []
+
+        def q(metric):
+            return t.get(metric, (None, None))
+
+        om_q1, _ = q("operating_margin")
+        if om_q1 is not None and f.get("operating_margin") is not None and f["operating_margin"] <= om_q1:
+            triggered.append("low_margin")
+        roa_q1, _ = q("roa")
+        if roa_q1 is not None and f.get("roa") is not None and f["roa"] <= roa_q1:
+            triggered.append("low_roa")
+        g_q1, _ = q("revenue_growth")
+        if f.get("revenue_growth") is not None and (
+                f["revenue_growth"] < 0 or (g_q1 is not None and f["revenue_growth"] <= g_q1)):
+            triggered.append("weak_growth")
+        _, sga_q3 = q("sga_pct")
+        if sga_q3 is not None and f.get("sga_pct") is not None and f["sga_pct"] >= sga_q3:
+            triggered.append("high_sga")
+        _, cash_q3 = q("cash_to_assets")
+        if cash_q3 is not None and f.get("cash_to_assets") is not None and f["cash_to_assets"] >= cash_q3:
+            triggered.append("cash_hoard")
+        d_q1, _ = q("debt_to_assets")
+        if d_q1 is not None and f.get("debt_to_assets") is not None and f["debt_to_assets"] <= d_q1:
+            triggered.append("underlevered")
+
+        struct_score = sum(STRUCT_POINTS[s] for s in triggered)
+
+        cik, ticker = f["cik"], f.get("ticker")
+        events, top = _event_signals(cik, ticker)
+        total = struct_score + sum(EVENT_POINTS[s] for s in events)
+        triggered += list(events)
+
+        if total < config.SCORE_THRESHOLD:
+            continue
+        comp = companies.get(_pad_cik(cik), {})
+        rows.append({
+            "cik": cik, "ticker": ticker,
+            "company": comp.get("name") or ticker,
+            "market_cap": comp.get("market_cap"),
+            "score": total,
+            "signals": " + ".join(LABELS[s] for s in triggered if s in LABELS),
+            "top_item_title": top["title"] if top else "",
+            "top_item_url": top["url"] if top else "",
+            "first_flagged": database.now_iso()[:10],
+        })
+
+    rows.sort(key=lambda r: r["score"], reverse=True)
     database.replace_scores(rows)
     return rows[: config.SHORTLIST_SIZE]
