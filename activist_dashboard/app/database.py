@@ -1,14 +1,13 @@
 """
-SQLite storage. Holds the company universe, ingested filings & news, daily
-scores, the email subscriber list, and (new) SEC XBRL fundamentals used by the
-predictive peer-relative scoring model.
+SQLite storage. Companies (incl. price-derived market_cap / P-B / TSR), filings,
+news, scores, subscribers, and SEC XBRL fundamentals (incl. shares + book
+equity used with Stooq prices for valuation signals).
 """
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 from . import config
-
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companies (
@@ -34,7 +33,8 @@ CREATE TABLE IF NOT EXISTS subscribers (
 CREATE TABLE IF NOT EXISTS fundamentals (
     cik TEXT PRIMARY KEY, ticker TEXT, sector TEXT,
     revenue REAL, revenue_growth REAL, operating_margin REAL, sga_pct REAL,
-    roa REAL, cash_to_assets REAL, debt_to_assets REAL, updated_at TEXT
+    roa REAL, cash_to_assets REAL, debt_to_assets REAL,
+    shares REAL, book_equity REAL, updated_at TEXT
 );
 """
 
@@ -77,6 +77,20 @@ def upsert_company(cik, ticker, name, market_cap=None, pb_ratio=None,
         )
 
 
+def set_company_market(cik, market_cap=None, pb_ratio=None, tsr_1y=None, tsr_3y=None):
+    """Update only the price-derived fields (used by the Stooq price step)."""
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE companies SET
+                 market_cap=COALESCE(?, market_cap),
+                 pb_ratio=COALESCE(?, pb_ratio),
+                 tsr_1y=COALESCE(?, tsr_1y),
+                 tsr_3y=COALESCE(?, tsr_3y),
+                 updated_at=? WHERE cik=?""",
+            (market_cap, pb_ratio, tsr_1y, tsr_3y, now_iso(), cik),
+        )
+
+
 def get_companies():
     with get_conn() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM companies")]
@@ -87,18 +101,20 @@ def upsert_fundamentals(cik, ticker, sector, m):
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO fundamentals
-               (cik,ticker,sector,revenue,revenue_growth,operating_margin,
-                sga_pct,roa,cash_to_assets,debt_to_assets,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               (cik,ticker,sector,revenue,revenue_growth,operating_margin,sga_pct,
+                roa,cash_to_assets,debt_to_assets,shares,book_equity,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(cik) DO UPDATE SET
                  ticker=excluded.ticker, sector=excluded.sector,
                  revenue=excluded.revenue, revenue_growth=excluded.revenue_growth,
                  operating_margin=excluded.operating_margin, sga_pct=excluded.sga_pct,
                  roa=excluded.roa, cash_to_assets=excluded.cash_to_assets,
-                 debt_to_assets=excluded.debt_to_assets, updated_at=excluded.updated_at""",
+                 debt_to_assets=excluded.debt_to_assets, shares=excluded.shares,
+                 book_equity=excluded.book_equity, updated_at=excluded.updated_at""",
             (cik, ticker, sector, m.get("revenue"), m.get("revenue_growth"),
              m.get("operating_margin"), m.get("sga_pct"), m.get("roa"),
-             m.get("cash_to_assets"), m.get("debt_to_assets"), now_iso()),
+             m.get("cash_to_assets"), m.get("debt_to_assets"),
+             m.get("shares"), m.get("book_equity"), now_iso()),
         )
 
 
