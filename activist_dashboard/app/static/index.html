@@ -49,6 +49,8 @@
   .pill-link a:hover { text-decoration:underline; }
   .co-link { color:var(--accent); cursor:pointer; font-weight:650; }
   .co-link:hover { text-decoration:underline; }
+  .chg { font-size:11px; font-weight:700; margin-left:6px; vertical-align:middle; }
+  .chg.up{color:var(--hot);} .chg.down{color:var(--ok);} .chg.new{color:var(--accent);} .chg.flat{color:var(--muted);}
   .section-title { font-size:16px; margin:26px 0 12px; font-weight:650; }
   .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
   button { background:var(--accent); color:#04121f; border:none; padding:8px 14px; border-radius:7px; font-weight:600; cursor:pointer; font-size:13px; }
@@ -117,6 +119,7 @@
 <div class="wrap" id="tab-dashboard">
   <div class="toolbar">
     <button id="refreshBtn" onclick="manualRefresh()">↻ Refresh now</button>
+    <button class="ghost" onclick="exportCsv()">⤓ Export CSV</button>
     <span class="updated" id="updated"></span>
   </div>
 
@@ -223,6 +226,8 @@
     <li><b>Valuation coverage:</b> on the free data tier, market-cap/valuation is pulled
       for the shortlist (not all 1,500). A paid market-data tier would extend valuation
       and multi-year total-return signals across the whole universe.</li>
+    <li><b>Trend tracking:</b> the score column shows week-over-week movement (▲/▼) once
+      a few days of history have accumulated.</li>
     <li><b>Classification</b> is a strong first pass but can occasionally mis-tag a
       filing, so the shortlist is a lead-generation starting point for human review —
       not a final determination.</li>
@@ -291,12 +296,13 @@ async function loadShortlist(){
     if(!d.companies.length){ tb.innerHTML=`<tr><td colspan="7" class="empty">No companies flagged yet. Scores build as data loads.</td></tr>`; return; }
     tb.innerHTML = d.companies.map((c,i)=>{
       const cls=c.score>=7?"hot":c.score>=5?"warn":"mid";
+      const chg = weekChip(c.week_change);
       const link=c.top_item_url?`<span class="pill-link"><a href="${esc(c.top_item_url)}" target="_blank" rel="noopener">${esc(c.top_item_title)||"view"}</a></span>`:"—";
       const co=`<span class="co-link" onclick="openCompany('${esc(c.cik)}')">${esc(c.company)}</span>`;
       return `<tr><td>${i+1}</td>
         <td>${co}<div class="meta">${esc(c.ticker)}</div></td>
         <td class="mcap">${fmtCap(c.market_cap)}</td>
-        <td class="score ${cls}">${c.score}</td>
+        <td class="score ${cls}">${c.score}${chg}</td>
         <td class="signals">${esc(c.signals)}</td>
         <td>${link}</td>
         <td class="mcap">${esc(c.first_flagged)}</td></tr>`;
@@ -315,7 +321,8 @@ async function openCompany(cik){
     const o=d.overview||{};
     document.getElementById("mSub").innerHTML =
       [o.sector,o.industry,o.exchange].filter(Boolean).map(esc).join(" · ") +
-      (d.first_flagged?` · first flagged ${esc(d.first_flagged)}`:"");
+      (d.first_flagged?` · first flagged ${esc(d.first_flagged)}`:"") +
+      (d.week_change!=null?` · ${d.week_change>0?"▲":d.week_change<0?"▼":"±"}${Math.abs(d.week_change)} vs last week`:"");
     const sc=d.score, cls=sc>=7?"hot":sc>=5?"warn":"mid";
     const sb=document.getElementById("mScore"); sb.textContent=sc; sb.className="score scorebadge "+cls;
     const f=d.financials||{};
@@ -377,11 +384,6 @@ async function sendTestDigest(){
     msg.textContent=d.message||(d.ok?"Sent.":"Error"); msg.className="msg "+(d.ok?"ok":"err");
   }catch(e){ msg.textContent="Network error"; msg.className="msg err"; }
 }
-async function refreshAll(){
-  await Promise.all([loadStatus(),loadFeed(),loadShortlist()]);
-  document.getElementById("updated").textContent="Last updated "+new Date().toLocaleTimeString();
-}
-refreshAll(); setInterval(refreshAll, 5*60*1000);
-</script>
-</body>
-</html>
+function weekChip(ch){
+  if(ch==null) return ` <span class="chg new" title="newly tracked">new</span>`;
+  if(ch>0) return `
