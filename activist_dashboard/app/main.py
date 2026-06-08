@@ -1,6 +1,6 @@
 """
-FastAPI app: serves the dashboard, JSON API (incl. per-company detail), the
-subscribe endpoint, and runs the background scheduler.
+FastAPI app: serves the dashboard, JSON API (incl. per-company detail + CSV
+export), the subscribe endpoint, and runs the background scheduler.
 """
 import re
 import threading
@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -63,13 +63,34 @@ def api_feed():
 
 @app.get("/api/shortlist")
 def api_shortlist():
-    return {"companies": database.get_scores(limit=config.SHORTLIST_SIZE)}
+    rows = database.get_scores(limit=config.SHORTLIST_SIZE)
+    for c in rows:
+        prior = database.prior_score(c["cik"])
+        c["week_change"] = (c["score"] - prior) if prior is not None else None
+    return {"companies": rows}
+
+
+@app.get("/api/shortlist.csv")
+def api_shortlist_csv():
+    import csv, io
+    rows = database.get_scores(limit=config.SHORTLIST_SIZE)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Rank", "Company", "Ticker", "Market cap", "Score",
+                "Weekly change", "Key signals", "First flagged"])
+    for i, c in enumerate(rows, 1):
+        prior = database.prior_score(c["cik"])
+        chg = "" if prior is None else f"{c['score'] - prior:+d}"
+        w.writerow([i, c.get("company"), c.get("ticker"), c.get("market_cap"),
+                    c.get("score"), chg, c.get("signals"), c.get("first_flagged")])
+    fname = "companies_to_pitch.csv"
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 
 @app.get("/api/company")
 def api_company(cik: str):
-    """Full detail for one flagged company: overview, signals, financials,
-    recent filings, recent news."""
+    """Full detail for one flagged company."""
     score = database.get_score_one(cik)
     if not score:
         return JSONResponse({"ok": False, "error": "Company not found."},
@@ -77,6 +98,7 @@ def api_company(cik: str):
     ticker = score.get("ticker")
     fund = database.get_fundamentals_one(cik)
     av = database.get_av_overview(cik)
+    prior = database.prior_score(cik)
 
     def avf(key):
         v = av.get(key)
@@ -95,6 +117,7 @@ def api_company(cik: str):
         "signals": score.get("signals"),
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
+        "week_change": (score.get("score") - prior) if prior is not None else None,
         "overview": {
             "description": av.get("Description"),
             "sector": av.get("Sector"),
