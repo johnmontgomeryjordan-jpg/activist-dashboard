@@ -1,7 +1,7 @@
 """
 SQLite storage: companies (incl. market_cap/P-B), filings, news, scores,
-subscribers, SEC XBRL fundamentals, and stored Alpha Vantage OVERVIEW blobs
-(for the company detail view).
+subscribers, SEC XBRL fundamentals, stored Alpha Vantage OVERVIEW blobs, and a
+daily score-history snapshot for week-over-week trend tracking.
 """
 import json
 import sqlite3
@@ -39,6 +39,9 @@ CREATE TABLE IF NOT EXISTS fundamentals (
 );
 CREATE TABLE IF NOT EXISTS av_overview (
     cik TEXT PRIMARY KEY, ticker TEXT, data TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS score_history (
+    cik TEXT, date TEXT, score INTEGER, PRIMARY KEY (cik, date)
 );
 """
 
@@ -235,6 +238,12 @@ def replace_scores(rows):
                 (r["cik"], r["ticker"], r["company"], r["market_cap"], r["score"],
                  r["signals"], r["top_item_title"], r["top_item_url"], first, now_iso()),
             )
+        today = datetime.utcnow().date().isoformat()
+        for r in rows:
+            conn.execute(
+                "INSERT OR REPLACE INTO score_history (cik,date,score) VALUES (?,?,?)",
+                (r["cik"], today, r["score"]),
+            )
 
 
 def get_scores(limit=15):
@@ -247,6 +256,16 @@ def get_score_one(cik):
     with get_conn() as conn:
         r = conn.execute("SELECT * FROM scores WHERE cik=?", (cik,)).fetchone()
         return dict(r) if r else {}
+
+
+def prior_score(cik, days=7):
+    """Most recent history score from at least `days` ago (for week-over-week)."""
+    cutoff = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT score FROM score_history WHERE cik=? AND date<=? ORDER BY date DESC LIMIT 1",
+            (cik, cutoff)).fetchone()
+        return r["score"] if r else None
 
 
 # --- Subscribers -------------------------------------------------------------
