@@ -15,6 +15,10 @@ Event accelerants (recent filings/news), text-confirmed where it matters:
   Leadership change (routine appointment/board) ........................ 1
   Negative activist headline ........................................... 1
   Recent results (no clear miss) ....................................... 0  (note only)
+
+Each triggered signal also produces an EVIDENCE record (value + peer context +
+source + optional link), stored as JSON on the score so the detail view can show
+exactly why each tag fired.
 """
 from . import config, database
 
@@ -47,6 +51,26 @@ LABELS = {
     "news_negative": "negative activist headline",
 }
 
+# Structural signal -> (metric, direction, source label) for evidence.
+PCT_METRICS = {"operating_margin", "tsr_1y", "tsr_3y", "roa", "revenue_growth",
+               "sga_pct", "cash_to_assets", "debt_to_assets"}
+STRUCT_META = {
+    "cheap_abs": ("pb_ratio", "abs", "Alpha Vantage"),
+    "cheap_pb": ("pb_ratio", "low", "Alpha Vantage"),
+    "low_margin": ("operating_margin", "low", "SEC XBRL"),
+    "weak_tsr_1y": ("tsr_1y", "low", "Alpha Vantage"),
+    "weak_tsr_3y": ("tsr_3y", "low", "Alpha Vantage"),
+    "low_roa": ("roa", "low", "SEC XBRL"),
+    "weak_growth": ("revenue_growth", "low", "SEC XBRL"),
+    "high_sga": ("sga_pct", "high", "SEC XBRL"),
+    "cash_hoard": ("cash_to_assets", "high", "SEC XBRL"),
+    "underlevered": ("debt_to_assets", "low", "SEC XBRL"),
+}
+EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
+                "impairment": "SEC 8-K", "layoffs": "SEC 8-K",
+                "leadership_change": "SEC 8-K", "results_update": "SEC 8-K",
+                "news_negative": "News"}
+
 
 def _pad_cik(cik):
     return str(cik).lstrip("0").zfill(10) if cik else cik
@@ -62,23 +86,64 @@ def _quantiles(values):
     return pct(0.25), pct(0.75)
 
 
+def _fmt_metric(metric, v):
+    if v is None:
+        return "n/a"
+    if metric == "pb_ratio":
+        return f"{v:.2f}x"
+    if metric in PCT_METRICS:
+        return f"{v * 100:.1f}%"
+    return f"{v:.2f}"
+
+
+def _struct_evidence(key, r, t):
+    metric, direction, source = STRUCT_META[key]
+    v = r.get(metric)
+    q1, q3 = t.get(metric, (None, None))
+    if key == "cheap_abs":
+        ctx = "trades below 1.5x book value"
+    elif key == "weak_growth" and v is not None and v < 0:
+        ctx = "revenue is shrinking year over year"
+    elif direction == "low":
+        ctx = (f"bottom 25% of sector peers (peer cutoff {_fmt_metric(metric, q1)})"
+               if q1 is not None else "bottom quartile of sector peers")
+    elif direction == "high":
+        ctx = (f"top 25% of sector peers (peer cutoff {_fmt_metric(metric, q3)})"
+               if q3 is not None else "top quartile of sector peers")
+    else:
+        ctx = ""
+    return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric(metric, v),
+            "context": ctx, "source": source, "url": None}
+
+
+def _event_evidence(key, ev):
+    item = ev.get(key)
+    return {"key": key, "label": LABELS.get(key, key), "value": "",
+            "context": (item["title"] if item else ""),
+            "source": EVENT_SOURCE.get(key, "EDGAR"),
+            "url": (item["url"] if item else None)}
+
+
 def _event_signals(cik, ticker):
     triggered = set()
     top = None
+    ev = {}
     for f in database.filings_in_window(_pad_cik(cik), config.SCORE_WINDOW_DAYS):
         for sig in (f.get("signals") or "").split(","):
             sig = sig.strip()
             if sig in EVENT_POINTS:
                 triggered.add(sig)
+                ev.setdefault(sig, {"title": f"{f['company']} — {f['title']}", "url": f["url"]})
                 if top is None and EVENT_POINTS.get(sig, 0) > 0:
                     top = {"title": f"{f['company']} — {f['title']}", "url": f["url"]}
     if ticker:
         nws = database.news_for_ticker_in_window(ticker, config.SCORE_WINDOW_DAYS)
         if nws:
             triggered.add("news_negative")
+            ev.setdefault("news_negative", {"title": nws[0]["headline"], "url": nws[0]["url"]})
             if top is None:
                 top = {"title": nws[0]["headline"], "url": nws[0]["url"]}
-    return triggered, top
+    return triggered, top, ev
 
 
 def recompute_all():
@@ -145,18 +210,27 @@ def recompute_all():
             trig.append("underlevered")
 
         struct = sum(STRUCT_POINTS[s] for s in trig)
-        events, top = _event_signals(r["cik"], r["ticker"])
+        events, top, ev = _event_signals(r["cik"], r["ticker"])
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
 
         if total < config.SCORE_THRESHOLD:
             continue
+
+        evidence = []
+        for key in trig:
+            if key in STRUCT_META:
+                evidence.append(_struct_evidence(key, r, t))
+            elif key in EVENT_POINTS:
+                evidence.append(_event_evidence(key, ev))
+
         rows.append({
             "cik": r["cik"], "ticker": r["ticker"], "company": r["name"],
             "market_cap": r.get("market_cap"), "score": total,
             "signals": " + ".join(LABELS[s] for s in trig if s in LABELS),
             "top_item_title": top["title"] if top else "",
             "top_item_url": top["url"] if top else "",
+            "evidence": evidence,
             "first_flagged": database.now_iso()[:10],
         })
 
