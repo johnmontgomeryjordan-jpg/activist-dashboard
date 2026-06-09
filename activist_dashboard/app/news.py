@@ -1,16 +1,18 @@
 """
 Financial news ingestion via a free-tier news API (NewsAPI or GNews).
 
-Relevance strategy (tuned to cut noise):
-  1. Ask the API to match our activist/distress terms in the HEADLINE only.
-  2. Re-check each headline against TITLE_KEYWORDS locally (defense in depth).
-  3. Drop law-firm "deadline alert / class action" solicitation spam.
-  4. De-duplicate the same story coming from multiple outlets.
+Relevance strategy (tuned for "distressed / activist-attracting" public-company news):
+  1. Ask the API to match distress/activist terms in the HEADLINE only.
+  2. Restrict to financial outlets via a domain allowlist (NewsAPI).
+  3. Re-check each headline locally against DISTRESS_KEYWORDS.
+  4. Drop noise: academic journals, sports, govt share sales, crypto promos,
+     and law-firm "deadline alert" solicitations.
+  5. De-duplicate the same story from multiple outlets.
 
-We only ever store/display headline, source, date, and a link out. Never the
-article body.
+We only store/display headline, source, date, and a link out -- never article text.
 """
 import hashlib
+import os
 import re
 
 import requests
@@ -20,30 +22,52 @@ from . import config, database
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 GNEWS_URL = "https://gnews.io/api/v4/search"
 
-# Sent to the API; restricted to the headline via searchIn/in = title.
-QUERY = ('"activist investor" OR "proxy fight" OR "short seller" OR '
-         '"earnings miss" OR "guidance cut" OR "profit warning" OR '
-         '"write-down" OR impairment OR restructuring OR '
-         '"strategic review" OR "steps down" OR "stake in"')
+# Financial outlets only (NewsAPI 'domains' filter). Override via NEWS_DOMAINS env.
+DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatch.com,"
+                   "barrons.com,fortune.com,businessinsider.com,forbes.com,thestreet.com,"
+                   "seekingalpha.com,fool.com,benzinga.com,investing.com,finance.yahoo.com,"
+                   "businesswire.com,globenewswire.com,prnewswire.com,nasdaq.com")
+NEWS_DOMAINS = os.getenv("NEWS_DOMAINS", DEFAULT_DOMAINS)
+
+# Sent to the API; matched against the headline only.
+QUERY = ('"profit warning" OR "guidance cut" OR "cuts guidance" OR "lowers guidance" '
+         'OR "earnings miss" OR "misses estimates" OR "activist investor" OR "proxy fight" '
+         'OR "short seller" OR "strategic review" OR "explores sale" OR restructuring '
+         'OR impairment OR "write-down" OR downgraded OR "profit warning" OR selloff '
+         'OR plunges OR tumbles OR "steps down"')
 
 # A headline must contain at least one of these to be kept.
-TITLE_KEYWORDS = [
+DISTRESS_KEYWORDS = [
     "activist", "proxy fight", "proxy battle", "short seller", "short-seller",
-    "shareholder", "earnings miss", "misses earnings", "guidance cut",
-    "cuts guidance", "lowers guidance", "profit warning", "write-down",
-    "writedown", "impairment", "restructuring", "layoff", "job cuts",
-    "strategic review", "spinoff", "spin-off", "steps down", "ceo",
-    "ousted", "stake in", "board seat", "breakup", "poison pill",
-    "turnaround", "activist investor", "guidance",
+    "shareholder", "profit warning", "guidance cut", "cuts guidance",
+    "lowers guidance", "lowered guidance", "cuts outlook", "lowers outlook",
+    "cuts forecast", "slashes", "earnings miss", "misses estimates",
+    "misses expectations", "falls short", "disappointing", "disappoints",
+    "write-down", "writedown", "impairment", "restructuring", "layoff",
+    "job cuts", "strategic review", "explores sale", "exploring sale",
+    "considering sale", "steps down", "stepping down", "ousted", "to resign",
+    "plunge", "plunges", "tumble", "tumbles", "slump", "slumps", "sinks",
+    "plummets", "sell-off", "selloff", "downgrade", "downgraded", "warns",
+    "weak guidance", "turnaround", "scraps", "halts", "slashed",
 ]
 
-# Drop these — mostly law-firm investor solicitations, not real news.
+# Drop if the headline contains any of these (noise / off-topic).
 EXCLUDE_PATTERNS = [
-    "deadline alert", "investor alert", "class action", "law firm", "lawsuit",
-    "lead plaintiff", "encourages investors", "reminds investors",
-    "investigation on behalf", "shareholder rights", "rosen law", "pomerantz",
-    "bragar", "kessler", "levi & korsinsky", "robbins", "schall law",
-    "securities fraud", "contact the firm", "notifies investors",
+    # law-firm solicitations
+    "deadline alert", "investor alert", "class action", "law firm", "lead plaintiff",
+    "rosen law", "pomerantz", "bragar", "kessler", "levi & korsinsky", "schall law",
+    "robbins", "securities fraud", "reminds investors", "encourages investors",
+    "investigation on behalf", "notifies investors", "shareholder rights",
+    # academic / health journals
+    "plos", "journal", "study", "accumulation", "glycation", "renal", "peer-review",
+    "clinical study", "examination population", "doi.org",
+    # sports
+    "premier league", "west ham", "wycombe", "f.c.", " fc ", "footbal", "soccer",
+    "nba", " nfl ", " mlb ", " afc ", " cfc ", "midfielder", "striker",
+    # govt / non-US share sales
+    "crore", " ofs ", "nlc india", " sebi ", "lakh", "disinvestment", " rs ",
+    # crypto promo
+    "airdrop", "memecoin", "presale", "token sale",
 ]
 
 
@@ -51,17 +75,17 @@ def _hash(s):
     return hashlib.sha1(s.encode("utf-8")).hexdigest()
 
 
-def _norm_title(t):
+def _norm(t):
     return re.sub(r"\s+", " ", (t or "").strip().lower())
 
 
-def _is_relevant(title):
-    t = _norm_title(title)
-    if not t:
+def is_relevant(title):
+    t = " " + _norm(title) + " "
+    if not t.strip():
         return False
     if any(bad in t for bad in EXCLUDE_PATTERNS):
         return False
-    return any(kw in t for kw in TITLE_KEYWORDS)
+    return any(kw in t for kw in DISTRESS_KEYWORDS)
 
 
 def fetch_headlines(limit=40):
@@ -75,41 +99,27 @@ def fetch_headlines(limit=40):
 def _fetch_newsapi(limit):
     params = {
         "q": QUERY,
-        "searchIn": "title",          # require the term in the headline
+        "searchIn": "title",
         "language": "en",
         "sortBy": "publishedAt",
         "pageSize": min(limit, 100),
         "apiKey": config.NEWS_API_KEY,
     }
+    if NEWS_DOMAINS:
+        params["domains"] = NEWS_DOMAINS
     try:
         r = requests.get(NEWSAPI_URL, params=params, timeout=20)
         r.raise_for_status()
         data = r.json()
     except (requests.RequestException, ValueError):
         return []
-    out = []
-    for a in data.get("articles", []):
-        url = a.get("url") or ""
-        title = a.get("title") or ""
-        if not url or not _is_relevant(title):
-            continue
-        out.append({
-            "id": _hash(url),
-            "headline": title,
-            "source": (a.get("source") or {}).get("name") or "",
-            "published_at": a.get("publishedAt") or "",
-            "url": url,
-        })
-    return out
+    return _normalize(data.get("articles", []))
 
 
 def _fetch_gnews(limit):
     params = {
-        "q": QUERY,
-        "in": "title",                # require the term in the headline
-        "lang": "en",
-        "max": min(limit, 100),
-        "sortby": "publishedAt",
+        "q": QUERY, "in": "title", "lang": "en",
+        "max": min(limit, 100), "sortby": "publishedAt",
         "apikey": config.NEWS_API_KEY,
     }
     try:
@@ -118,18 +128,20 @@ def _fetch_gnews(limit):
         data = r.json()
     except (requests.RequestException, ValueError):
         return []
+    return _normalize(data.get("articles", []))
+
+
+def _normalize(articles):
     out = []
-    for a in data.get("articles", []):
+    for a in articles:
         url = a.get("url") or ""
         title = a.get("title") or ""
-        if not url or not _is_relevant(title):
+        if not url or not is_relevant(title):
             continue
         out.append({
-            "id": _hash(url),
-            "headline": title,
+            "id": _hash(url), "headline": title,
             "source": (a.get("source") or {}).get("name") or "",
-            "published_at": a.get("publishedAt") or "",
-            "url": url,
+            "published_at": a.get("publishedAt") or "", "url": url,
         })
     return out
 
@@ -148,17 +160,33 @@ def _match_tickers(headline, companies):
     return matched
 
 
+def _prune_stored():
+    """Re-check already-stored headlines against the current filter and delete
+    any that no longer qualify (cleans out old noise when the filter tightens).
+    Also drops anything older than 21 days to keep the feed fresh."""
+    from datetime import datetime, timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=21)).isoformat()
+    try:
+        with database.get_conn() as conn:
+            rows = conn.execute("SELECT id, headline, published_at FROM news").fetchall()
+            drop = [r["id"] for r in rows
+                    if not is_relevant(r["headline"]) or (r["published_at"] or "") < cutoff]
+            conn.executemany("DELETE FROM news WHERE id=?", [(i,) for i in drop])
+        return len(drop)
+    except Exception:
+        return 0
+
+
 def ingest(companies, limit=40):
-    """Fetch headlines, drop duplicates by title, tag to companies, store."""
     articles = fetch_headlines(limit)
-    seen_titles = set()
-    kept = 0
+    seen, kept = set(), 0
     for a in articles:
-        key = _norm_title(a["headline"])
-        if key in seen_titles:
+        key = _norm(a["headline"])
+        if key in seen:
             continue
-        seen_titles.add(key)
+        seen.add(key)
         a["matched_tickers"] = ",".join(_match_tickers(a["headline"], companies))
         database.upsert_news(a)
         kept += 1
+    _prune_stored()
     return kept
