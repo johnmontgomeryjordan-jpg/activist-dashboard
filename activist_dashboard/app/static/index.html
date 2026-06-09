@@ -121,6 +121,20 @@
   .scorebadge { font-size:22px; font-weight:800; }
   .siglist { display:flex; flex-wrap:wrap; gap:6px; }
   .siglist .tag.sig { font-size:12px; padding:3px 9px; }
+  /* Evidence cards (why it's flagged) */
+  .evlist { display:flex; flex-direction:column; gap:8px; }
+  .evrow { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .evtop { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  .evlabel { font-weight:650; font-size:13px; color:var(--text); }
+  .evval { font-weight:800; font-variant-numeric:tabular-nums; color:var(--hot); font-size:14px; white-space:nowrap; }
+  .evctx { color:var(--muted); font-size:12px; margin-top:4px; }
+  .evsrc a { color:var(--accent); text-decoration:none; }
+  .evsrc a:hover { text-decoration:underline; }
+  /* External quick links */
+  .links { display:flex; flex-wrap:wrap; gap:8px; margin:2px 0 6px; }
+  .extlink { display:inline-block; padding:6px 11px; border:1px solid var(--line); border-radius:7px;
+    color:var(--accent); text-decoration:none; font-size:12px; font-weight:600; background:var(--panel2); }
+  .extlink:hover { border-color:var(--accent); }
   .dlist a { color:var(--text); text-decoration:none; font-weight:550; }
   .dlist a:hover { color:var(--accent); text-decoration:underline; }
   .dlist .row2 { padding:9px 0; border-bottom:1px solid var(--line); }
@@ -201,7 +215,8 @@
   <p>Each company is scored on traits measured <b>relative to its industry peers</b>
   (grouped by SIC code), plus recent event "accelerants" that signal it's time to
   reach out. Flagged at/above the threshold (currently <b id="aboutThreshold">4</b>);
-  the highest scorers become the shortlist.</p>
+  the highest scorers become the shortlist. Open any company to see the exact number
+  and peer cutoff behind every signal.</p>
   <div class="card">
     <table class="legend">
       <thead><tr><th>Signal</th><th class="pts">Pts</th><th>Source</th></tr></thead>
@@ -238,9 +253,11 @@
   </ul>
 
   <h3>The company detail view</h3>
-  <p>Click any flagged company to open a full profile: a plain-English overview, the
-  exact signals it triggered, SEC-derived financials and Alpha Vantage market data,
-  its recent SEC filings, and recent related news — everything needed to prep a pitch.</p>
+  <p>Click any flagged company to open a full profile: quick links out (Yahoo, Google,
+  EDGAR, IR), a plain-English overview, the exact evidence behind each signal it
+  triggered (value + peer cutoff + source), SEC-derived financials and Alpha Vantage
+  market data, its recent SEC filings, and recent related news — everything needed to
+  prep a pitch.</p>
 
   <h3>How often it updates</h3>
   <ul>
