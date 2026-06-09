@@ -218,16 +218,17 @@ async function openCompany(cik){
     const sb=document.getElementById("mScore"); sb.textContent=sc; sb.className="score scorebadge "+cls;
     const f=d.financials||{};
     const sigs=(d.signals||"").split(" + ").filter(Boolean).map(s=>`<span class="tag sig">${esc(s)}</span>`).join(" ");
-    // Evidence cards: value + peer context + source (with link for events).
     const ev=d.evidence||[];
     const evHtml = ev.length ? ev.map(e=>{
-        const src = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.source)} ↗</a>` : esc(e.source);
+        const src = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.source||"source")} ↗</a>` : esc(e.source||"");
         const val = e.value ? `<span class="evval">${esc(e.value)}</span>` : "";
-        const ctx = e.context ? `${esc(e.context)} · ` : "";
+        const ctxLine = e.context ? `<div class="evctx">${esc(e.context)}</div>` : "";
+        const mp=[]; if(e.inputs) mp.push(esc(e.inputs)); if(e.period) mp.push(esc(e.period));
+        const mathLine = mp.length ? `<div class="evmath">${mp.join(" · ")}</div>` : "";
+        const srcLine = (e.source||e.url) ? `<div class="evsrc">Source: ${src}</div>` : "";
         return `<div class="evrow"><div class="evtop"><span class="evlabel">${esc(e.label)}</span>${val}</div>
-          <div class="evctx">${ctx}<span class="evsrc">${src}</span></div></div>`;
+          ${ctxLine}${mathLine}${srcLine}</div>`;
       }).join("") : `<div class="siglist">${sigs||"—"}</div>`;
-    // External quick-links built from ticker / CIK / company name.
     const tk=d.ticker;
     const L=[];
     if(tk) L.push(`<a class="extlink" href="https://finance.yahoo.com/quote/${encodeURIComponent(tk)}" target="_blank" rel="noopener">Yahoo Finance ↗</a>`);
