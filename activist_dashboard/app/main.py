@@ -2,6 +2,7 @@
 FastAPI app: serves the dashboard, JSON API (incl. per-company detail + CSV
 export), the subscribe endpoint, and runs the background scheduler.
 """
+import json
 import re
 import threading
 from contextlib import asynccontextmanager
@@ -100,6 +101,11 @@ def api_company(cik: str):
     av = database.get_av_overview(cik)
     prior = database.prior_score(cik)
 
+    try:
+        evidence = json.loads(score.get("evidence") or "[]")
+    except (ValueError, TypeError):
+        evidence = []
+
     def avf(key):
         v = av.get(key)
         if v in (None, "", "None", "-", "NaN"):
@@ -115,6 +121,7 @@ def api_company(cik: str):
         "company": score.get("company"),
         "score": score.get("score"),
         "signals": score.get("signals"),
+        "evidence": evidence,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
         "week_change": (score.get("score") - prior) if prior is not None else None,
@@ -123,6 +130,7 @@ def api_company(cik: str):
             "sector": av.get("Sector"),
             "industry": av.get("Industry"),
             "exchange": av.get("Exchange"),
+            "website": av.get("OfficialSite") or av.get("Website"),
         },
         "financials": {
             "revenue": fund.get("revenue"),
