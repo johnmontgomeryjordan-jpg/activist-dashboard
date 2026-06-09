@@ -22,13 +22,76 @@ async function loadStatus(){
     const at=document.getElementById("aboutThreshold"); if(at) at.textContent=s.threshold;
   }catch(e){}
 }
+
+/* ---- News categorization (client-side, from the headline) ---- */
+const MOVE_RE = /\b(slid|slide|slides|slip|slips|slipped|fall|falls|fell|drop|drops|dropped|dip|dips|dipped|sink|sinks|sank|slump|slumps|slumped|decline|declines|declined|retreat|retreats|retreated|plunge|plunges|tumble|tumbles|plummets|sell-?off)\b/;
+const CAT_ACTIVIST = ["activist","proxy fight","proxy battle","proxy contest","13d","schedule 13d",
+  "board seat","board seats","director nominee","nominates","builds stake","raises stake",
+  "takes stake","boosts stake","elliott management","starboard","trian","jana partners",
+  "third point","carl icahn","icahn","nelson peltz","valueact","value act","engine no",
+  "ancora","politan","sachem head","legion partners","short seller","short-seller"];
+const CAT_PROXY = ["glass lewis","proxy advisor","proxy adviser","institutional shareholder services",
+  "iss recommends","iss advises","iss backs","recommends against","withhold vote","withhold votes"];
+const CAT_EXEC = ["steps down","stepping down","steps aside","to resign","resigns","resigned",
+  "ousted","ousts","departs","departure","interim ceo","interim cfo","names ceo","new ceo",
+  "appoints ceo","names new chief","leadership change","management shake","shake-up","shakeup",
+  "reshuffle","exits as ceo","exits as cfo"];
+const CAT_MARKET = ["nasdaq","s&p","dow jones"," dow ","wall street","stock market","stocks ",
+  "futures","treasury","global markets","indexes","indices"];
+// Display order + labels. High-value buckets first; the last three default collapsed.
+const CATS = [
+  ["activist","Activist activity"],
+  ["proxy","Proxy advisors"],
+  ["exec","Executive changes"],
+  ["movers","Price movers"],
+  ["distress","Earnings & distress"],
+  ["market","Market"],
+];
+const OPEN_BY_DEFAULT = new Set(["activist","proxy","exec"]);
+
+function newsCategory(h){
+  const t = " " + (h||"").toLowerCase() + " ";
+  const has = arr => arr.some(k => t.includes(k));
+  if(has(CAT_PROXY)) return "proxy";
+  if(has(CAT_ACTIVIST)) return "activist";
+  if(has(CAT_EXEC)) return "exec";
+  const moved = MOVE_RE.test(t);
+  if(moved && has(CAT_MARKET)) return "market";
+  if(moved) return "movers";
+  return "distress";
+}
+function newsItemHtml(n){
+  return `<div class="item">
+    <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
+    <div class="meta"><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div></div>`;
+}
+function toggleAcc(el){ el.parentElement.classList.toggle("open"); }
+
 async function loadFeed(){
   try{ const d=await (await fetch("/api/feed")).json();
+    // ---- News, grouped into expandable categories ----
     const nf=document.getElementById("newsFeed");
-    nf.innerHTML = d.news.length ? d.news.map(n=>`<div class="item">
-      <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
-      <div class="meta"><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div></div>`).join("")
-      : `<div class="empty">No headlines yet.</div>`;
+    const news = d.news||[];
+    if(!news.length){ nf.innerHTML = `<div class="empty">No headlines yet.</div>`; }
+    else{
+      const groups = {}; CATS.forEach(([k])=>groups[k]=[]);
+      news.forEach(n=>{ (groups[newsCategory(n.headline)] ||= []).push(n); });
+      let html = "";
+      CATS.forEach(([key,label])=>{
+        const items = groups[key]||[];
+        if(!items.length) return;
+        const open = OPEN_BY_DEFAULT.has(key) ? " open" : "";
+        html += `<div class="acc${open}">
+          <div class="acc-head" onclick="toggleAcc(this)">
+            <span class="acc-title"><span class="caret">▸</span>${esc(label)}</span>
+            <span class="acc-count">${items.length}</span>
+          </div>
+          <div class="acc-body">${items.map(newsItemHtml).join("")}</div>
+        </div>`;
+      });
+      nf.innerHTML = html || `<div class="empty">No headlines yet.</div>`;
+    }
+    // ---- Filings (unchanged for now) ----
     const ff=document.getElementById("filingFeed");
     ff.innerHTML = d.filings.length ? d.filings.map(f=>{
       const sigs=(f.signals||"").split(",").filter(Boolean).map(s=>`<span class="tag sig">${esc(s.replace(/_/g," "))}</span>`).join(" ");
