@@ -38,6 +38,18 @@
   .meta { color:var(--muted); font-size:12px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
   .tag { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; background:var(--panel2); color:var(--muted); }
   .tag.sig { background:rgba(255,92,92,.15); color:#ff8a8a; }
+  /* Expandable news categories */
+  .acc { border-bottom:1px solid var(--line); }
+  .acc:last-child { border-bottom:none; }
+  .acc-head { padding:10px 16px; cursor:pointer; display:flex; justify-content:space-between;
+    align-items:center; user-select:none; }
+  .acc-head:hover { background:var(--panel2); }
+  .acc-title { font-weight:650; font-size:13px; }
+  .acc-count { color:var(--muted); font-size:12px; background:var(--panel2); border-radius:20px; padding:1px 9px; }
+  .acc-body { display:none; }
+  .acc.open .acc-body { display:block; }
+  .caret { color:var(--muted); margin-right:7px; display:inline-block; transition:transform .15s; }
+  .acc.open .caret { transform:rotate(90deg); }
   table { width:100%; border-collapse:collapse; }
   th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; position:sticky; top:0; background:var(--panel); }
@@ -125,7 +137,7 @@
 
   <div class="row">
     <div class="panel">
-      <h2>Live News Feed — activist / distress keywords</h2>
+      <h2>Live News Feed — by category (click to expand)</h2>
       <div class="feed" id="newsFeed"><div class="empty">Loading headlines…</div></div>
     </div>
     <div class="panel">
@@ -204,7 +216,7 @@
     <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events (CEO changes, impairments,
       guidance cuts) used as timing accelerants and shown in the live feed.</li>
     <li><b>Financial news API</b> — activist / distress headlines (headline + outlet +
-      link only).</li>
+      link only), grouped into categories you can expand.</li>
     <li><b>Alpha Vantage</b> — market cap, valuation multiples, and a company overview,
       pulled for the shortlisted companies to power the detail view.</li>
   </ul>
@@ -226,6 +238,8 @@
     <li><b>Valuation coverage:</b> on the free data tier, market-cap/valuation is pulled
       for the shortlist (not all 1,500). A paid market-data tier would extend valuation
       and multi-year total-return signals across the whole universe.</li>
+    <li><b>Trend tracking:</b> the score column shows week-over-week movement (▲/▼) once
+      a few days of history have accumulated.</li>
     <li><b>Classification</b> is a strong first pass but can occasionally mis-tag a
       filing, so the shortlist is a lead-generation starting point for human review —
       not a final determination.</li>
