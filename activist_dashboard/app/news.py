@@ -2,11 +2,11 @@
 Financial news ingestion via a free-tier news API (NewsAPI or GNews).
 
 Relevance strategy (tuned for "distressed / activist-attracting" public-company news):
-  1. Ask the API to match distress/activist terms in the HEADLINE only.
+  1. Ask the API to match distress/activist/price-move terms in the HEADLINE only.
   2. Restrict to financial outlets via a domain allowlist (NewsAPI).
-  3. Re-check each headline locally against DISTRESS_KEYWORDS.
+  3. Re-check each headline locally against DISTRESS_KEYWORDS and MOVE_PATTERN.
   4. Drop noise: academic journals, sports, govt share sales, crypto promos,
-     entertainment, and law-firm "deadline alert / investigation" solicitations.
+     entertainment/box-office, and law-firm "deadline alert" solicitations.
   5. De-duplicate the same story from multiple outlets.
 
 We only store/display headline, source, date, and a link out -- never article text.
@@ -28,31 +28,17 @@ DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatc
                    "seekingalpha.com,fool.com,benzinga.com,investing.com,finance.yahoo.com,"
                    "businesswire.com,globenewswire.com,prnewswire.com,nasdaq.com")
 NEWS_DOMAINS = os.getenv("NEWS_DOMAINS", DEFAULT_DOMAINS)
-_ALLOWED = set(d.strip().lower() for d in NEWS_DOMAINS.split(",") if d.strip())
 
-
-def _domain(url):
-    try:
-        host = re.sub(r"^https?://", "", url or "").split("/")[0].lower()
-        return host[4:] if host.startswith("www.") else host
-    except Exception:
-        return ""
-
-
-def _domain_ok(url):
-    if not _ALLOWED:
-        return True
-    host = _domain(url)
-    return any(host == d or host.endswith("." + d) for d in _ALLOWED)
-
-# Sent to the API; matched against the headline only.
+# Sent to the API; matched against the headline only. Includes negative price-move
+# verbs so headlines like "Apple shares slide" / "Nasdaq slips" are returned.
 QUERY = ('"profit warning" OR "guidance cut" OR "cuts guidance" OR "lowers guidance" '
          'OR "earnings miss" OR "misses estimates" OR "activist investor" OR "proxy fight" '
          'OR "short seller" OR "strategic review" OR "explores sale" OR restructuring '
-         'OR impairment OR "write-down" OR downgraded OR "profit warning" OR selloff '
-         'OR plunges OR tumbles OR "steps down"')
+         'OR impairment OR "write-down" OR downgraded OR selloff '
+         'OR plunges OR tumbles OR "steps down" '
+         'OR slides OR slips OR falls OR drops OR sinks OR declines OR slumps OR retreats')
 
-# A headline must contain at least one of these to be kept.
+# A headline must contain at least one of these (substring) to be kept.
 DISTRESS_KEYWORDS = [
     "activist", "proxy fight", "proxy battle", "short seller", "short-seller",
     "shareholder", "profit warning", "guidance cut", "cuts guidance",
@@ -66,6 +52,19 @@ DISTRESS_KEYWORDS = [
     "plummets", "sell-off", "selloff", "downgrade", "downgraded", "warns",
     "weak guidance", "turnaround", "scraps", "halts", "slashed",
 ]
+
+# Negative price-move verbs, matched as whole words (so "slideshow", "shortfall",
+# "backdrop", "landslide" do NOT match). Captures the gentler headline style:
+# "Apple shares slide", "Nasdaq slips", "Tesla stock drops".
+MOVE_PATTERN = re.compile(
+    r"\b("
+    r"slid|slide|slides|slip|slips|slipped|"
+    r"fall|falls|fell|drop|drops|dropped|"
+    r"dip|dips|dipped|sink|sinks|sank|"
+    r"slump|slumps|slumped|decline|declines|declined|"
+    r"retreat|retreats|retreated"
+    r")\b"
+)
 
 # Drop if the headline contains any of these (noise / off-topic).
 EXCLUDE_PATTERNS = [
@@ -82,15 +81,10 @@ EXCLUDE_PATTERNS = [
     "nba", " nfl ", " mlb ", " afc ", " cfc ", "midfielder", "striker",
     # govt / non-US share sales
     "crore", " ofs ", "nlc india", " sebi ", "lakh", "disinvestment", " rs ",
-    # crypto promo
-    "airdrop", "memecoin", "presale", "token sale",
-    # law-firm "investigation" solicitations
-    "securities investigation", "shareholder investigation", "investor investigation",
-    "investigates", "johnson fistel", "announces investigation", "investigation:",
-    "law offices", "investor deadline", "alert:",
-    # entertainment / box office / film & tv
-    "box office", "film festival", "mandalorian", "grogu", "red sea", "premiere",
-    "streaming series", "tv series", "blockbuster", "weekend reads", "renews",
+    # crypto promo / price noise
+    "airdrop", "memecoin", "presale", "token sale", "bitcoin", "ethereum",
+    # entertainment / box office
+    "box office", "box-office", "weekend debut", "ticket sales",
 ]
 
 
@@ -108,10 +102,14 @@ def is_relevant(title):
         return False
     if any(bad in t for bad in EXCLUDE_PATTERNS):
         return False
-    return any(kw in t for kw in DISTRESS_KEYWORDS)
+    if any(kw in t for kw in DISTRESS_KEYWORDS):
+        return True
+    if MOVE_PATTERN.search(t):
+        return True
+    return False
 
 
-def fetch_headlines(limit=40):
+def fetch_headlines(limit=100):
     if not config.NEWS_API_KEY:
         return []
     if config.NEWS_PROVIDER == "gnews":
@@ -159,7 +157,7 @@ def _normalize(articles):
     for a in articles:
         url = a.get("url") or ""
         title = a.get("title") or ""
-        if not url or not is_relevant(title) or not _domain_ok(url):
+        if not url or not is_relevant(title):
             continue
         out.append({
             "id": _hash(url), "headline": title,
@@ -191,17 +189,16 @@ def _prune_stored():
     cutoff = (datetime.utcnow() - timedelta(days=21)).isoformat()
     try:
         with database.get_conn() as conn:
-            rows = conn.execute("SELECT id, headline, published_at, url FROM news").fetchall()
+            rows = conn.execute("SELECT id, headline, published_at FROM news").fetchall()
             drop = [r["id"] for r in rows
-                    if not is_relevant(r["headline"]) or not _domain_ok(r["url"])
-                    or (r["published_at"] or "") < cutoff]
+                    if not is_relevant(r["headline"]) or (r["published_at"] or "") < cutoff]
             conn.executemany("DELETE FROM news WHERE id=?", [(i,) for i in drop])
         return len(drop)
     except Exception:
         return 0
 
 
-def ingest(companies, limit=40):
+def ingest(companies, limit=100):
     articles = fetch_headlines(limit)
     seen, kept = set(), 0
     for a in articles:
