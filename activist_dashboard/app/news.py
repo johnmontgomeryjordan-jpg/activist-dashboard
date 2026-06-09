@@ -5,9 +5,11 @@ Relevance strategy (tuned for "distressed / activist-attracting" public-company 
   1. Ask the API to match distress / activist / proxy / exec / price-move terms
      in the HEADLINE only.
   2. Restrict to financial outlets via a domain allowlist (NewsAPI).
-  3. Re-check each headline locally against the keyword sets + MOVE_PATTERN.
+  3. Re-check each headline locally against the keyword sets + MOVE_PATTERN
+     (a bare price verb also needs a finance cue, so non-market "drops/sinks/slips"
+     headlines don't leak in).
   4. Drop noise: academic journals, sports, govt share sales, crypto promos,
-     entertainment/box-office, and law-firm "deadline alert" solicitations.
+     entertainment/box-office/music, and law-firm "deadline alert" solicitations.
   5. De-duplicate the same story from multiple outlets.
 
 Headlines are bucketed into categories (activist / proxy / exec / price-mover /
@@ -35,14 +37,13 @@ DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatc
 NEWS_DOMAINS = os.getenv("NEWS_DOMAINS", DEFAULT_DOMAINS)
 
 # Sent to the API; matched against the headline only. Kept under NewsAPI's 500-char
-# query limit. Covers price moves, distress, activist funds/terms, proxy advisors,
-# and executive changes so each front-end category has something to show.
+# query limit. Bare "activist" catches "activist Ancora / Activist Jana ..." styles.
 QUERY = ('"profit warning" OR "guidance cut" OR "earnings miss" OR "misses estimates" '
-         'OR "activist investor" OR "proxy fight" OR "proxy contest" OR "short seller" '
+         'OR activist OR "proxy fight" OR "proxy contest" OR "short seller" '
          'OR "strategic review" OR restructuring OR impairment OR "write-down" OR downgraded '
          'OR plunges OR tumbles OR slides OR slips OR falls OR drops OR sinks OR slumps '
          'OR "steps down" OR resigns OR "interim CEO" OR "Glass Lewis" OR "13D" '
-         'OR "board seat" OR Starboard OR Icahn OR "Elliott Management"')
+         'OR "board seat" OR Starboard OR Icahn OR Ancora OR "Jana Partners" OR "Elliott Management"')
 
 # A headline must contain at least one of these (substring) to be kept.
 DISTRESS_KEYWORDS = [
@@ -54,10 +55,12 @@ DISTRESS_KEYWORDS = [
     "write-down", "writedown", "impairment", "restructuring", "layoff",
     "job cuts", "strategic review", "explores sale", "exploring sale",
     "considering sale", "steps down", "stepping down", "ousted", "to resign",
-    "plunge", "plunges", "tumble", "tumbles", "slump", "slumps", "sinks",
-    "plummets", "sell-off", "selloff", "downgrade", "downgraded", "warns",
+    "downgrade", "downgraded", "warns",
     "weak guidance", "turnaround", "scraps", "halts", "slashed",
 ]
+# NOTE: generic price verbs (sink/plunge/tumble/slump/plummet/selloff) are NOT in
+# the list above on purpose -- they run through the cue-gated MOVE_PATTERN below so
+# headlines like "Sinks Navy Infrastructure" don't leak in without a finance cue.
 
 # Extra accept-terms for the activist / proxy / executive-change buckets. Kept as
 # precise phrases (no bare "iss"/"stake") so we don't reintroduce noise.
@@ -88,9 +91,21 @@ MOVE_PATTERN = re.compile(
     r"fall|falls|fell|drop|drops|dropped|"
     r"dip|dips|dipped|sink|sinks|sank|"
     r"slump|slumps|slumped|decline|declines|declined|"
-    r"retreat|retreats|retreated"
+    r"retreat|retreats|retreated|"
+    r"plunge|plunges|tumble|tumbles|plummet|plummets|sell-?off"
     r")\b"
 )
+
+# A bare price-move verb only counts as relevant if the headline ALSO contains one
+# of these market cues -- otherwise "set drops", "sinks navy", "slips from No. 1"
+# (non-financial) leak in. Distress / activist / exec keywords don't need a cue.
+FINANCE_CUES = [
+    "shares", "stock", "nasdaq", "s&p", " dow ", "dow jones", "wall street",
+    " market", "earnings", "guidance", "revenue", "profit", "quarter", "forecast",
+    "outlook", "valuation", "premarket", "pre-market", "after-hours", "investor",
+    "dividend", "buyback", "analyst", "price target", "bond yield", "shareholder",
+    " etf", "%", " ipo",
+]
 
 # Drop if the headline contains any of these (noise / off-topic).
 EXCLUDE_PATTERNS = [
@@ -109,8 +124,9 @@ EXCLUDE_PATTERNS = [
     "crore", " ofs ", "nlc india", " sebi ", "lakh", "disinvestment", " rs ",
     # crypto promo / price noise
     "airdrop", "memecoin", "presale", "token sale", "bitcoin", "ethereum",
-    # entertainment / box office
+    # entertainment / box office / music charts
     "box office", "box-office", "weekend debut", "ticket sales",
+    "album", "albums", "billboard", "climate activist",
 ]
 
 
@@ -132,7 +148,7 @@ def is_relevant(title):
         return True
     if any(kw in t for kw in EXTRA_KEYWORDS):
         return True
-    if MOVE_PATTERN.search(t):
+    if MOVE_PATTERN.search(t) and any(cue in t for cue in FINANCE_CUES):
         return True
     return False
 
