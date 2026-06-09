@@ -1,31 +1,31 @@
 """
 Predictive target-attractiveness scoring.
 
-Structural, peer-relative within sector (2-digit SIC), from free SEC XBRL:
-  Operating margin in bottom quartile of sector ................... 2
-  ROA in bottom quartile of sector ............................... 1
-  Revenue shrinking or bottom-quartile growth .................... 1
-  SG&A % of revenue in top quartile (bloated costs) .............. 1
-  Cash/assets in top quartile (lazy, cash-hoarding) ............. 1
-  Debt/assets in bottom quartile (under-levered) ................ 1
-Valuation (from Alpha Vantage shortlist enrichment):
-  Cheap: price-to-book < 1.5x (absolute) ......................... 2
-  (cheap_pb / TSR signals stay dormant unless full price coverage exists)
-Event accelerants (recent filings/news), 1 each:
-  CEO/exec departure, earnings miss, impairment, layoffs, neg. headline
-
-Flagged at/above SCORE_THRESHOLD; top SHORTLIST_SIZE surfaced. Peer quartiles
-need >= MIN_PEERS companies with the metric.
+Structural, peer-relative within sector (2-digit SIC):
+  Cheap valuation (price-to-book < 1.5x absolute, or bottom quartile) ... 2
+  Operating margin in bottom quartile of sector ........................ 2
+  1-yr / 3-yr total return in bottom quartile of sector ................ 1 each
+  ROA bottom quartile / shrinking revenue / bloated SG&A /
+  cash-heavy / under-levered ........................................... 1 each
+Event accelerants (recent filings/news), text-confirmed where it matters:
+  Confirmed CEO/exec departure ......................................... 2
+  Confirmed earnings miss / guidance cut ............................... 2
+  Impairment / write-down .............................................. 2
+  Layoffs / restructuring .............................................. 1
+  Leadership change (routine appointment/board) ........................ 1
+  Negative activist headline ........................................... 1
+  Recent results (no clear miss) ....................................... 0  (note only)
 """
 from . import config, database
 
 MIN_PEERS = 5
 
-STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1, "weak_tsr_3y": 1,
-                 "low_roa": 1, "weak_growth": 1, "high_sga": 1, "cash_hoard": 1,
-                 "underlevered": 1}
-EVENT_POINTS = {"ceo_departure": 1, "earnings_miss": 1, "impairment": 1,
-                "layoffs": 1, "news_negative": 1}
+STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1,
+                 "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1, "high_sga": 1,
+                 "cash_hoard": 1, "underlevered": 1}
+EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
+                "layoffs": 1, "leadership_change": 1, "results_update": 0,
+                "news_negative": 1}
 
 LABELS = {
     "cheap_abs": "cheap (low price-to-book < 1.5x)",
@@ -42,6 +42,8 @@ LABELS = {
     "earnings_miss": "recent earnings miss / guidance cut",
     "impairment": "recent impairment / write-down",
     "layoffs": "recent layoffs / restructuring",
+    "leadership_change": "recent leadership change",
+    "results_update": "recent results",
     "news_negative": "negative activist headline",
 }
 
@@ -68,7 +70,7 @@ def _event_signals(cik, ticker):
             sig = sig.strip()
             if sig in EVENT_POINTS:
                 triggered.add(sig)
-                if top is None:
+                if top is None and EVENT_POINTS.get(sig, 0) > 0:
                     top = {"title": f"{f['company']} — {f['title']}", "url": f["url"]}
     if ticker:
         nws = database.news_for_ticker_in_window(ticker, config.SCORE_WINDOW_DAYS)
