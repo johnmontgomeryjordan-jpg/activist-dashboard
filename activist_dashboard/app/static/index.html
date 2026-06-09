@@ -38,6 +38,23 @@
   .meta { color:var(--muted); font-size:12px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
   .tag { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; background:var(--panel2); color:var(--muted); }
   .tag.sig { background:rgba(255,92,92,.15); color:#ff8a8a; }
+  /* Top-5 strip + section sub-headers */
+  .topline { border-bottom:1px solid var(--line); }
+  .topline-h { padding:8px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.5px;
+    color:var(--brand); font-weight:800; background:var(--panel2); }
+  .cat-h { padding:9px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.5px;
+    color:var(--muted); font-weight:700; }
+  /* Broadcast ticker */
+  .ticker { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    overflow:hidden; white-space:nowrap; position:relative; margin-bottom:14px; }
+  .ticker-track { display:inline-block; padding:9px 0; will-change:transform;
+    animation-name:tickerscroll; animation-timing-function:linear; animation-iteration-count:infinite; }
+  .ticker:hover .ticker-track { animation-play-state:paused; }
+  .ticker-item { display:inline-block; padding:0 24px; font-size:13px; }
+  .ticker-item a { color:var(--text); text-decoration:none; }
+  .ticker-item a:hover { color:var(--accent); text-decoration:underline; }
+  .ticker-dot { color:var(--brand); font-size:9px; vertical-align:middle; margin-right:4px; }
+  @keyframes tickerscroll { from{transform:translateX(0);} to{transform:translateX(-50%);} }
   /* Clickable category rows (open a larger popup) */
   .catrow { padding:14px 16px; cursor:pointer; display:flex; justify-content:space-between;
     align-items:center; border-bottom:1px solid var(--line); user-select:none; }
@@ -131,6 +148,8 @@
     <button class="ghost" onclick="exportCsv()">⤓ Export CSV</button>
     <span class="updated" id="updated"></span>
   </div>
+
+  <div class="ticker" id="ticker" style="display:none;"></div>
 
   <div class="row">
     <div class="panel">
