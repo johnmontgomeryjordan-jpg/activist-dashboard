@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS fundamentals (
     cik TEXT PRIMARY KEY, ticker TEXT, sector TEXT,
     revenue REAL, revenue_growth REAL, operating_margin REAL, sga_pct REAL,
     roa REAL, cash_to_assets REAL, debt_to_assets REAL,
-    shares REAL, book_equity REAL, updated_at TEXT
+    shares REAL, book_equity REAL, raw TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS av_overview (
     cik TEXT PRIMARY KEY, ticker TEXT, data TEXT, updated_at TEXT
@@ -60,10 +60,13 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
-        # Safe migration for DBs created before the `evidence` column existed.
-        cols = [r["name"] for r in conn.execute("PRAGMA table_info(scores)")]
-        if "evidence" not in cols:
+        # Safe migrations for DBs created before these columns existed.
+        scols = [r["name"] for r in conn.execute("PRAGMA table_info(scores)")]
+        if "evidence" not in scols:
             conn.execute("ALTER TABLE scores ADD COLUMN evidence TEXT")
+        fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
+        if "raw" not in fcols:
+            conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
 
 
 def now_iso():
@@ -105,24 +108,25 @@ def get_companies():
 
 
 # --- Fundamentals ------------------------------------------------------------
-def upsert_fundamentals(cik, ticker, sector, m):
+def upsert_fundamentals(cik, ticker, sector, m, raw=None):
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO fundamentals
                (cik,ticker,sector,revenue,revenue_growth,operating_margin,sga_pct,
-                roa,cash_to_assets,debt_to_assets,shares,book_equity,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                roa,cash_to_assets,debt_to_assets,shares,book_equity,raw,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(cik) DO UPDATE SET
                  ticker=excluded.ticker, sector=excluded.sector,
                  revenue=excluded.revenue, revenue_growth=excluded.revenue_growth,
                  operating_margin=excluded.operating_margin, sga_pct=excluded.sga_pct,
                  roa=excluded.roa, cash_to_assets=excluded.cash_to_assets,
                  debt_to_assets=excluded.debt_to_assets, shares=excluded.shares,
-                 book_equity=excluded.book_equity, updated_at=excluded.updated_at""",
+                 book_equity=excluded.book_equity, raw=excluded.raw,
+                 updated_at=excluded.updated_at""",
             (cik, ticker, sector, m.get("revenue"), m.get("revenue_growth"),
              m.get("operating_margin"), m.get("sga_pct"), m.get("roa"),
              m.get("cash_to_assets"), m.get("debt_to_assets"),
-             m.get("shares"), m.get("book_equity"), now_iso()),
+             m.get("shares"), m.get("book_equity"), json.dumps(raw or {}), now_iso()),
         )
 
 
