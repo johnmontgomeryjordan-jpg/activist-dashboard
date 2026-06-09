@@ -7,6 +7,10 @@ Jobs:
   refresh_enrichment()       -- Alpha Vantage: market cap + P/B + overview (shortlist).
   daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
   startup_full_refresh()     -- once after boot: data, fundamentals, enrich, score.
+
+Fundamentals now also capture the RAW XBRL line items (operating income, revenue,
+net income, assets, equity, cash, debt) plus the source 10-K (fiscal year + period
+end + accession), so the detail view can show the exact math + a link to the filing.
 """
 import os
 import time
@@ -82,6 +86,28 @@ def _latest(facts, tags):
     return rows[0][1] if rows else None
 
 
+def _source_meta(facts):
+    """Latest FY 10-K (period end, fiscal year, accession) for the income statement,
+    used to link the evidence to the exact filing the figures came from."""
+    g = facts.get("facts", {}).get("us-gaap", {})
+    for t in _REV:
+        node = g.get(t)
+        if not node:
+            continue
+        usd = node.get("units", {}).get("USD")
+        if not usd:
+            continue
+        best = None
+        for e in usd:
+            if (str(e.get("form", "")).startswith("10-K") and e.get("fp") == "FY"
+                    and e.get("end") and e.get("accn")):
+                if best is None or e["end"] > best[0]:
+                    best = (e["end"], e.get("fy"), e.get("accn"))
+        if best:
+            return best
+    return (None, None, None)
+
+
 def _latest_shares(facts):
     dei = facts.get("facts", {}).get("dei", {})
     for t in _SHARES:
@@ -118,17 +144,20 @@ def _sum_latest(facts, tags):
 
 
 def _extract(facts):
+    """Return (metrics, raw): metrics drives scoring; raw holds the line items +
+    source-filing metadata so the UI can show the math and link to the 10-K."""
     rev, rev_prior = _rev_latest_prior(facts)
     opinc = _latest(facts, _OPINC); sga = _latest(facts, _SGA)
     ni = _latest(facts, _NI); assets = _latest(facts, _ASSETS)
     equity = _latest(facts, _EQUITY); shares = _latest_shares(facts)
     cash = _sum_latest(facts, _CASH[:1] + _STI)
     debt = _sum_latest(facts, _DEBT_LT[:1] + _DEBT_CUR[:1])
+    end, fy, accn = _source_meta(facts)
 
     def r(n, d):
         return (n / d) if (n is not None and d and d > 0) else None
 
-    return {
+    metrics = {
         "revenue": rev,
         "revenue_growth": ((rev - rev_prior) / rev_prior)
                           if (rev is not None and rev_prior and rev_prior > 0) else None,
@@ -137,17 +166,27 @@ def _extract(facts):
         "debt_to_assets": r(debt, assets),
         "shares": shares, "book_equity": equity,
     }
+    raw = {
+        "revenue": rev, "revenue_prior": rev_prior, "operating_income": opinc,
+        "sga": sga, "net_income": ni, "total_assets": assets, "book_equity": equity,
+        "cash": cash, "debt": debt,
+        "period_end": end, "period_fy": fy, "source_accn": accn,
+    }
+    return metrics, raw
 
 
-def _sic2(cik10):
+def _sector(cik10):
+    """Return (2-digit SIC code, human SIC description) from the submissions API."""
     r = _get(_sec, _SUB_URL.format(cik10=cik10))
     if not r:
-        return None
+        return None, None
     try:
-        sic = str(r.json().get("sic") or "")
+        j = r.json()
     except ValueError:
-        return None
-    return sic[:2] if len(sic) >= 2 else None
+        return None, None
+    sic = str(j.get("sic") or "")
+    desc = j.get("sicDescription") or None
+    return (sic[:2] if len(sic) >= 2 else None), desc
 
 
 # ---- universe + jobs --------------------------------------------------------
@@ -196,11 +235,12 @@ def refresh_fundamentals(max_companies=None):
         except ValueError:
             continue
         try:
-            m = _extract(facts)
+            m, raw = _extract(facts)
         finally:
             del facts
-        sic2 = _sic2(cik10); time.sleep(0.12)
-        database.upsert_fundamentals(cik10, c.get("ticker"), sic2, m)
+        sic2, sic_desc = _sector(cik10); time.sleep(0.12)
+        raw["sector_desc"] = sic_desc
+        database.upsert_fundamentals(cik10, c.get("ticker"), sic2, m, raw)
         done += 1
         if i % 50 == 0:
             gc.collect()
@@ -221,7 +261,7 @@ def daily_rescore_and_digest():
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=xbrl-av-predictive  starting refresh")
+    print("[boot] VERSION=xbrl-av-predictive-evidence  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_enrichment()
