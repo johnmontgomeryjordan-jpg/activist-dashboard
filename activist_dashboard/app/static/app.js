@@ -118,22 +118,67 @@ function openFilingCat(key){
                 items.map(filingModalRow).join(""));
 }
 
+/* ---- Top 5 "most relevant & recent": take recent items, then float the
+   high-value categories up so activist/exec stories aren't buried. ---- */
+const NEWS_PRIORITY = {activist:0, proxy:1, exec:2, movers:3, distress:4, market:5};
+const FILING_PRIORITY = {exec:0, earn:1, impair:2, restr:3, other:4};
+function toplineNews(news){
+  return [...news]
+    .sort((a,b)=>(b.published_at||"").localeCompare(a.published_at||"")).slice(0,12)
+    .sort((a,b)=> (NEWS_PRIORITY[newsCategory(a.headline)]-NEWS_PRIORITY[newsCategory(b.headline)])
+                  || (b.published_at||"").localeCompare(a.published_at||"")).slice(0,5);
+}
+function toplineFilings(filings){
+  return [...filings]
+    .sort((a,b)=>(b.filed_at||"").localeCompare(a.filed_at||"")).slice(0,12)
+    .sort((a,b)=> (FILING_PRIORITY[filingCategory(a)]-FILING_PRIORITY[filingCategory(b)])
+                  || (b.filed_at||"").localeCompare(a.filed_at||"")).slice(0,5);
+}
+function newsItemRow(n){
+  return `<div class="item"><a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
+    <div class="meta"><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div></div>`;
+}
+function filingItemRow(f){
+  const sigs=(f.signals||"").split(",").filter(Boolean).map(s=>`<span class="tag sig">${esc(s.replace(/_/g," "))}</span>`).join(" ");
+  return `<div class="item"><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.company)} — ${esc(f.title)}</a>
+    <div class="meta"><span class="tag">${esc(f.ticker)||esc(f.form)}</span><span>${fmtDate(f.filed_at)}</span>${sigs}</div></div>`;
+}
+function renderTicker(news){
+  const t=document.getElementById("ticker"); if(!t) return;
+  const items=[...news].sort((a,b)=>(b.published_at||"").localeCompare(a.published_at||"")).slice(0,20);
+  if(!items.length){ t.style.display="none"; return; }
+  t.style.display="block";
+  const seq=items.map(n=>`<span class="ticker-item"><span class="ticker-dot">●</span> <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a></span>`).join("");
+  const dur=Math.max(40, items.length*5);
+  t.innerHTML=`<div class="ticker-track" style="animation-duration:${dur}s">${seq}${seq}</div>`;
+}
+
 async function loadFeed(){
   try{ const d=await (await fetch("/api/feed")).json();
-    // ---- News, grouped into click-to-open categories ----
+    // ---- News: top-5 strip + click-to-open categories ----
     const news = d.news||[];
     NEWS_GROUPS={}; CATS.forEach(([k])=>NEWS_GROUPS[k]=[]);
     news.forEach(n=>{ (NEWS_GROUPS[newsCategory(n.headline)] ||= []).push(n); });
     const nf=document.getElementById("newsFeed");
-    nf.innerHTML = news.length ? catRowsHtml(CATS, NEWS_GROUPS, "openNewsCat")
-                               : `<div class="empty">No headlines yet.</div>`;
-    // ---- Filings, grouped by type ----
+    nf.innerHTML = news.length
+      ? `<div class="topline"><div class="topline-h">★ Top 5 — most relevant &amp; recent</div>`
+        + toplineNews(news).map(newsItemRow).join("") + `</div>`
+        + `<div class="cat-h">Browse by category</div>`
+        + catRowsHtml(CATS, NEWS_GROUPS, "openNewsCat")
+      : `<div class="empty">No headlines yet.</div>`;
+    // ---- Filings: top-5 strip + grouped by type ----
     const filings = d.filings||[];
     FILING_GROUPS={}; FILING_CATS.forEach(([k])=>FILING_GROUPS[k]=[]);
     filings.forEach(f=>{ (FILING_GROUPS[filingCategory(f)] ||= []).push(f); });
     const ff=document.getElementById("filingFeed");
-    ff.innerHTML = filings.length ? catRowsHtml(FILING_CATS, FILING_GROUPS, "openFilingCat")
-                                  : `<div class="empty">No filings yet.</div>`;
+    ff.innerHTML = filings.length
+      ? `<div class="topline"><div class="topline-h">★ Top 5 — most relevant &amp; recent</div>`
+        + toplineFilings(filings).map(filingItemRow).join("") + `</div>`
+        + `<div class="cat-h">Browse by type</div>`
+        + catRowsHtml(FILING_CATS, FILING_GROUPS, "openFilingCat")
+      : `<div class="empty">No filings yet.</div>`;
+    // ---- Broadcast ticker ----
+    renderTicker(news);
   }catch(e){}
 }
 async function loadShortlist(){
