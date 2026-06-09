@@ -218,14 +218,33 @@ async function openCompany(cik){
     const sb=document.getElementById("mScore"); sb.textContent=sc; sb.className="score scorebadge "+cls;
     const f=d.financials||{};
     const sigs=(d.signals||"").split(" + ").filter(Boolean).map(s=>`<span class="tag sig">${esc(s)}</span>`).join(" ");
+    // Evidence cards: value + peer context + source (with link for events).
+    const ev=d.evidence||[];
+    const evHtml = ev.length ? ev.map(e=>{
+        const src = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.source)} ↗</a>` : esc(e.source);
+        const val = e.value ? `<span class="evval">${esc(e.value)}</span>` : "";
+        const ctx = e.context ? `${esc(e.context)} · ` : "";
+        return `<div class="evrow"><div class="evtop"><span class="evlabel">${esc(e.label)}</span>${val}</div>
+          <div class="evctx">${ctx}<span class="evsrc">${src}</span></div></div>`;
+      }).join("") : `<div class="siglist">${sigs||"—"}</div>`;
+    // External quick-links built from ticker / CIK / company name.
+    const tk=d.ticker;
+    const L=[];
+    if(tk) L.push(`<a class="extlink" href="https://finance.yahoo.com/quote/${encodeURIComponent(tk)}" target="_blank" rel="noopener">Yahoo Finance ↗</a>`);
+    L.push(`<a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||tk||"")+" stock")}" target="_blank" rel="noopener">Google ↗</a>`);
+    L.push(`<a class="extlink" href="${secUrl(cik)}" target="_blank" rel="noopener">SEC EDGAR ↗</a>`);
+    if(o.website) L.push(`<a class="extlink" href="${esc(o.website)}" target="_blank" rel="noopener">Company site ↗</a>`);
+    L.push(`<a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations")}" target="_blank" rel="noopener">IR / contacts ↗</a>`);
+    const linkBar=`<div class="links">${L.join("")}</div>`;
     const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
     const filings=(d.filings||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.company)} — ${esc(x.title)}</a>
         <div class="meta"><span class="tag">${esc(x.form)}</span><span>${fmtDate(x.filed_at)}</span></div></div>`).join("") || `<div class="empty">No recent filings on record.</div>`;
     const news=(d.news||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.headline)}</a>
         <div class="meta"><span class="tag">${esc(x.source)||"news"}</span><span>${fmtDate(x.published_at)}</span></div></div>`).join("") || `<div class="empty">No recent matched news.</div>`;
     document.getElementById("mBody").innerHTML = `
+      ${linkBar}
       ${o.description?`<div class="mh3">Overview</div><div class="desc">${esc(o.description)}</div>`:""}
-      <div class="mh3">Why it's flagged</div><div class="siglist">${sigs||"—"}</div>
+      <div class="mh3">Why it's flagged</div><div class="evlist">${evHtml}</div>
       <div class="mh3">Financials</div>
       <div class="grid">
         ${kv("Market cap", fmtCap(d.market_cap))}
