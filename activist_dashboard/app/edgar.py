@@ -1,46 +1,70 @@
 """
-SEC EDGAR ingestion.
+SEC EDGAR ingestion + 8-K classification.
 
-Two endpoints are used, both free and public:
-  * https://efts.sec.gov/LATEST/search-index?q=...   (full-text search)
-  * https://data.sec.gov/submissions/CIK##########.json (per-company filing list)
+We list each company's recent 8-K/10-K/10-Q filings (free submissions API) and
+classify them. For the two ambiguous-but-important item codes we READ the filing
+text to confirm the signal, instead of trusting the item code alone:
 
-We pull recent 8-K, 10-K and 10-Q filings for the monitored universe, read the
-filing's index, and classify each one against the SIGNAL_KEYWORDS dictionary.
-SEC rate-limits to ~10 requests/sec and requires a descriptive User-Agent.
+  * Item 5.02 (officer/director change): tag "ceo_departure" only if the text
+    shows a real resignation/departure; otherwise "leadership_change" (low-weight).
+  * Item 2.02 (results of operations): tag "earnings_miss" only if the text shows
+    a miss / guidance cut; otherwise "results_update" (note only, 0 points).
+
+Item 2.06 (impairment) and 2.05 (restructuring/exit costs) are specific enough to
+trust by code. Text is fetched only for NEW 5.02/2.02 filings (skip already-stored
+ones), so the extra requests stay bounded.
 """
-import time
-import json
 import re
+import time
 
 import requests
 
-from . import config
+from . import config, database
 
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 ARCHIVE_BASE = "https://www.sec.gov/Archives/edgar/data"
-
-# Forms we care about
 FORMS = {"8-K", "10-K", "10-Q"}
+
+# Bump this string to force a one-time re-classification of stored filings.
+CLASSIFIER_VERSION = "2026-06-08-text-confirm"
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
+_TAG = re.compile(r"<[^>]+>")
+
+ITEM_DIRECT = {"2.06": "impairment", "2.05": "layoffs"}
+
+DEPART_TERMS = [
+    "resign", "resignation", "step down", "stepping down", "stepped down",
+    "will step down", "to step down", "departure of", "will depart", "departs",
+    "terminat", "no longer serve", "no longer be", "will leave", "to leave",
+    "leave the company", "retire", "retirement", "relieved of", "removed as",
+    "separation from", "ceases to serve", "mutual agreement to",
+]
+MISS_TERMS = [
+    "below expectations", "below consensus", "below estimates", "below the prior",
+    "missed", "fell short", "falls short", "shortfall", "lowered guidance",
+    "lower guidance", "lowers guidance", "lowering guidance", "reduced guidance",
+    "reduces guidance", "cut guidance", "cuts guidance", "cutting guidance",
+    "lowered its outlook", "lowered outlook", "reduced outlook", "cut its outlook",
+    "profit warning", "weaker than expected", "lower than expected",
+    "reduced its full-year", "lowered its full-year", "disappointing",
+    "decline in revenue", "revenue decline", "below its prior",
+]
 
 
-def _get(url, **kwargs):
-    """GET with polite rate limiting and basic retry."""
-    for attempt in range(3):
+def _get(url):
+    for i in range(3):
         try:
-            resp = _session.get(url, timeout=20, **kwargs)
-            if resp.status_code == 200:
-                return resp
-            if resp.status_code == 429:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            return resp
+            r = _session.get(url, timeout=25)
+            if r.status_code == 200:
+                return r
+            if r.status_code == 429:
+                time.sleep(1.5 * (i + 1)); continue
+            return None
         except requests.RequestException:
-            time.sleep(1.0 * (attempt + 1))
+            time.sleep(1.0 * (i + 1))
     return None
 
 
@@ -48,26 +72,65 @@ def pad_cik(cik):
     return str(cik).lstrip("0").zfill(10)
 
 
-def fetch_recent_filings_for_cik(cik, ticker, company, days):
-    """Return a list of classified filing dicts for one company."""
+def _doc_text(cik_int, accession_nodash, primary_doc):
+    if not primary_doc:
+        return ""
+    r = _get(f"{ARCHIVE_BASE}/{cik_int}/{accession_nodash}/{primary_doc}")
+    time.sleep(0.1)
+    if not r or not r.text:
+        return ""
+    return _TAG.sub(" ", r.text).lower()[:120000]
+
+
+def classify(form, item_codes, text):
+    """Return sorted list of signal keys for this filing."""
+    sigs = set()
+    codes = re.findall(r"\d+\.\d+", item_codes or "")
+    for c in codes:
+        if c in ITEM_DIRECT:
+            sigs.add(ITEM_DIRECT[c])
+    t = text or ""
+    if "5.02" in codes:
+        sigs.add("ceo_departure" if any(d in t for d in DEPART_TERMS)
+                 else "leadership_change")
+    if "2.02" in codes:
+        sigs.add("earnings_miss" if any(m in t for m in MISS_TERMS)
+                 else "results_update")
+    return sorted(sigs)
+
+
+PRETTY = {
+    "ceo_departure": "Executive departure",
+    "leadership_change": "Leadership change",
+    "earnings_miss": "Earnings miss / guidance cut",
+    "results_update": "Results",
+    "impairment": "Material impairment",
+    "layoffs": "Restructuring / exit costs",
+}
+
+
+def _make_title(form, item_codes, sigs):
+    label = ", ".join(PRETTY[s] for s in sigs if s in PRETTY) or "Material event"
+    items = f" (Item {item_codes})" if item_codes else ""
+    return f"{form}: {label}{items}"
+
+
+def fetch_recent_filings_for_cik(cik, ticker, company, days, existing):
     cik10 = pad_cik(cik)
     resp = _get(SUBMISSIONS_URL.format(cik10=cik10))
-    time.sleep(0.12)  # stay under SEC's ~10 req/sec limit
+    time.sleep(0.12)
     if resp is None or resp.status_code != 200:
         return []
-
     try:
         data = resp.json()
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         return []
-
     recent = data.get("filings", {}).get("recent", {})
     forms = recent.get("form", [])
     dates = recent.get("filingDate", [])
-    accessions = recent.get("accessionNumber", [])
-    primary_docs = recent.get("primaryDocument", [])
-    primary_descs = recent.get("primaryDescription", [])
-    items = recent.get("items", [])
+    accs = recent.get("accessionNumber", [])
+    docs = recent.get("primaryDocument", [])
+    items_l = recent.get("items", [])
 
     from datetime import datetime, timedelta
     cutoff = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
@@ -79,87 +142,48 @@ def fetch_recent_filings_for_cik(cik, ticker, company, days):
         filed = dates[i] if i < len(dates) else ""
         if filed < cutoff:
             continue
-        accession = accessions[i].replace("-", "") if i < len(accessions) else ""
-        doc = primary_docs[i] if i < len(primary_docs) else ""
-        desc = primary_descs[i] if i < len(primary_descs) else ""
-        item_codes = items[i] if i < len(items) else ""
-        url = f"{ARCHIVE_BASE}/{int(cik)}/{accession}/{doc}" if doc else \
-              f"{ARCHIVE_BASE}/{int(cik)}/{accession}"
+        acc = accs[i] if i < len(accs) else ""
+        if not acc or acc in existing:
+            continue
+        acc_nodash = acc.replace("-", "")
+        doc = docs[i] if i < len(docs) else ""
+        codes = items_l[i] if i < len(items_l) else ""
+        url = (f"{ARCHIVE_BASE}/{int(cik)}/{acc_nodash}/{doc}" if doc
+               else f"{ARCHIVE_BASE}/{int(cik)}/{acc_nodash}")
 
-        signals = classify_filing(form, item_codes, desc)
-        if not signals:
-            # Keep 8-Ks even if unclassified so the live feed shows activity,
-            # but skip routine 10-K/10-Q with no detectable signal.
-            if form != "8-K":
-                continue
+        need_text = form == "8-K" and ("5.02" in codes or "2.02" in codes)
+        text = _doc_text(int(cik), acc_nodash, doc) if need_text else ""
+        sigs = classify(form, codes, text)
 
-        title = _make_title(form, item_codes, desc)
+        if form != "8-K" and not sigs:
+            continue  # keep 8-Ks for the feed; skip routine 10-K/10-Q
+
         out.append({
-            "id": accessions[i] if i < len(accessions) else url,
-            "cik": cik10,
-            "ticker": ticker,
-            "company": company,
-            "form": form,
-            "filed_at": filed,
-            "title": title,
-            "url": url,
-            "signals": ",".join(signals),
+            "id": acc, "cik": cik10, "ticker": ticker, "company": company,
+            "form": form, "filed_at": filed, "title": _make_title(form, codes, sigs),
+            "url": url, "signals": ",".join(sigs),
         })
     return out
 
 
-# 8-K item codes that map directly to our signals (faster & more reliable than
-# text scraping for the common cases).
-ITEM_SIGNAL_MAP = {
-    "5.02": "ceo_departure",   # Departure/Election of Directors or Officers
-    "2.05": "layoffs",         # Costs Associated with Exit or Disposal Activities
-    "2.06": "impairment",      # Material Impairments
-    "2.02": "earnings_miss",   # Results of Operations (check text for a miss)
-}
-
-
-def classify_filing(form, item_codes, description):
-    """Return a set of signal keys triggered by this filing."""
-    signals = set()
-    codes = re.findall(r"\d+\.\d+", item_codes or "")
-    for code in codes:
-        if code in ITEM_SIGNAL_MAP:
-            signals.add(ITEM_SIGNAL_MAP[code])
-
-    text = f"{description or ''}".lower()
-    for sig, kws in config.SIGNAL_KEYWORDS.items():
-        if any(kw in text for kw in kws):
-            signals.add(sig)
-    return sorted(signals)
-
-
-def _make_title(form, item_codes, description):
-    pretty = {
-        "ceo_departure": "Executive change",
-        "earnings_miss": "Results / guidance",
-        "impairment": "Material impairment",
-        "layoffs": "Restructuring / exit costs",
-    }
-    sigs = classify_filing(form, item_codes, description)
-    label = ", ".join(pretty[s] for s in sigs) if sigs else "Material event"
-    items = f" (Item {item_codes})" if item_codes else ""
-    return f"{form}: {label}{items}"
-
-
 def ingest(universe, days=None, max_companies=None):
-    """
-    Pull recent filings for every company in `universe` (list of dicts with
-    cik/ticker/name) and write them to the database.
-    Returns the number of filings ingested.
-    """
-    from . import database
     days = days or config.SCORE_WINDOW_DAYS
+    # One-time re-classification when the classifier version changes.
+    with database.get_conn() as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+        row = conn.execute("SELECT value FROM meta WHERE key='edgar_classifier'").fetchone()
+        if (row["value"] if row else None) != CLASSIFIER_VERSION:
+            conn.execute("DELETE FROM filings")
+            conn.execute("INSERT OR REPLACE INTO meta (key,value) VALUES ('edgar_classifier',?)",
+                         (CLASSIFIER_VERSION,))
+        existing = set(r["id"] for r in conn.execute("SELECT id FROM filings"))
+
     count = 0
     subset = universe[:max_companies] if max_companies else universe
     for c in subset:
-        filings = fetch_recent_filings_for_cik(
-            c["cik"], c.get("ticker"), c.get("name"), days)
-        for f in filings:
+        for f in fetch_recent_filings_for_cik(c["cik"], c.get("ticker"),
+                                              c.get("name"), days, existing):
             database.upsert_filing(f)
+            existing.add(f["id"])
             count += 1
     return count
