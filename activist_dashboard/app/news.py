@@ -6,7 +6,7 @@ Relevance strategy (tuned for "distressed / activist-attracting" public-company 
   2. Restrict to financial outlets via a domain allowlist (NewsAPI).
   3. Re-check each headline locally against DISTRESS_KEYWORDS.
   4. Drop noise: academic journals, sports, govt share sales, crypto promos,
-     and law-firm "deadline alert" solicitations.
+     entertainment, and law-firm "deadline alert / investigation" solicitations.
   5. De-duplicate the same story from multiple outlets.
 
 We only store/display headline, source, date, and a link out -- never article text.
@@ -28,6 +28,22 @@ DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatc
                    "seekingalpha.com,fool.com,benzinga.com,investing.com,finance.yahoo.com,"
                    "businesswire.com,globenewswire.com,prnewswire.com,nasdaq.com")
 NEWS_DOMAINS = os.getenv("NEWS_DOMAINS", DEFAULT_DOMAINS)
+_ALLOWED = set(d.strip().lower() for d in NEWS_DOMAINS.split(",") if d.strip())
+
+
+def _domain(url):
+    try:
+        host = re.sub(r"^https?://", "", url or "").split("/")[0].lower()
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return ""
+
+
+def _domain_ok(url):
+    if not _ALLOWED:
+        return True
+    host = _domain(url)
+    return any(host == d or host.endswith("." + d) for d in _ALLOWED)
 
 # Sent to the API; matched against the headline only.
 QUERY = ('"profit warning" OR "guidance cut" OR "cuts guidance" OR "lowers guidance" '
@@ -68,6 +84,13 @@ EXCLUDE_PATTERNS = [
     "crore", " ofs ", "nlc india", " sebi ", "lakh", "disinvestment", " rs ",
     # crypto promo
     "airdrop", "memecoin", "presale", "token sale",
+    # law-firm "investigation" solicitations
+    "securities investigation", "shareholder investigation", "investor investigation",
+    "investigates", "johnson fistel", "announces investigation", "investigation:",
+    "law offices", "investor deadline", "alert:",
+    # entertainment / box office / film & tv
+    "box office", "film festival", "mandalorian", "grogu", "red sea", "premiere",
+    "streaming series", "tv series", "blockbuster", "weekend reads", "renews",
 ]
 
 
@@ -136,7 +159,7 @@ def _normalize(articles):
     for a in articles:
         url = a.get("url") or ""
         title = a.get("title") or ""
-        if not url or not is_relevant(title):
+        if not url or not is_relevant(title) or not _domain_ok(url):
             continue
         out.append({
             "id": _hash(url), "headline": title,
@@ -168,9 +191,10 @@ def _prune_stored():
     cutoff = (datetime.utcnow() - timedelta(days=21)).isoformat()
     try:
         with database.get_conn() as conn:
-            rows = conn.execute("SELECT id, headline, published_at FROM news").fetchall()
+            rows = conn.execute("SELECT id, headline, published_at, url FROM news").fetchall()
             drop = [r["id"] for r in rows
-                    if not is_relevant(r["headline"]) or (r["published_at"] or "") < cutoff]
+                    if not is_relevant(r["headline"]) or not _domain_ok(r["url"])
+                    or (r["published_at"] or "") < cutoff]
             conn.executemany("DELETE FROM news WHERE id=?", [(i,) for i in drop])
         return len(drop)
     except Exception:
