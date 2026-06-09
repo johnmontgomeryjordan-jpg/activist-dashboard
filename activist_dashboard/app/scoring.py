@@ -16,10 +16,12 @@ Event accelerants (recent filings/news), text-confirmed where it matters:
   Negative activist headline ........................................... 1
   Recent results (no clear miss) ....................................... 0  (note only)
 
-Each triggered signal also produces an EVIDENCE record (value + peer context +
-source + optional link), stored as JSON on the score so the detail view can show
-exactly why each tag fired.
+Each triggered signal produces an EVIDENCE record (value, the underlying SEC math,
+fiscal period, peer context with sample size, source, and a link to the exact
+filing), stored as JSON on the score so the detail view can prove why each tag fired.
 """
+import json
+
 from . import config, database
 
 MIN_PEERS = 5
@@ -34,7 +36,7 @@ EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
 LABELS = {
     "cheap_abs": "cheap (low price-to-book < 1.5x)",
     "cheap_pb": "cheap vs peers (low price-to-book)",
-    "low_margin": "low margin vs peers",
+    "low_margin": "low operating margin vs peers",
     "weak_tsr_1y": "weak 1-yr stock return vs peers",
     "weak_tsr_3y": "weak 3-yr stock return vs peers",
     "low_roa": "low return on assets vs peers",
@@ -51,7 +53,7 @@ LABELS = {
     "news_negative": "negative activist headline",
 }
 
-# Structural signal -> (metric, direction, source label) for evidence.
+# Structural signal -> (metric, direction, source label).
 PCT_METRICS = {"operating_margin", "tsr_1y", "tsr_3y", "roa", "revenue_growth",
                "sga_pct", "cash_to_assets", "debt_to_assets"}
 STRUCT_META = {
@@ -66,6 +68,14 @@ STRUCT_META = {
     "cash_hoard": ("cash_to_assets", "high", "SEC XBRL"),
     "underlevered": ("debt_to_assets", "low", "SEC XBRL"),
 }
+# How to show the underlying math: signal -> (numerator raw key, denominator raw key, template)
+INPUTS_META = {
+    "low_margin": ("operating_income", "revenue", "operating income {a} ÷ revenue {b}"),
+    "low_roa": ("net_income", "total_assets", "net income {a} ÷ total assets {b}"),
+    "high_sga": ("sga", "revenue", "SG&A {a} ÷ revenue {b}"),
+    "cash_hoard": ("cash", "total_assets", "cash & ST investments {a} ÷ total assets {b}"),
+    "underlevered": ("debt", "total_assets", "total debt {a} ÷ total assets {b}"),
+}
 EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
                 "impairment": "SEC 8-K", "layoffs": "SEC 8-K",
                 "leadership_change": "SEC 8-K", "results_update": "SEC 8-K",
@@ -79,11 +89,11 @@ def _pad_cik(cik):
 def _quantiles(values):
     vals = sorted(v for v in values if v is not None)
     if len(vals) < MIN_PEERS:
-        return None, None
+        return None, None, len(vals)
     def pct(p):
         idx = min(len(vals) - 1, max(0, int(round(p * (len(vals) - 1)))))
         return vals[idx]
-    return pct(0.25), pct(0.75)
+    return pct(0.25), pct(0.75), len(vals)
 
 
 def _fmt_metric(metric, v):
@@ -96,30 +106,91 @@ def _fmt_metric(metric, v):
     return f"{v:.2f}"
 
 
+def _money(v):
+    if v is None:
+        return "n/a"
+    a = abs(v)
+    if a >= 1e12:
+        return f"${v / 1e12:.2f}T"
+    if a >= 1e9:
+        return f"${v / 1e9:.2f}B"
+    if a >= 1e6:
+        return f"${v / 1e6:.1f}M"
+    if a >= 1e3:
+        return f"${v / 1e3:.0f}K"
+    return f"${v:.0f}"
+
+
+def _source_url(cik, accn):
+    try:
+        ci = int(cik)
+    except (ValueError, TypeError):
+        ci = cik
+    if accn:
+        nod = str(accn).replace("-", "")
+        return f"https://www.sec.gov/Archives/edgar/data/{ci}/{nod}/{accn}-index.htm"
+    return f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ci}&type=10-K"
+
+
+def _period_label(raw):
+    fy = raw.get("period_fy")
+    end = raw.get("period_end")
+    if fy:
+        return f"FY{fy}"
+    if end:
+        return f"FY{str(end)[:4]}"
+    return ""
+
+
 def _struct_evidence(key, r, t):
     metric, direction, source = STRUCT_META[key]
     v = r.get(metric)
-    q1, q3 = t.get(metric, (None, None))
+    q1, q3, n = t.get(metric, (None, None, 0))
+    raw = r.get("raw") or {}
+    sector_label = raw.get("sector_desc") or "sector"
+
+    # peer context
     if key == "cheap_abs":
         ctx = "trades below 1.5x book value"
     elif key == "weak_growth" and v is not None and v < 0:
         ctx = "revenue is shrinking year over year"
     elif direction == "low":
-        ctx = (f"bottom 25% of sector peers (peer cutoff {_fmt_metric(metric, q1)})"
-               if q1 is not None else "bottom quartile of sector peers")
+        ctx = (f"bottom 25% of {n} {sector_label} peers · peer cutoff {_fmt_metric(metric, q1)}"
+               if q1 is not None else f"bottom quartile of {sector_label} peers")
     elif direction == "high":
-        ctx = (f"top 25% of sector peers (peer cutoff {_fmt_metric(metric, q3)})"
-               if q3 is not None else "top quartile of sector peers")
+        ctx = (f"top 25% of {n} {sector_label} peers · peer cutoff {_fmt_metric(metric, q3)}"
+               if q3 is not None else f"top quartile of {sector_label} peers")
     else:
         ctx = ""
+
+    # underlying math
+    inputs = ""
+    if key in INPUTS_META:
+        a_key, b_key, tmpl = INPUTS_META[key]
+        a, b = raw.get(a_key), raw.get(b_key)
+        if a is not None and b is not None:
+            inputs = tmpl.format(a=_money(a), b=_money(b))
+    elif key == "weak_growth":
+        a, b = raw.get("revenue"), raw.get("revenue_prior")
+        if a is not None and b is not None:
+            inputs = f"revenue {_money(a)} vs prior-year {_money(b)}"
+    elif key in ("cheap_abs", "cheap_pb"):
+        be = raw.get("book_equity")
+        inputs = ("price ÷ book value " + _money(be) +
+                  " — price from Alpha Vantage, book value from SEC 10-K"
+                  if be is not None
+                  else "price ÷ book value — price from Alpha Vantage, book value from SEC")
+
+    url = _source_url(r.get("cik"), raw.get("source_accn")) if source == "SEC XBRL" else None
     return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric(metric, v),
-            "context": ctx, "source": source, "url": None}
+            "context": ctx, "inputs": inputs, "period": _period_label(raw),
+            "source": source, "url": url}
 
 
 def _event_evidence(key, ev):
     item = ev.get(key)
     return {"key": key, "label": LABELS.get(key, key), "value": "",
-            "context": (item["title"] if item else ""),
+            "context": (item["title"] if item else ""), "inputs": "", "period": "",
             "source": EVENT_SOURCE.get(key, "EDGAR"),
             "url": (item["url"] if item else None)}
 
@@ -154,6 +225,10 @@ def recompute_all():
     for f in funds:
         cik = _pad_cik(f["cik"])
         comp = companies.get(cik, {})
+        try:
+            raw = json.loads(f.get("raw") or "{}")
+        except (ValueError, TypeError):
+            raw = {}
         recs.append({
             "cik": cik, "ticker": f.get("ticker"),
             "sector": f.get("sector") or "??",
@@ -162,7 +237,7 @@ def recompute_all():
             "cash_to_assets": f.get("cash_to_assets"), "debt_to_assets": f.get("debt_to_assets"),
             "pb_ratio": comp.get("pb_ratio"), "tsr_1y": comp.get("tsr_1y"),
             "tsr_3y": comp.get("tsr_3y"), "market_cap": comp.get("market_cap"),
-            "name": comp.get("name") or f.get("ticker"),
+            "name": comp.get("name") or f.get("ticker"), "raw": raw,
         })
 
     metrics = ["pb_ratio", "operating_margin", "tsr_1y", "tsr_3y", "roa",
@@ -179,12 +254,12 @@ def recompute_all():
         trig = []
 
         def low(metric):
-            q1, _ = t.get(metric, (None, None))
+            q1, _, _ = t.get(metric, (None, None, 0))
             v = r.get(metric)
             return q1 is not None and v is not None and v <= q1
 
         def high(metric):
-            _, q3 = t.get(metric, (None, None))
+            _, q3, _ = t.get(metric, (None, None, 0))
             v = r.get(metric)
             return q3 is not None and v is not None and v >= q3
 
