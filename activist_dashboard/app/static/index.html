@@ -127,7 +127,10 @@
   .evtop { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
   .evlabel { font-weight:650; font-size:13px; color:var(--text); }
   .evval { font-weight:800; font-variant-numeric:tabular-nums; color:var(--hot); font-size:14px; white-space:nowrap; }
-  .evctx { color:var(--muted); font-size:12px; margin-top:4px; }
+  .evctx { color:#cdd8e2; font-size:12px; margin-top:5px; }
+  .evmath { color:var(--muted); font-size:12px; margin-top:4px; font-variant-numeric:tabular-nums;
+    background:rgba(63,167,255,.07); border-left:2px solid var(--accent); padding:4px 8px; border-radius:4px; }
+  .evsrc { color:var(--muted); font-size:11px; margin-top:6px; text-transform:uppercase; letter-spacing:.3px; }
   .evsrc a { color:var(--accent); text-decoration:none; }
   .evsrc a:hover { text-decoration:underline; }
   /* External quick links */
@@ -215,8 +218,9 @@
   <p>Each company is scored on traits measured <b>relative to its industry peers</b>
   (grouped by SIC code), plus recent event "accelerants" that signal it's time to
   reach out. Flagged at/above the threshold (currently <b id="aboutThreshold">4</b>);
-  the highest scorers become the shortlist. Open any company to see the exact number
-  and peer cutoff behind every signal.</p>
+  the highest scorers become the shortlist. Open any company to see the exact number,
+  the underlying SEC math, and the peer cutoff behind every signal — each linked to
+  its source filing.</p>
   <div class="card">
     <table class="legend">
       <thead><tr><th>Signal</th><th class="pts">Pts</th><th>Source</th></tr></thead>
@@ -243,21 +247,22 @@
   <ul>
     <li><b>SEC XBRL financials</b> — each company's actual reported revenue, margins,
       SG&amp;A, returns, and balance sheet, compared to industry peers. The core of the
-      predictive screen.</li>
+      predictive screen, and the source for the line-item math shown on each signal.</li>
     <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events (CEO changes, impairments,
       guidance cuts) used as timing accelerants and shown in the live feed, grouped by type.</li>
     <li><b>Financial news API</b> — activist / distress headlines (headline + outlet +
       link only), grouped into categories you can open.</li>
     <li><b>Alpha Vantage</b> — market cap, valuation multiples, and a company overview,
-      pulled for the shortlisted companies to power the detail view.</li>
+      pulled only for the shortlisted companies. The only market-price input (used for
+      the price-to-book signal); everything else is computed from SEC.</li>
   </ul>
 
   <h3>The company detail view</h3>
   <p>Click any flagged company to open a full profile: quick links out (Yahoo, Google,
-  EDGAR, IR), a plain-English overview, the exact evidence behind each signal it
-  triggered (value + peer cutoff + source), SEC-derived financials and Alpha Vantage
-  market data, its recent SEC filings, and recent related news — everything needed to
-  prep a pitch.</p>
+  EDGAR, IR), a plain-English overview, and the proof behind each signal — the value,
+  the exact SEC math (e.g. operating income ÷ revenue), the fiscal period, the peer
+  cutoff with sample size, and a link straight to the source 10-K or 8-K. Followed by
+  SEC-derived financials, recent filings, and recent related news.</p>
 
   <h3>How often it updates</h3>
   <ul>
