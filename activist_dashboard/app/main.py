@@ -106,6 +106,15 @@ def api_company(cik: str):
     except (ValueError, TypeError):
         evidence = []
 
+    try:
+        fraw = json.loads(fund.get("raw") or "{}")
+    except (ValueError, TypeError):
+        fraw = {}
+
+    def _sec_ratio(num_key, den_key):
+        n, d = fraw.get(num_key), fraw.get(den_key)
+        return (n / d) if (n is not None and d not in (None, 0)) else None
+
     def avf(key):
         v = av.get(key)
         if v in (None, "", "None", "-", "NaN"):
@@ -142,12 +151,12 @@ def api_company(cik: str):
             "debt_to_assets": fund.get("debt_to_assets"),
             "pe_ratio": avf("PERatio"),
             "pb_ratio": avf("PriceToBookRatio"),
-            "profit_margin": avf("ProfitMargin"),
+            "profit_margin": _sec_ratio("net_income", "revenue") if _sec_ratio("net_income", "revenue") is not None else avf("ProfitMargin"),
             "dividend_yield": avf("DividendYield"),
             "week52_high": avf("52WeekHigh"),
             "week52_low": avf("52WeekLow"),
             "analyst_target": avf("AnalystTargetPrice"),
-            "return_on_equity": avf("ReturnOnEquityTTM"),
+            "return_on_equity": _sec_ratio("net_income", "book_equity") if _sec_ratio("net_income", "book_equity") is not None else avf("ReturnOnEquityTTM"),
         },
         "filings": database.get_filings_by_cik(cik, limit=12),
         "news": database.get_news_for_ticker(ticker, limit=10) if ticker else [],
