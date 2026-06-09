@@ -2,12 +2,17 @@
 Financial news ingestion via a free-tier news API (NewsAPI or GNews).
 
 Relevance strategy (tuned for "distressed / activist-attracting" public-company news):
-  1. Ask the API to match distress/activist/price-move terms in the HEADLINE only.
+  1. Ask the API to match distress / activist / proxy / exec / price-move terms
+     in the HEADLINE only.
   2. Restrict to financial outlets via a domain allowlist (NewsAPI).
-  3. Re-check each headline locally against DISTRESS_KEYWORDS and MOVE_PATTERN.
+  3. Re-check each headline locally against the keyword sets + MOVE_PATTERN.
   4. Drop noise: academic journals, sports, govt share sales, crypto promos,
      entertainment/box-office, and law-firm "deadline alert" solicitations.
   5. De-duplicate the same story from multiple outlets.
+
+Headlines are bucketed into categories (activist / proxy / exec / price-mover /
+market / distress) on the FRONT END from the stored headline, so no DB change is
+needed here. This module just makes sure the right headlines get fetched + kept.
 
 We only store/display headline, source, date, and a link out -- never article text.
 """
@@ -29,14 +34,15 @@ DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatc
                    "businesswire.com,globenewswire.com,prnewswire.com,nasdaq.com")
 NEWS_DOMAINS = os.getenv("NEWS_DOMAINS", DEFAULT_DOMAINS)
 
-# Sent to the API; matched against the headline only. Includes negative price-move
-# verbs so headlines like "Apple shares slide" / "Nasdaq slips" are returned.
-QUERY = ('"profit warning" OR "guidance cut" OR "cuts guidance" OR "lowers guidance" '
-         'OR "earnings miss" OR "misses estimates" OR "activist investor" OR "proxy fight" '
-         'OR "short seller" OR "strategic review" OR "explores sale" OR restructuring '
-         'OR impairment OR "write-down" OR downgraded OR selloff '
-         'OR plunges OR tumbles OR "steps down" '
-         'OR slides OR slips OR falls OR drops OR sinks OR declines OR slumps OR retreats')
+# Sent to the API; matched against the headline only. Kept under NewsAPI's 500-char
+# query limit. Covers price moves, distress, activist funds/terms, proxy advisors,
+# and executive changes so each front-end category has something to show.
+QUERY = ('"profit warning" OR "guidance cut" OR "earnings miss" OR "misses estimates" '
+         'OR "activist investor" OR "proxy fight" OR "proxy contest" OR "short seller" '
+         'OR "strategic review" OR restructuring OR impairment OR "write-down" OR downgraded '
+         'OR plunges OR tumbles OR slides OR slips OR falls OR drops OR sinks OR slumps '
+         'OR "steps down" OR resigns OR "interim CEO" OR "Glass Lewis" OR "13D" '
+         'OR "board seat" OR Starboard OR Icahn OR "Elliott Management"')
 
 # A headline must contain at least one of these (substring) to be kept.
 DISTRESS_KEYWORDS = [
@@ -51,6 +57,26 @@ DISTRESS_KEYWORDS = [
     "plunge", "plunges", "tumble", "tumbles", "slump", "slumps", "sinks",
     "plummets", "sell-off", "selloff", "downgrade", "downgraded", "warns",
     "weak guidance", "turnaround", "scraps", "halts", "slashed",
+]
+
+# Extra accept-terms for the activist / proxy / executive-change buckets. Kept as
+# precise phrases (no bare "iss"/"stake") so we don't reintroduce noise.
+EXTRA_KEYWORDS = [
+    # activist funds + campaign mechanics
+    "proxy contest", "13d", "schedule 13d", "board seat", "board seats",
+    "director nominee", "nominates", "builds stake", "raises stake", "takes stake",
+    "boosts stake", "elliott management", "starboard", "trian", "jana partners",
+    "third point", "carl icahn", "icahn", "nelson peltz", "valueact", "value act",
+    "engine no", "ancora", "politan", "sachem head", "legion partners",
+    # proxy advisors
+    "glass lewis", "proxy advisor", "proxy adviser",
+    "institutional shareholder services", "iss recommends", "iss advises",
+    "iss backs", "recommends against", "withhold vote", "withhold votes",
+    # executive changes
+    "resigns", "resigned", "steps aside", "departs", "departure",
+    "interim ceo", "interim cfo", "names ceo", "new ceo", "appoints ceo",
+    "names new chief", "leadership change", "management shake", "shake-up",
+    "shakeup", "reshuffle", "ousts", "exits as ceo", "exits as cfo",
 ]
 
 # Negative price-move verbs, matched as whole words (so "slideshow", "shortfall",
@@ -103,6 +129,8 @@ def is_relevant(title):
     if any(bad in t for bad in EXCLUDE_PATTERNS):
         return False
     if any(kw in t for kw in DISTRESS_KEYWORDS):
+        return True
+    if any(kw in t for kw in EXTRA_KEYWORDS):
         return True
     if MOVE_PATTERN.search(t):
         return True
