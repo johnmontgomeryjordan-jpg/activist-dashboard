@@ -38,18 +38,15 @@
   .meta { color:var(--muted); font-size:12px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
   .tag { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; background:var(--panel2); color:var(--muted); }
   .tag.sig { background:rgba(255,92,92,.15); color:#ff8a8a; }
-  /* Expandable news categories */
-  .acc { border-bottom:1px solid var(--line); }
-  .acc:last-child { border-bottom:none; }
-  .acc-head { padding:10px 16px; cursor:pointer; display:flex; justify-content:space-between;
-    align-items:center; user-select:none; }
-  .acc-head:hover { background:var(--panel2); }
-  .acc-title { font-weight:650; font-size:13px; }
-  .acc-count { color:var(--muted); font-size:12px; background:var(--panel2); border-radius:20px; padding:1px 9px; }
-  .acc-body { display:none; }
-  .acc.open .acc-body { display:block; }
-  .caret { color:var(--muted); margin-right:7px; display:inline-block; transition:transform .15s; }
-  .acc.open .caret { transform:rotate(90deg); }
+  /* Clickable category rows (open a larger popup) */
+  .catrow { padding:14px 16px; cursor:pointer; display:flex; justify-content:space-between;
+    align-items:center; border-bottom:1px solid var(--line); user-select:none; }
+  .catrow:last-child { border-bottom:none; }
+  .catrow:hover { background:var(--panel2); }
+  .catname { font-weight:800; font-size:14px; color:var(--text); letter-spacing:.2px; }
+  .catright { display:flex; align-items:center; gap:12px; }
+  .acc-count { color:var(--muted); font-size:12px; background:var(--panel2); border-radius:20px; padding:2px 10px; }
+  .chev { color:var(--muted); font-size:20px; line-height:1; }
   table { width:100%; border-collapse:collapse; }
   th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
   th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; position:sticky; top:0; background:var(--panel); }
@@ -137,11 +134,11 @@
 
   <div class="row">
     <div class="panel">
-      <h2>Live News Feed — by category (click to expand)</h2>
+      <h2>Live News Feed — by category (click to open)</h2>
       <div class="feed" id="newsFeed"><div class="empty">Loading headlines…</div></div>
     </div>
     <div class="panel">
-      <h2>Live EDGAR Filings — 8-K / 10-K / 10-Q</h2>
+      <h2>Live EDGAR Filings — by type (click to open)</h2>
       <div class="feed" id="filingFeed"><div class="empty">Loading filings…</div></div>
     </div>
   </div>
@@ -214,9 +211,9 @@
       SG&amp;A, returns, and balance sheet, compared to industry peers. The core of the
       predictive screen.</li>
     <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events (CEO changes, impairments,
-      guidance cuts) used as timing accelerants and shown in the live feed.</li>
+      guidance cuts) used as timing accelerants and shown in the live feed, grouped by type.</li>
     <li><b>Financial news API</b> — activist / distress headlines (headline + outlet +
-      link only), grouped into categories you can expand.</li>
+      link only), grouped into categories you can open.</li>
     <li><b>Alpha Vantage</b> — market cap, valuation multiples, and a company overview,
       pulled for the shortlisted companies to power the detail view.</li>
   </ul>
