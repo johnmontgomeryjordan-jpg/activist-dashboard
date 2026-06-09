@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS news (
 CREATE TABLE IF NOT EXISTS scores (
     cik TEXT PRIMARY KEY, ticker TEXT, company TEXT, market_cap REAL,
     score INTEGER, signals TEXT, top_item_title TEXT, top_item_url TEXT,
-    first_flagged TEXT, updated_at TEXT
+    first_flagged TEXT, evidence TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS subscribers (
     email TEXT PRIMARY KEY, created_at TEXT
@@ -60,6 +60,10 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        # Safe migration for DBs created before the `evidence` column existed.
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(scores)")]
+        if "evidence" not in cols:
+            conn.execute("ALTER TABLE scores ADD COLUMN evidence TEXT")
 
 
 def now_iso():
@@ -233,10 +237,11 @@ def replace_scores(rows):
             conn.execute(
                 """INSERT INTO scores
                    (cik,ticker,company,market_cap,score,signals,top_item_title,
-                    top_item_url,first_flagged,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    top_item_url,first_flagged,evidence,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (r["cik"], r["ticker"], r["company"], r["market_cap"], r["score"],
-                 r["signals"], r["top_item_title"], r["top_item_url"], first, now_iso()),
+                 r["signals"], r["top_item_title"], r["top_item_url"], first,
+                 json.dumps(r.get("evidence") or []), now_iso()),
             )
         today = datetime.utcnow().date().isoformat()
         for r in rows:
