@@ -27,7 +27,7 @@ async function loadStatus(){
 const MOVE_RE = /\b(slid|slide|slides|slip|slips|slipped|fall|falls|fell|drop|drops|dropped|dip|dips|dipped|sink|sinks|sank|slump|slumps|slumped|decline|declines|declined|retreat|retreats|retreated|plunge|plunges|tumble|tumbles|plummets|sell-?off)\b/;
 const CAT_ACTIVIST = ["activist","proxy fight","proxy battle","proxy contest","13d","schedule 13d",
   "board seat","board seats","director nominee","nominates","builds stake","raises stake",
-  "takes stake","boosts stake","elliott management","starboard","trian","jana partners",
+  "takes stake","boosts stake","elliott management","starboard","trian","jana partners","jana",
   "third point","carl icahn","icahn","nelson peltz","valueact","value act","engine no",
   "ancora","politan","sachem head","legion partners","short seller","short-seller"];
 const CAT_PROXY = ["glass lewis","proxy advisor","proxy adviser","institutional shareholder services",
@@ -38,7 +38,7 @@ const CAT_EXEC = ["steps down","stepping down","steps aside","to resign","resign
   "reshuffle","exits as ceo","exits as cfo"];
 const CAT_MARKET = ["nasdaq","s&p","dow jones"," dow ","wall street","stock market","stocks ",
   "futures","treasury","global markets","indexes","indices"];
-// Display order + labels. High-value buckets first; the last three default collapsed.
+// Display order + labels (high-value buckets first).
 const CATS = [
   ["activist","Activist activity"],
   ["proxy","Proxy advisors"],
@@ -47,7 +47,17 @@ const CATS = [
   ["distress","Earnings & distress"],
   ["market","Market"],
 ];
-const OPEN_BY_DEFAULT = new Set(["activist","proxy","exec"]);
+// Filing categories, derived from the EDGAR signal tags.
+const FILING_CATS = [
+  ["exec","Executive changes"],
+  ["earn","Earnings & guidance"],
+  ["impair","Impairments & write-downs"],
+  ["restr","Restructuring & layoffs"],
+  ["other","Other filings"],
+];
+
+let NEWS_GROUPS = {};
+let FILING_GROUPS = {};
 
 function newsCategory(h){
   const t = " " + (h||"").toLowerCase() + " ";
@@ -60,44 +70,70 @@ function newsCategory(h){
   if(moved) return "movers";
   return "distress";
 }
-function newsItemHtml(n){
-  return `<div class="item">
-    <a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
+function filingCategory(f){
+  const s = (f.signals||"").toLowerCase();
+  if(/ceo_departure|leadership_change/.test(s)) return "exec";
+  if(/earnings_miss|results_update/.test(s)) return "earn";
+  if(/impairment/.test(s)) return "impair";
+  if(/layoff|restructuring/.test(s)) return "restr";
+  return "other";
+}
+function newsModalRow(n){
+  return `<div class="row2"><a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
     <div class="meta"><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div></div>`;
 }
-function toggleAcc(el){ el.parentElement.classList.toggle("open"); }
+function filingModalRow(f){
+  const sigs=(f.signals||"").split(",").filter(Boolean).map(s=>`<span class="tag sig">${esc(s.replace(/_/g," "))}</span>`).join(" ");
+  return `<div class="row2"><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.company)} — ${esc(f.title)}</a>
+    <div class="meta"><span class="tag">${esc(f.ticker)||esc(f.form)}</span><span>${fmtDate(f.filed_at)}</span>${sigs}</div></div>`;
+}
+function catRowsHtml(cats, groups, opener){
+  let html="";
+  cats.forEach(([key,label])=>{
+    const items=groups[key]||[]; if(!items.length) return;
+    html += `<div class="catrow" onclick="${opener}('${key}')">
+      <span class="catname">${esc(label)}</span>
+      <span class="catright"><span class="acc-count">${items.length}</span><span class="chev">›</span></span>
+    </div>`;
+  });
+  return html;
+}
+function openListModal(title, rows){
+  document.getElementById("mTitle").textContent = title;
+  document.getElementById("mSub").textContent = "";
+  const sb=document.getElementById("mScore"); sb.textContent=""; sb.className="score scorebadge";
+  document.getElementById("mBody").innerHTML = `<div class="dlist">${rows||`<div class="empty">No items.</div>`}</div>`;
+  document.getElementById("overlay").classList.add("open");
+}
+function openNewsCat(key){
+  const items = NEWS_GROUPS[key]||[];
+  const label = (CATS.find(c=>c[0]===key)||["",key])[1];
+  openListModal(`${label} — ${items.length} headline${items.length===1?"":"s"}`,
+                items.map(newsModalRow).join(""));
+}
+function openFilingCat(key){
+  const items = FILING_GROUPS[key]||[];
+  const label = (FILING_CATS.find(c=>c[0]===key)||["",key])[1];
+  openListModal(`${label} — ${items.length} filing${items.length===1?"":"s"}`,
+                items.map(filingModalRow).join(""));
+}
 
 async function loadFeed(){
   try{ const d=await (await fetch("/api/feed")).json();
-    // ---- News, grouped into expandable categories ----
-    const nf=document.getElementById("newsFeed");
+    // ---- News, grouped into click-to-open categories ----
     const news = d.news||[];
-    if(!news.length){ nf.innerHTML = `<div class="empty">No headlines yet.</div>`; }
-    else{
-      const groups = {}; CATS.forEach(([k])=>groups[k]=[]);
-      news.forEach(n=>{ (groups[newsCategory(n.headline)] ||= []).push(n); });
-      let html = "";
-      CATS.forEach(([key,label])=>{
-        const items = groups[key]||[];
-        if(!items.length) return;
-        const open = OPEN_BY_DEFAULT.has(key) ? " open" : "";
-        html += `<div class="acc${open}">
-          <div class="acc-head" onclick="toggleAcc(this)">
-            <span class="acc-title"><span class="caret">▸</span>${esc(label)}</span>
-            <span class="acc-count">${items.length}</span>
-          </div>
-          <div class="acc-body">${items.map(newsItemHtml).join("")}</div>
-        </div>`;
-      });
-      nf.innerHTML = html || `<div class="empty">No headlines yet.</div>`;
-    }
-    // ---- Filings (unchanged for now) ----
+    NEWS_GROUPS={}; CATS.forEach(([k])=>NEWS_GROUPS[k]=[]);
+    news.forEach(n=>{ (NEWS_GROUPS[newsCategory(n.headline)] ||= []).push(n); });
+    const nf=document.getElementById("newsFeed");
+    nf.innerHTML = news.length ? catRowsHtml(CATS, NEWS_GROUPS, "openNewsCat")
+                               : `<div class="empty">No headlines yet.</div>`;
+    // ---- Filings, grouped by type ----
+    const filings = d.filings||[];
+    FILING_GROUPS={}; FILING_CATS.forEach(([k])=>FILING_GROUPS[k]=[]);
+    filings.forEach(f=>{ (FILING_GROUPS[filingCategory(f)] ||= []).push(f); });
     const ff=document.getElementById("filingFeed");
-    ff.innerHTML = d.filings.length ? d.filings.map(f=>{
-      const sigs=(f.signals||"").split(",").filter(Boolean).map(s=>`<span class="tag sig">${esc(s.replace(/_/g," "))}</span>`).join(" ");
-      return `<div class="item"><a href="${esc(f.url)}" target="_blank" rel="noopener">${esc(f.company)} — ${esc(f.title)}</a>
-        <div class="meta"><span class="tag">${esc(f.ticker)||esc(f.form)}</span><span>${fmtDate(f.filed_at)}</span>${sigs}</div></div>`;
-    }).join("") : `<div class="empty">No filings yet.</div>`;
+    ff.innerHTML = filings.length ? catRowsHtml(FILING_CATS, FILING_GROUPS, "openFilingCat")
+                                  : `<div class="empty">No filings yet.</div>`;
   }catch(e){}
 }
 async function loadShortlist(){
