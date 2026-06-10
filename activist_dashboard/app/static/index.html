@@ -78,6 +78,27 @@
   .chg { font-size:11px; font-weight:700; margin-left:6px; vertical-align:middle; }
   .chg.up{color:var(--hot);} .chg.down{color:var(--ok);} .chg.new{color:var(--accent);} .chg.flat{color:var(--muted);}
   .section-title { font-size:16px; margin:26px 0 12px; font-weight:650; }
+  /* New & rising this week */
+  .nr-wrap { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:6px; }
+  .nr-card { background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    padding:9px 13px; cursor:pointer; display:flex; align-items:center; gap:10px; }
+  .nr-card:hover { border-color:var(--accent); }
+  .nr-badge { font-size:11px; font-weight:800; padding:2px 8px; border-radius:20px; white-space:nowrap; }
+  .nr-badge.new { background:rgba(63,167,255,.15); color:var(--accent); }
+  .nr-badge.up { background:rgba(255,92,92,.15); color:#ff8a8a; }
+  .nr-co { font-weight:650; }
+  .nr-score { color:var(--muted); font-weight:700; font-variant-numeric:tabular-nums; }
+  /* Active situations */
+  .as-list .as-row { display:grid; grid-template-columns:1.1fr 2fr auto; gap:14px; align-items:center;
+    padding:12px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .as-list .as-row:last-child { border-bottom:none; }
+  .as-list .as-row:hover { background:var(--panel2); }
+  .as-co .co-link { font-weight:650; }
+  .as-head a { color:#cdd8e2; text-decoration:none; font-weight:550; }
+  .as-head a:hover { color:var(--accent); text-decoration:underline; }
+  .as-score { color:var(--warn); font-weight:800; font-size:16px; font-variant-numeric:tabular-nums; }
+  .modal-warn { background:rgba(255,181,71,.12); border:1px solid rgba(255,181,71,.4); color:#ffce85;
+    border-radius:8px; padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:8px; }
   .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
   button { background:var(--accent); color:#04121f; border:none; padding:8px 14px; border-radius:7px; font-weight:600; cursor:pointer; font-size:13px; }
   button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
@@ -179,6 +200,12 @@
     </div>
   </div>
 
+  <div id="newRisingSection" style="display:none;">
+    <div class="section-title">New &amp; rising this week</div>
+    <p class="hint">Companies newly flagged or climbing in score — the freshest leads.</p>
+    <div class="nr-wrap" id="newRising"></div>
+  </div>
+
   <div class="section-title">Companies to Pitch — ranked by vulnerability score</div>
   <p class="hint">Click any company to open its full profile — overview, financials, recent filings &amp; news.</p>
   <div class="panel">
@@ -191,6 +218,12 @@
         <tr><td colspan="7" class="empty">Loading shortlist…</td></tr>
       </tbody>
     </table>
+  </div>
+
+  <div id="activeSitSection" style="display:none;">
+    <div class="section-title" style="color:var(--warn);">⚠ Active situations — activist already engaged</div>
+    <p class="hint">An activist is already involved with these — likely too late to pitch proactively. Shown for awareness, not as fresh leads.</p>
+    <div class="panel"><div class="as-list" id="activeSit"></div></div>
   </div>
 
   <div class="subscribe">
@@ -216,11 +249,13 @@
 
   <h3>How the score works</h3>
   <p>Each company is scored on traits measured <b>relative to its industry peers</b>
-  (grouped by SIC code), plus recent event "accelerants" that signal it's time to
-  reach out. Flagged at/above the threshold (currently <b id="aboutThreshold">4</b>);
-  the highest scorers become the shortlist. Open any company to see the exact number,
-  the underlying SEC math, and the peer cutoff behind every signal — each linked to
-  its source filing.</p>
+  (grouped by SIC code) from its latest quarterly SEC filing, plus recent event
+  "accelerants" that signal it's time to reach out. Flagged at/above the threshold
+  (currently <b id="aboutThreshold">4</b>); the highest scorers become the shortlist.
+  Open any company to see the exact number, the underlying SEC math, and the peer
+  cutoff behind every signal — each linked to its source filing. Delisted or acquired
+  names are dropped automatically, and companies where an activist is already engaged
+  are moved to a separate "active situations" list.</p>
   <div class="card">
     <table class="legend">
       <thead><tr><th>Signal</th><th class="pts">Pts</th><th>Source</th></tr></thead>
@@ -246,38 +281,38 @@
   <h3>Where the data comes from (all free)</h3>
   <ul>
     <li><b>SEC XBRL financials</b> — each company's actual reported revenue, margins,
-      SG&amp;A, returns, and balance sheet, compared to industry peers. The core of the
-      predictive screen, and the source for the line-item math shown on each signal.</li>
+      SG&amp;A, returns, and balance sheet from its latest 10-Q, compared to industry
+      peers. The core of the predictive screen, and the source for the line-item math.</li>
     <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events (CEO changes, impairments,
       guidance cuts) used as timing accelerants and shown in the live feed, grouped by type.</li>
     <li><b>Financial news API</b> — activist / distress headlines (headline + outlet +
       link only), grouped into categories you can open.</li>
     <li><b>Alpha Vantage</b> — market cap, valuation multiples, and a company overview,
-      pulled only for the shortlisted companies. The only market-price input (used for
-      the price-to-book signal); everything else is computed from SEC.</li>
+      pulled only for the shortlisted companies. The only market-price input.</li>
   </ul>
 
   <h3>The company detail view</h3>
   <p>Click any flagged company to open a full profile: quick links out (Yahoo, Google,
   EDGAR, IR), a plain-English overview, and the proof behind each signal — the value,
-  the exact SEC math (e.g. operating income ÷ revenue), the fiscal period, the peer
-  cutoff with sample size, and a link straight to the source 10-K or 8-K. Followed by
-  SEC-derived financials, recent filings, and recent related news.</p>
+  the exact SEC math, the fiscal period, the peer cutoff with sample size, and a link
+  straight to the source filing. Followed by SEC-derived financials, recent filings,
+  and recent related news.</p>
 
   <h3>How often it updates</h3>
   <ul>
     <li><b>Every 30 minutes</b> — news + EDGAR filings refresh and scores recompute.</li>
-    <li><b>Daily</b> — full SEC fundamentals refresh, shortlist enrichment, and the
-      4:00 PM ET email digest.</li>
+    <li><b>Daily</b> — full SEC fundamentals refresh (latest quarter), shortlist
+      enrichment, delisting checks, and the 4:00 PM ET email digest.</li>
   </ul>
 
   <h3>Current limits &amp; roadmap</h3>
   <ul>
     <li><b>Valuation coverage:</b> on the free data tier, market-cap/valuation is pulled
       for the shortlist (not all 1,500). A paid market-data tier would extend valuation
-      and multi-year total-return signals across the whole universe.</li>
-    <li><b>Trend tracking:</b> the score column shows week-over-week movement (▲/▼) once
-      a few days of history have accumulated.</li>
+      and live price/movement across the whole universe.</li>
+    <li><b>One-time charges:</b> a big one-time impairment in a quarter will depress the
+      margin/return signals for that period — usually a real vulnerability, but worth a
+      glance at the filing.</li>
     <li><b>Classification</b> is a strong first pass but can occasionally mis-tag a
       filing, so the shortlist is a lead-generation starting point for human review —
       not a final determination.</li>
