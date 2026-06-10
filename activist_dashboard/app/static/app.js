@@ -8,10 +8,11 @@ const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"
 const secUrl = cik => `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(cik)}&type=&dateb=&owner=include&count=40`;
 
 function showTab(name){
-  document.getElementById("tab-dashboard").style.display = name==="dashboard"?"block":"none";
-  document.getElementById("tab-about").style.display = name==="about"?"block":"none";
-  document.getElementById("tabbtn-dashboard").classList.toggle("active", name==="dashboard");
-  document.getElementById("tabbtn-about").classList.toggle("active", name==="about");
+  ["dashboard","about","watchlist"].forEach(n=>{
+    const t=document.getElementById("tab-"+n); if(t) t.style.display = n===name?"block":"none";
+    const b=document.getElementById("tabbtn-"+n); if(b) b.classList.toggle("active", n===name);
+  });
+  if(name==="watchlist") loadWatchlist();
 }
 async function loadStatus(){
   try{ const s=await (await fetch("/api/status")).json();
@@ -58,6 +59,10 @@ const FILING_CATS = [
 
 let NEWS_GROUPS = {};
 let FILING_GROUPS = {};
+let WATCHLIST_SET = new Set();
+let COMPANY_INFO = {};
+let CURRENT_MODAL_CIK = null;
+function regInfo(c){ if(c && c.cik) COMPANY_INFO[c.cik] = {ticker:c.ticker, company:c.company}; }
 
 function newsCategory(h){
   const t = " " + (h||"").toLowerCase() + " ";
@@ -187,10 +192,12 @@ async function loadShortlist(){
     const tb=document.getElementById("shortlist");
     if(!d.companies.length){ tb.innerHTML=`<tr><td colspan="7" class="empty">No companies flagged yet. Scores build as data loads.</td></tr>`; return; }
     tb.innerHTML = d.companies.map((c,i)=>{
+      regInfo(c);
       const cls=c.score>=7?"hot":c.score>=5?"warn":"mid";
       const chg = weekChip(c.week_change);
       const link=c.top_item_url?`<span class="pill-link"><a href="${esc(c.top_item_url)}" target="_blank" rel="noopener">${esc(c.top_item_title)||"view"}</a></span>`:"—";
-      const co=`<span class="co-link" onclick="openCompany('${esc(c.cik)}')">${esc(c.company)}</span>`;
+      const star=`<span class="star" onclick="event.stopPropagation();toggleStar('${esc(c.cik)}', this)" title="Add to watchlist">${WATCHLIST_SET.has(c.cik)?'★':'☆'}</span>`;
+      const co=`${star}<span class="co-link" onclick="openCompany('${esc(c.cik)}')">${esc(c.company)}</span>`;
       return `<tr><td>${i+1}</td>
         <td>${co}<div class="meta">${esc(c.ticker)}</div></td>
         <td class="mcap">${fmtCap(c.market_cap)}</td>
@@ -209,6 +216,7 @@ async function openCompany(cik){
   try{
     const d=await (await fetch("/api/company?cik="+encodeURIComponent(cik))).json();
     if(!d.ok){ document.getElementById("mBody").innerHTML=`<div class="empty">Could not load this company.</div>`; return; }
+    regInfo({cik, ticker:d.ticker, company:d.company}); CURRENT_MODAL_CIK=cik;
     document.getElementById("mTitle").textContent = d.company + (d.ticker?` (${d.ticker})`:"");
     const o=d.overview||{};
     document.getElementById("mSub").innerHTML =
@@ -239,6 +247,7 @@ async function openCompany(cik){
     L.push(`<a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations")}" target="_blank" rel="noopener">IR / contacts ↗</a>`);
     const linkBar=`<div class="links">${L.join("")}</div>`;
     const warn = d.active_situation ? `<div class="modal-warn">⚠ Activist already engaged — likely too late to pitch proactively.</div>` : "";
+    const starBtn = `<button class="ghost wl-star-btn" id="mStarBtn" onclick="toggleStar('${esc(cik)}', this)">${WATCHLIST_SET.has(cik)?'★ On watchlist':'☆ Add to watchlist'}</button>`;
     const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
     const filings=(d.filings||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.company)} — ${esc(x.title)}</a>
         <div class="meta"><span class="tag">${esc(x.form)}</span><span>${fmtDate(x.filed_at)}</span></div></div>`).join("") || `<div class="empty">No recent filings on record.</div>`;
@@ -246,6 +255,7 @@ async function openCompany(cik){
         <div class="meta"><span class="tag">${esc(x.source)||"news"}</span><span>${fmtDate(x.published_at)}</span></div></div>`).join("") || `<div class="empty">No recent matched news.</div>`;
     document.getElementById("mBody").innerHTML = `
       ${warn}
+      <div class="wl-star-row">${starBtn}</div>
       ${linkBar}
       ${o.description?`<div class="mh3">Overview</div><div class="desc">${esc(o.description)}</div>`:""}
       <div class="mh3">Why it's flagged</div><div class="evlist">${evHtml}</div>
@@ -332,14 +342,77 @@ async function loadActiveSituations(){
     const list=d.companies||[];
     if(!list.length){ sec.style.display="none"; return; }
     sec.style.display="block";
-    el.innerHTML = list.map(c=>`<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
+    el.innerHTML = list.map(c=>{ regInfo(c); return `<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
         <div class="as-co"><span class="co-link">${esc(c.company)}</span><div class="meta">${esc(c.ticker)}</div></div>
         <div class="as-head">${c.top_item_url?`<a href="${esc(c.top_item_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(c.top_item_title)||"activist headline"}</a>`:(esc(c.top_item_title)||"—")}</div>
-        <div class="as-score">${c.score}</div></div>`).join("");
+        <div class="as-score">${c.score}</div></div>`; }).join("");
   }catch(e){}
 }
 
+/* ---- Watchlist (shared) ---- */
+async function loadWatchlist(){
+  try{ const d=await (await fetch("/api/watchlist")).json();
+    const items=d.items||[];
+    WATCHLIST_SET = new Set(items.map(i=>i.cik));
+    items.forEach(regInfo);
+    const cnt=document.getElementById("wlCount"); if(cnt) cnt.textContent = items.length?` (${items.length})`:"";
+    renderWatchlist(items);
+  }catch(e){}
+}
+function statusBadge(s){
+  if(s==="flagged") return `<span class="wl-badge ok">on shortlist</span>`;
+  if(s==="active") return `<span class="wl-badge warn">activist engaged</span>`;
+  if(s==="inactive") return `<span class="wl-badge gone">delisted / inactive</span>`;
+  return `<span class="wl-badge muted">no longer flagged</span>`;
+}
+function renderWatchlist(items){
+  const el=document.getElementById("watchlistBody"); if(!el) return;
+  if(!items.length){ el.innerHTML=`<div class="empty">No companies yet. Click the ☆ star next to any company on the dashboard to add it here.</div>`; return; }
+  el.innerHTML = items.map(c=>{
+    const score = c.score!=null ? `<span class="wl-score">${c.score}</span>` : "";
+    return `<div class="wl-row">
+      <div class="wl-top">
+        <span class="co-link" onclick="openCompany('${esc(c.cik)}')">${esc(c.company)}</span>
+        <span class="meta">${esc(c.ticker)}</span>
+        ${statusBadge(c.status)} ${score}
+      </div>
+      ${c.signals?`<div class="wl-sig">${esc(c.signals)}</div>`:""}
+      <textarea class="wl-note" id="note-${esc(c.cik)}" placeholder="Pitch notes — angle, contact, status…">${esc(c.note||"")}</textarea>
+      <div class="wl-actions">
+        <button onclick="saveNote('${esc(c.cik)}')">Save note</button>
+        <button class="ghost" onclick="toggleStar('${esc(c.cik)}')">Remove</button>
+        <span class="wl-msg" id="wlmsg-${esc(c.cik)}"></span>
+      </div></div>`;
+  }).join("");
+}
+async function saveNote(cik){
+  const ta=document.getElementById("note-"+cik); if(!ta) return;
+  const msg=document.getElementById("wlmsg-"+cik);
+  try{ await fetch("/api/watchlist/note",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cik,note:ta.value})});
+    if(msg){ msg.textContent="Saved ✓"; setTimeout(()=>{ if(msg) msg.textContent=""; },1500); }
+  }catch(e){ if(msg) msg.textContent="Error saving"; }
+}
+async function toggleStar(cik, el){
+  const on = WATCHLIST_SET.has(cik);
+  const info = COMPANY_INFO[cik] || {};
+  try{
+    if(on){
+      await fetch("/api/watchlist/remove",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cik})});
+      WATCHLIST_SET.delete(cik);
+    } else {
+      await fetch("/api/watchlist/add",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({cik,ticker:info.ticker||"",company:info.company||""})});
+      WATCHLIST_SET.add(cik);
+    }
+  }catch(e){ return; }
+  if(el && el.classList){
+    if(el.classList.contains("star")) el.textContent = WATCHLIST_SET.has(cik)?'★':'☆';
+    else el.textContent = WATCHLIST_SET.has(cik)?'★ On watchlist':'☆ Add to watchlist';
+  }
+  loadWatchlist(); loadShortlist(); loadActiveSituations();
+}
+
 async function refreshAll(){
+  await loadWatchlist();
   await Promise.all([loadStatus(),loadFeed(),loadShortlist(),loadActiveSituations()]);
   document.getElementById("updated").textContent="Last updated "+new Date().toLocaleTimeString();
 }
