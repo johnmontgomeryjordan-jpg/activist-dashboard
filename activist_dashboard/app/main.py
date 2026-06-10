@@ -1,6 +1,6 @@
 """
 FastAPI app: serves the dashboard, JSON API (incl. per-company detail + CSV
-export), the subscribe endpoint, and runs the background scheduler.
+export), the subscribe + watchlist endpoints, and runs the background scheduler.
 """
 import json
 import re
@@ -79,6 +79,59 @@ def api_active_situations():
         prior = database.prior_score(c["cik"])
         c["week_change"] = (c["score"] - prior) if prior is not None else None
     return {"companies": rows}
+
+
+@app.get("/api/watchlist")
+def api_watchlist():
+    """Shared watchlist, each item enriched with its current status."""
+    out = []
+    for w in database.get_watchlist():
+        cik = w["cik"]
+        sc = database.get_score_one(cik)
+        try:
+            fraw = json.loads(database.get_fundamentals_one(cik).get("raw") or "{}")
+        except (ValueError, TypeError):
+            fraw = {}
+        if sc:
+            status = "active" if sc.get("active_situation") else "flagged"
+            prior = database.prior_score(cik)
+            week_change = (sc.get("score") - prior) if prior is not None else None
+            score, signals, mcap = sc.get("score"), sc.get("signals"), sc.get("market_cap")
+        else:
+            status = "inactive" if fraw.get("inactive") else "dropped"
+            score = signals = week_change = mcap = None
+        out.append({"cik": cik, "ticker": w.get("ticker"), "company": w.get("company"),
+                    "note": w.get("note") or "", "status": status, "score": score,
+                    "signals": signals, "week_change": week_change, "market_cap": mcap,
+                    "added_at": w.get("added_at")})
+    return {"items": out}
+
+
+@app.post("/api/watchlist/add")
+async def api_watchlist_add(request: Request):
+    data = await request.json()
+    cik = (data.get("cik") or "").strip()
+    if not cik:
+        return JSONResponse({"ok": False, "error": "missing cik"}, status_code=400)
+    database.add_watchlist(cik, (data.get("ticker") or "").strip(),
+                           (data.get("company") or "").strip())
+    return {"ok": True}
+
+
+@app.post("/api/watchlist/remove")
+async def api_watchlist_remove(request: Request):
+    data = await request.json()
+    cik = (data.get("cik") or "").strip()
+    database.remove_watchlist(cik)
+    return {"ok": True}
+
+
+@app.post("/api/watchlist/note")
+async def api_watchlist_note(request: Request):
+    data = await request.json()
+    cik = (data.get("cik") or "").strip()
+    database.set_watchlist_note(cik, data.get("note") or "")
+    return {"ok": True}
 
 
 @app.get("/api/shortlist.csv")
