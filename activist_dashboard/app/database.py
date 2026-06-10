@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS news (
 CREATE TABLE IF NOT EXISTS scores (
     cik TEXT PRIMARY KEY, ticker TEXT, company TEXT, market_cap REAL,
     score INTEGER, signals TEXT, top_item_title TEXT, top_item_url TEXT,
-    first_flagged TEXT, evidence TEXT, updated_at TEXT
+    first_flagged TEXT, evidence TEXT, active_situation INTEGER, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS subscribers (
     email TEXT PRIMARY KEY, created_at TEXT
@@ -64,6 +64,8 @@ def init_db():
         scols = [r["name"] for r in conn.execute("PRAGMA table_info(scores)")]
         if "evidence" not in scols:
             conn.execute("ALTER TABLE scores ADD COLUMN evidence TEXT")
+        if "active_situation" not in scols:
+            conn.execute("ALTER TABLE scores ADD COLUMN active_situation INTEGER")
         fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
         if "raw" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
@@ -241,11 +243,12 @@ def replace_scores(rows):
             conn.execute(
                 """INSERT INTO scores
                    (cik,ticker,company,market_cap,score,signals,top_item_title,
-                    top_item_url,first_flagged,evidence,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    top_item_url,first_flagged,evidence,active_situation,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (r["cik"], r["ticker"], r["company"], r["market_cap"], r["score"],
                  r["signals"], r["top_item_title"], r["top_item_url"], first,
-                 json.dumps(r.get("evidence") or []), now_iso()),
+                 json.dumps(r.get("evidence") or []), r.get("active_situation") or 0,
+                 now_iso()),
             )
         today = datetime.utcnow().date().isoformat()
         for r in rows:
@@ -256,9 +259,19 @@ def replace_scores(rows):
 
 
 def get_scores(limit=15):
+    """The proactive shortlist -- excludes companies where an activist is already engaged."""
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT * FROM scores ORDER BY score DESC, company ASC LIMIT ?", (limit,))]
+            "SELECT * FROM scores WHERE COALESCE(active_situation,0)=0 "
+            "ORDER BY score DESC, company ASC LIMIT ?", (limit,))]
+
+
+def get_active_situations(limit=40):
+    """Flagged companies where an activist has already shown up (too late to pitch)."""
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM scores WHERE active_situation=1 "
+            "ORDER BY score DESC, company ASC LIMIT ?", (limit,))]
 
 
 def get_score_one(cik):
