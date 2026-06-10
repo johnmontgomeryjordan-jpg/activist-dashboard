@@ -1,7 +1,8 @@
 """
 SQLite storage: companies (incl. market_cap/P-B), filings, news, scores,
-subscribers, SEC XBRL fundamentals, stored Alpha Vantage OVERVIEW blobs, and a
-daily score-history snapshot for week-over-week trend tracking.
+subscribers, SEC XBRL fundamentals, stored Alpha Vantage OVERVIEW blobs, a
+daily score-history snapshot for week-over-week trend tracking, and a shared
+watchlist with pitch notes.
 """
 import json
 import sqlite3
@@ -42,6 +43,10 @@ CREATE TABLE IF NOT EXISTS av_overview (
 );
 CREATE TABLE IF NOT EXISTS score_history (
     cik TEXT, date TEXT, score INTEGER, PRIMARY KEY (cik, date)
+);
+CREATE TABLE IF NOT EXISTS watchlist (
+    cik TEXT PRIMARY KEY, ticker TEXT, company TEXT,
+    note TEXT, added_at TEXT, updated_at TEXT
 );
 """
 
@@ -305,6 +310,36 @@ def remove_subscriber(email):
 def get_subscribers():
     with get_conn() as conn:
         return [r["email"] for r in conn.execute("SELECT email FROM subscribers")]
+
+
+# --- Watchlist (shared) ------------------------------------------------------
+def add_watchlist(cik, ticker, company):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO watchlist (cik,ticker,company,note,added_at,updated_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 ticker=excluded.ticker, company=excluded.company,
+                 updated_at=excluded.updated_at""",
+            (cik, ticker, company, "", now_iso(), now_iso()),
+        )
+
+
+def remove_watchlist(cik):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM watchlist WHERE cik=?", (cik,))
+
+
+def set_watchlist_note(cik, note):
+    with get_conn() as conn:
+        conn.execute("UPDATE watchlist SET note=?, updated_at=? WHERE cik=?",
+                     (note, now_iso(), cik))
+
+
+def get_watchlist():
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM watchlist ORDER BY added_at DESC")]
 
 
 def _cutoff(days):
