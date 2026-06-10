@@ -8,9 +8,9 @@ Jobs:
   daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
   startup_full_refresh()     -- once after boot: data, fundamentals, enrich, score.
 
-Fundamentals now also capture the RAW XBRL line items (operating income, revenue,
-net income, assets, equity, cash, debt) plus the source 10-K (fiscal year + period
-end + accession), so the detail view can show the exact math + a link to the filing.
+Fundamentals are computed from each company's MOST RECENT reporting period (latest
+10-Q year-to-date, annual fallback), capture the raw line items + source filing for
+the evidence view, and flag delisted/deregistered/dormant companies.
 """
 import os
 import time
@@ -63,49 +63,101 @@ def _get(sess, url):
     return None
 
 
-def _annual_rows(facts, tags):
+def _usd(facts, tags):
     g = facts.get("facts", {}).get("us-gaap", {})
     for t in tags:
         node = g.get(t)
-        if not node:
-            continue
-        usd = node.get("units", {}).get("USD")
-        if not usd:
-            continue
-        rows = [(e["end"], e["val"]) for e in usd
-                if str(e.get("form", "")).startswith("10-K") and e.get("fp") == "FY"
-                and e.get("val") is not None and e.get("end")]
-        if rows:
-            rows.sort(key=lambda x: x[0], reverse=True)
-            return rows
+        if node:
+            u = node.get("units", {}).get("USD")
+            if u:
+                return u
     return []
 
 
-def _latest(facts, tags):
-    rows = _annual_rows(facts, tags)
-    return rows[0][1] if rows else None
+def _pd(s):
+    try:
+        return datetime.fromisoformat(s).date()
+    except Exception:
+        return None
 
 
-def _source_meta(facts):
-    """Latest FY 10-K (period end, fiscal year, accession) for the income statement,
-    used to link the evidence to the exact filing the figures came from."""
-    g = facts.get("facts", {}).get("us-gaap", {})
-    for t in _REV:
-        node = g.get(t)
-        if not node:
-            continue
-        usd = node.get("units", {}).get("USD")
-        if not usd:
-            continue
-        best = None
-        for e in usd:
-            if (str(e.get("form", "")).startswith("10-K") and e.get("fp") == "FY"
-                    and e.get("end") and e.get("accn")):
-                if best is None or e["end"] > best[0]:
-                    best = (e["end"], e.get("fy"), e.get("accn"))
-        if best:
-            return best
-    return (None, None, None)
+def _ddays(s, e):
+    a, b = _pd(s), _pd(e)
+    return (b - a).days if (a and b) else None
+
+
+def _minus_year(e):
+    d = _pd(e)
+    if not d:
+        return None
+    try:
+        return d.replace(year=d.year - 1).isoformat()
+    except ValueError:
+        return d.replace(year=d.year - 1, day=28).isoformat()
+
+
+def _flows(facts, tags):
+    """Duration (income-statement) entries: dicts of end, val, days, accn."""
+    out = []
+    for e in _usd(facts, tags):
+        s, en, v = e.get("start"), e.get("end"), e.get("val")
+        if s and en and v is not None:
+            d = _ddays(s, en)
+            if d and d > 0:
+                out.append({"end": en, "val": v, "days": d, "accn": e.get("accn")})
+    return out
+
+
+def _instant(facts, tags):
+    """Latest point-in-time (balance-sheet) value, from 10-K or 10-Q, whichever is newest."""
+    rows = [(e["end"], e["val"]) for e in _usd(facts, tags)
+            if e.get("val") is not None and e.get("end")
+            and (not e.get("start") or e.get("start") == e.get("end"))]
+    if not rows:
+        return None
+    rows.sort(key=lambda x: x[0], reverse=True)
+    return rows[0][1]
+
+
+def _latest_period(flows):
+    if not flows:
+        return None
+    return sorted(flows, key=lambda e: (e["end"], e["days"]), reverse=True)[0]
+
+
+def _annual_period(flows):
+    ann = [e for e in flows if 350 <= e["days"] <= 380]
+    return _latest_period(ann)
+
+
+def _at(flows, end, days, tol=25):
+    same = [e for e in flows if e["end"] == end]
+    for e in same:
+        if abs(e["days"] - days) <= tol:
+            return e["val"]
+    return same[0]["val"] if same else None
+
+
+def _prior_year(flows, end, days, tol=25):
+    tgt = _minus_year(end)
+    if not tgt:
+        return None
+    cand = [e for e in flows if abs(e["days"] - days) <= 20
+            and abs((_pd(e["end"]) - _pd(tgt)).days) <= tol]
+    if not cand:
+        return None
+    cand.sort(key=lambda e: abs((_pd(e["end"]) - _pd(tgt)).days))
+    return cand[0]["val"]
+
+
+def _period_label(end, days):
+    d = _pd(end)
+    if not d:
+        return ""
+    if days and days >= 350:
+        return f"FY{d.year}"
+    months = max(1, round((days or 0) / 30.4))
+    return f"{months}-mo to {d.strftime('%b %Y')}"
 
 
 def _latest_shares(facts):
@@ -125,68 +177,118 @@ def _latest_shares(facts):
     return None
 
 
-def _rev_latest_prior(facts):
-    rows = _annual_rows(facts, _REV)
-    seen = {}
-    for end, val in rows:
-        seen.setdefault(end[:4], val)
-    yrs = sorted(seen, reverse=True)
-    return (seen[yrs[0]] if yrs else None), (seen[yrs[1]] if len(yrs) > 1 else None)
-
-
-def _sum_latest(facts, tags):
-    total = None
-    for t in tags:
-        v = _latest(facts, [t])
-        if v is not None:
-            total = (total or 0) + v
-    return total
-
-
 def _extract(facts):
-    """Return (metrics, raw): metrics drives scoring; raw holds the line items +
-    source-filing metadata so the UI can show the math and link to the 10-K."""
-    rev, rev_prior = _rev_latest_prior(facts)
-    opinc = _latest(facts, _OPINC); sga = _latest(facts, _SGA)
-    ni = _latest(facts, _NI); assets = _latest(facts, _ASSETS)
-    equity = _latest(facts, _EQUITY); shares = _latest_shares(facts)
-    cash = _sum_latest(facts, _CASH[:1] + _STI)
-    debt = _sum_latest(facts, _DEBT_LT[:1] + _DEBT_CUR[:1])
-    end, fy, accn = _source_meta(facts)
+    """Return (metrics, raw). Signals are computed from the company's MOST RECENT
+    reporting period (latest 10-Q year-to-date), falling back to the latest annual
+    10-K when the quarterly data isn't cleanly available -- so scores refresh
+    quarterly while never doing worse than annual."""
+    rev_f = _flows(facts, _REV); op_f = _flows(facts, _OPINC)
+    sga_f = _flows(facts, _SGA); ni_f = _flows(facts, _NI)
 
-    def r(n, d):
-        return (n / d) if (n is not None and d and d > 0) else None
+    # Use the recent period only when operating income is reported for it; else annual.
+    base = _latest_period(rev_f)
+    if not base or _at(op_f, base["end"], base["days"]) is None:
+        base = _annual_period(rev_f)
+
+    if base:
+        p_end, p_days, p_accn = base["end"], base["days"], base.get("accn")
+        rev = base["val"]
+        opinc = _at(op_f, p_end, p_days)
+        sga = _at(sga_f, p_end, p_days)
+        ni = _at(ni_f, p_end, p_days)
+        rev_prior = _prior_year(rev_f, p_end, p_days)
+    else:
+        p_end = p_days = p_accn = None
+        rev = opinc = sga = ni = rev_prior = None
+
+    assets = _instant(facts, _ASSETS)
+    equity = _instant(facts, _EQUITY)
+    cash_c = _instant(facts, _CASH[:1]); sti = _instant(facts, _STI)
+    cash = (cash_c or 0) + (sti or 0) if (cash_c is not None or sti is not None) else None
+    dlt = _instant(facts, _DEBT_LT[:1]); dcur = _instant(facts, _DEBT_CUR[:1])
+    debt = (dlt or 0) + (dcur or 0) if (dlt is not None or dcur is not None) else None
+    shares = _latest_shares(facts)
+
+    # annualize a partial-year net income so ROA is comparable across fiscal positions
+    ni_ann = ni
+    if ni is not None and p_days and p_days < 350:
+        ni_ann = ni * 365.0 / p_days
+
+    def ratio(n, d, lo=None, hi=None):
+        if n is None or not d or d <= 0:
+            return None
+        r = n / d
+        if (lo is not None and r < lo) or (hi is not None and r > hi):
+            return None
+        return r
+
+    growth = None
+    if rev is not None and rev_prior and rev_prior > 0:
+        g = (rev - rev_prior) / rev_prior
+        growth = g if -10 < g < 10 else None
 
     metrics = {
-        "revenue": rev,
-        "revenue_growth": ((rev - rev_prior) / rev_prior)
-                          if (rev is not None and rev_prior and rev_prior > 0) else None,
-        "operating_margin": r(opinc, rev), "sga_pct": r(sga, rev),
-        "roa": r(ni, assets), "cash_to_assets": r(cash, assets),
-        "debt_to_assets": r(debt, assets),
+        "revenue": rev, "revenue_growth": growth,
+        "operating_margin": ratio(opinc, rev, -5, 5), "sga_pct": ratio(sga, rev, 0, 5),
+        "roa": ratio(ni_ann, assets, -5, 5),
+        "cash_to_assets": ratio(cash, assets, 0, 1),
+        "debt_to_assets": ratio(debt, assets, 0, 5),
         "shares": shares, "book_equity": equity,
     }
     raw = {
         "revenue": rev, "revenue_prior": rev_prior, "operating_income": opinc,
-        "sga": sga, "net_income": ni, "total_assets": assets, "book_equity": equity,
-        "cash": cash, "debt": debt,
-        "period_end": end, "period_fy": fy, "source_accn": accn,
+        "sga": sga, "net_income": ni, "net_income_ann": ni_ann,
+        "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
+        "period_end": p_end, "period_days": p_days,
+        "period_label": _period_label(p_end, p_days) if p_end else None,
+        "source_accn": p_accn,
     }
     return metrics, raw
 
 
-def _sector(cik10):
-    """Return (2-digit SIC code, human SIC description) from the submissions API."""
+# A recent Form 25 (delisting notice) or Form 15 (deregistration) means the company
+# has stopped (or is stopping) trading; long filing silence implies the same.
+_DELIST_RECENT_DAYS = 150
+_STALE_DAYS = 300
+
+
+def _is_delist_form(fm):
+    fm = (fm or "").strip().upper()
+    return fm.startswith("25") or fm.startswith("15-12") or fm.startswith("15F") or fm == "15-15D"
+
+
+def _meta_from_submissions(j):
+    sic = str(j.get("sic") or "")
+    desc = j.get("sicDescription") or None
+    recent = j.get("filings", {}).get("recent", {})
+    forms = recent.get("form", []) or []
+    dates = recent.get("filingDate", []) or []
+    last_filing = max(dates) if dates else None
+    inactive, reason = False, None
+    recent_cut = (datetime.utcnow() - timedelta(days=_DELIST_RECENT_DAYS)).date().isoformat()
+    for fm, dt in zip(forms, dates):
+        if _is_delist_form(fm) and dt >= recent_cut:
+            inactive, reason = True, f"Filed Form {fm} on {dt} (delisting / deregistration)"
+            break
+    if not inactive and last_filing:
+        stale_cut = (datetime.utcnow() - timedelta(days=_STALE_DAYS)).date().isoformat()
+        if last_filing < stale_cut:
+            inactive, reason = True, f"no SEC filings since {last_filing}"
+    return (sic[:2] if len(sic) >= 2 else None), desc, inactive, reason, last_filing
+
+
+def _company_meta(cik10):
+    """Return (sic2, sic_desc, inactive, reason, last_filing) from the submissions API.
+    Flags companies that look delisted/deregistered (recent Form 25/15) or that have
+    gone quiet (no SEC filing for many months)."""
     r = _get(_sec, _SUB_URL.format(cik10=cik10))
     if not r:
-        return None, None
+        return None, None, False, None, None
     try:
         j = r.json()
     except ValueError:
-        return None, None
-    sic = str(j.get("sic") or "")
-    desc = j.get("sicDescription") or None
-    return (sic[:2] if len(sic) >= 2 else None), desc
+        return None, None, False, None, None
+    return _meta_from_submissions(j)
 
 
 # ---- universe + jobs --------------------------------------------------------
@@ -222,6 +324,7 @@ def refresh_fundamentals(max_companies=None):
     uni = get_universe()
     subset = uni[:max_companies] if max_companies else uni
     done = 0
+    inactive_n = 0
     for i, c in enumerate(subset):
         cik = c.get("cik")
         if not cik:
@@ -238,13 +341,19 @@ def refresh_fundamentals(max_companies=None):
             m, raw = _extract(facts)
         finally:
             del facts
-        sic2, sic_desc = _sector(cik10); time.sleep(0.12)
+        sic2, sic_desc, inactive, reason, last_filing = _company_meta(cik10); time.sleep(0.12)
         raw["sector_desc"] = sic_desc
+        raw["inactive"] = inactive
+        raw["inactive_reason"] = reason
+        raw["last_filing"] = last_filing
+        if inactive:
+            inactive_n += 1
         database.upsert_fundamentals(cik10, c.get("ticker"), sic2, m, raw)
         done += 1
         if i % 50 == 0:
             gc.collect()
-    print(f"[fundamentals] refreshed {done}/{len(subset)} companies")
+    print(f"[fundamentals] refreshed {done}/{len(subset)} companies; "
+          f"{inactive_n} marked inactive (delisted/stale)")
     try:
         flagged = scoring.recompute_all()
         print(f"[fundamentals] rescore complete; flagged={len(flagged)}")
@@ -261,7 +370,7 @@ def daily_rescore_and_digest():
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=xbrl-av-predictive-evidence  starting refresh")
+    print("[boot] VERSION=xbrl-quarterly-evidence  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_enrichment()
