@@ -99,6 +99,26 @@
   .as-score { color:var(--warn); font-weight:800; font-size:16px; font-variant-numeric:tabular-nums; }
   .modal-warn { background:rgba(255,181,71,.12); border:1px solid rgba(255,181,71,.4); color:#ffce85;
     border-radius:8px; padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:8px; }
+  /* Watchlist + stars */
+  .star { cursor:pointer; color:var(--warn); font-size:16px; margin-right:6px; user-select:none; vertical-align:middle; }
+  .star:hover { color:#ffce85; }
+  .wl-count { color:var(--muted); font-weight:600; margin-left:2px; }
+  .wl-star-row { margin-bottom:10px; }
+  .wl-star-btn { font-weight:600; }
+  .wl-row { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
+  .wl-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:15px; }
+  .wl-top .co-link { font-weight:650; }
+  .wl-score { color:var(--accent); font-weight:800; font-variant-numeric:tabular-nums; }
+  .wl-sig { color:#cdd8e2; font-size:13px; margin:7px 0 9px; }
+  .wl-note { width:100%; min-height:60px; background:var(--panel2); border:1px solid var(--line);
+    color:var(--text); border-radius:8px; padding:8px 10px; font-size:13px; font-family:inherit; resize:vertical; }
+  .wl-actions { display:flex; align-items:center; gap:10px; margin-top:8px; }
+  .wl-msg { color:var(--ok); font-size:12px; }
+  .wl-badge { font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; text-transform:uppercase; letter-spacing:.3px; }
+  .wl-badge.ok { background:rgba(61,220,132,.15); color:var(--ok); }
+  .wl-badge.warn { background:rgba(255,181,71,.15); color:#ffce85; }
+  .wl-badge.gone { background:rgba(255,92,92,.15); color:#ff8a8a; }
+  .wl-badge.muted { background:var(--panel2); color:var(--muted); }
   .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
   button { background:var(--accent); color:#04121f; border:none; padding:8px 14px; border-radius:7px; font-weight:600; cursor:pointer; font-size:13px; }
   button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
@@ -177,6 +197,7 @@
 
 <div class="tabs">
   <div class="tab active" id="tabbtn-dashboard" onclick="showTab('dashboard')">Dashboard</div>
+  <div class="tab" id="tabbtn-watchlist" onclick="showTab('watchlist')">Watchlist<span id="wlCount" class="wl-count"></span></div>
   <div class="tab" id="tabbtn-about" onclick="showTab('about')">How it works</div>
 </div>
 
@@ -207,7 +228,7 @@
   </div>
 
   <div class="section-title">Companies to Pitch — ranked by vulnerability score</div>
-  <p class="hint">Click any company to open its full profile — overview, financials, recent filings &amp; news.</p>
+  <p class="hint">Click any company to open its full profile — overview, financials, recent filings &amp; news. Click the ☆ to add it to the watchlist.</p>
   <div class="panel">
     <table>
       <thead>
@@ -237,6 +258,12 @@
       <span class="msg" id="subMsg"></span>
     </div>
   </div>
+</div>
+
+<div class="wrap" id="tab-watchlist" style="display:none;">
+  <div class="section-title">Watchlist</div>
+  <p class="hint">Shared across the team. Star any company to track it here with pitch notes — it stays even if it drops off the shortlist, and shows its current status.</p>
+  <div id="watchlistBody"><div class="empty">Loading…</div></div>
 </div>
 
 <div class="wrap about" id="tab-about" style="display:none;">
@@ -296,7 +323,7 @@
   EDGAR, IR), a plain-English overview, and the proof behind each signal — the value,
   the exact SEC math, the fiscal period, the peer cutoff with sample size, and a link
   straight to the source filing. Followed by SEC-derived financials, recent filings,
-  and recent related news.</p>
+  and recent related news. Star it to add to the shared watchlist.</p>
 
   <h3>How often it updates</h3>
   <ul>
