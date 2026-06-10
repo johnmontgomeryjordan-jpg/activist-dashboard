@@ -71,6 +71,16 @@ def api_shortlist():
     return {"companies": rows}
 
 
+@app.get("/api/active-situations")
+def api_active_situations():
+    """Flagged companies where an activist is already engaged (too late to pitch)."""
+    rows = database.get_active_situations(limit=40)
+    for c in rows:
+        prior = database.prior_score(c["cik"])
+        c["week_change"] = (c["score"] - prior) if prior is not None else None
+    return {"companies": rows}
+
+
 @app.get("/api/shortlist.csv")
 def api_shortlist_csv():
     import csv, io
@@ -131,6 +141,7 @@ def api_company(cik: str):
         "score": score.get("score"),
         "signals": score.get("signals"),
         "evidence": evidence,
+        "active_situation": score.get("active_situation") or 0,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
         "week_change": (score.get("score") - prior) if prior is not None else None,
