@@ -19,6 +19,8 @@ Event accelerants (recent filings/news), text-confirmed where it matters:
 Each triggered signal produces an EVIDENCE record (value, the underlying SEC math,
 fiscal period, peer context with sample size, source, and a link to the exact
 filing), stored as JSON on the score so the detail view can prove why each tag fired.
+Delisted/inactive names are dropped; companies where an activist is already engaged
+are pulled off the proactive shortlist into an "active situations" bucket.
 """
 import json
 
@@ -71,7 +73,6 @@ STRUCT_META = {
 # How to show the underlying math: signal -> (numerator raw key, denominator raw key, template)
 INPUTS_META = {
     "low_margin": ("operating_income", "revenue", "operating income {a} ÷ revenue {b}"),
-    "low_roa": ("net_income", "total_assets", "net income {a} ÷ total assets {b}"),
     "high_sga": ("sga", "revenue", "SG&A {a} ÷ revenue {b}"),
     "cash_hoard": ("cash", "total_assets", "cash & ST investments {a} ÷ total assets {b}"),
     "underlevered": ("debt", "total_assets", "total debt {a} ÷ total assets {b}"),
@@ -80,6 +81,24 @@ EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
                 "impairment": "SEC 8-K", "layoffs": "SEC 8-K",
                 "leadership_change": "SEC 8-K", "results_update": "SEC 8-K",
                 "news_negative": "News"}
+
+# A headline matched to a company that names an activist / campaign means an activist
+# has ALREADY shown up -- too late to pitch proactively, so we pull these names off the
+# main shortlist into a separate "active situations" bucket instead of ranking them.
+ACTIVIST_NEWS = [
+    "activist", "proxy fight", "proxy battle", "proxy contest", "13d",
+    "board seat", "board seats", "nominat", "director nominee",
+    "builds stake", "raises stake", "takes stake", "boosts stake",
+    "elliott management", "starboard", "trian", "jana partners", "third point",
+    "carl icahn", "icahn", "nelson peltz", "valueact", "value act", "engine no",
+    "ancora", "politan", "sachem head", "legion partners",
+    "short seller", "short-seller",
+]
+
+
+def _activist_headline(headline):
+    t = " " + (headline or "").lower() + " "
+    return any(k in t for k in ACTIVIST_NEWS)
 
 
 def _pad_cik(cik):
@@ -133,6 +152,9 @@ def _source_url(cik, accn):
 
 
 def _period_label(raw):
+    lbl = raw.get("period_label")
+    if lbl:
+        return lbl
     fy = raw.get("period_fy")
     end = raw.get("period_end")
     if fy:
@@ -170,6 +192,14 @@ def _struct_evidence(key, r, t):
         a, b = raw.get(a_key), raw.get(b_key)
         if a is not None and b is not None:
             inputs = tmpl.format(a=_money(a), b=_money(b))
+    elif key == "low_roa":
+        ni = raw.get("net_income_ann")
+        if ni is None:
+            ni = raw.get("net_income")
+        ta = raw.get("total_assets")
+        if ni is not None and ta is not None:
+            nlbl = "net income (annualized)" if (raw.get("period_days") or 999) < 350 else "net income"
+            inputs = f"{nlbl} {_money(ni)} ÷ total assets {_money(ta)}"
     elif key == "weak_growth":
         a, b = raw.get("revenue"), raw.get("revenue_prior")
         if a is not None and b is not None:
@@ -199,6 +229,7 @@ def _event_signals(cik, ticker):
     triggered = set()
     top = None
     ev = {}
+    activist = None
     for f in database.filings_in_window(_pad_cik(cik), config.SCORE_WINDOW_DAYS):
         for sig in (f.get("signals") or "").split(","):
             sig = sig.strip()
@@ -214,7 +245,11 @@ def _event_signals(cik, ticker):
             ev.setdefault("news_negative", {"title": nws[0]["headline"], "url": nws[0]["url"]})
             if top is None:
                 top = {"title": nws[0]["headline"], "url": nws[0]["url"]}
-    return triggered, top, ev
+            for n in nws:
+                if _activist_headline(n.get("headline")):
+                    activist = {"title": n["headline"], "url": n["url"]}
+                    break
+    return triggered, top, ev, activist
 
 
 def recompute_all():
@@ -239,6 +274,10 @@ def recompute_all():
             "tsr_3y": comp.get("tsr_3y"), "market_cap": comp.get("market_cap"),
             "name": comp.get("name") or f.get("ticker"), "raw": raw,
         })
+
+    # Drop delisted / deregistered / long-dormant names so they can't be pitched,
+    # and keep them out of the peer benchmarks too.
+    recs = [r for r in recs if not r.get("raw", {}).get("inactive")]
 
     metrics = ["pb_ratio", "operating_margin", "tsr_1y", "tsr_3y", "roa",
                "revenue_growth", "sga_pct", "cash_to_assets", "debt_to_assets"]
@@ -285,7 +324,7 @@ def recompute_all():
             trig.append("underlevered")
 
         struct = sum(STRUCT_POINTS[s] for s in trig)
-        events, top, ev = _event_signals(r["cik"], r["ticker"])
+        events, top, ev, activist = _event_signals(r["cik"], r["ticker"])
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
 
@@ -299,16 +338,21 @@ def recompute_all():
             elif key in EVENT_POINTS:
                 evidence.append(_event_evidence(key, ev))
 
+        # Activist already on the scene -> move to the "active situations" bucket
+        # (too late to pitch) and surface the activist headline as its latest item.
+        item = activist or top
         rows.append({
             "cik": r["cik"], "ticker": r["ticker"], "company": r["name"],
             "market_cap": r.get("market_cap"), "score": total,
             "signals": " + ".join(LABELS[s] for s in trig if s in LABELS),
-            "top_item_title": top["title"] if top else "",
-            "top_item_url": top["url"] if top else "",
+            "top_item_title": item["title"] if item else "",
+            "top_item_url": item["url"] if item else "",
+            "active_situation": 1 if activist else 0,
             "evidence": evidence,
             "first_flagged": database.now_iso()[:10],
         })
 
     rows.sort(key=lambda r: (r["score"], r["market_cap"] or 0), reverse=True)
     database.replace_scores(rows)
-    return rows[: config.SHORTLIST_SIZE]
+    shortlist = [r for r in rows if not r.get("active_situation")]
+    return shortlist[: config.SHORTLIST_SIZE]
