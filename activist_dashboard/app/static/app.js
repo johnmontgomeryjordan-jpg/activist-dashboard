@@ -183,6 +183,7 @@ async function loadFeed(){
 }
 async function loadShortlist(){
   try{ const d=await (await fetch("/api/shortlist")).json();
+    renderNewRising(d.companies||[]);
     const tb=document.getElementById("shortlist");
     if(!d.companies.length){ tb.innerHTML=`<tr><td colspan="7" class="empty">No companies flagged yet. Scores build as data loads.</td></tr>`; return; }
     tb.innerHTML = d.companies.map((c,i)=>{
@@ -237,12 +238,14 @@ async function openCompany(cik){
     if(o.website) L.push(`<a class="extlink" href="${esc(o.website)}" target="_blank" rel="noopener">Company site ↗</a>`);
     L.push(`<a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations")}" target="_blank" rel="noopener">IR / contacts ↗</a>`);
     const linkBar=`<div class="links">${L.join("")}</div>`;
+    const warn = d.active_situation ? `<div class="modal-warn">⚠ Activist already engaged — likely too late to pitch proactively.</div>` : "";
     const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
     const filings=(d.filings||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.company)} — ${esc(x.title)}</a>
         <div class="meta"><span class="tag">${esc(x.form)}</span><span>${fmtDate(x.filed_at)}</span></div></div>`).join("") || `<div class="empty">No recent filings on record.</div>`;
     const news=(d.news||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.headline)}</a>
         <div class="meta"><span class="tag">${esc(x.source)||"news"}</span><span>${fmtDate(x.published_at)}</span></div></div>`).join("") || `<div class="empty">No recent matched news.</div>`;
     document.getElementById("mBody").innerHTML = `
+      ${warn}
       ${linkBar}
       ${o.description?`<div class="mh3">Overview</div><div class="desc">${esc(o.description)}</div>`:""}
       <div class="mh3">Why it's flagged</div><div class="evlist">${evHtml}</div>
@@ -303,8 +306,41 @@ function weekChip(ch){
 }
 function exportCsv(){ window.open("/api/shortlist.csv","_blank"); }
 
+function withinDays(dateStr, n){
+  if(!dateStr) return false;
+  const d=new Date(dateStr+"T00:00:00"); if(isNaN(d)) return false;
+  return (Date.now()-d.getTime()) <= n*86400000;
+}
+function renderNewRising(companies){
+  const sec=document.getElementById("newRisingSection"), el=document.getElementById("newRising");
+  if(!sec||!el) return;
+  const isNew = c => withinDays(c.first_flagged, 7);
+  const fresh = companies.filter(isNew);
+  const rising = companies.filter(c => !isNew(c) && c.week_change!=null && c.week_change>0);
+  const card = (c,badge) => `<div class="nr-card" onclick="openCompany('${esc(c.cik)}')">
+      ${badge}<span class="nr-co">${esc(c.company)} <span class="meta">${esc(c.ticker)}</span></span>
+      <span class="nr-score">${c.score}</span></div>`;
+  const html = fresh.map(c=>card(c,`<span class="nr-badge new">NEW</span>`)).join("")
+             + rising.map(c=>card(c,`<span class="nr-badge up">▲${c.week_change}</span>`)).join("");
+  sec.style.display="block";
+  el.innerHTML = html || `<div class="empty" style="padding:10px 0;">No new entrants or risers yet — week-over-week movement builds over a few days of history.</div>`;
+}
+async function loadActiveSituations(){
+  try{ const d=await (await fetch("/api/active-situations")).json();
+    const sec=document.getElementById("activeSitSection"), el=document.getElementById("activeSit");
+    if(!sec||!el) return;
+    const list=d.companies||[];
+    if(!list.length){ sec.style.display="none"; return; }
+    sec.style.display="block";
+    el.innerHTML = list.map(c=>`<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
+        <div class="as-co"><span class="co-link">${esc(c.company)}</span><div class="meta">${esc(c.ticker)}</div></div>
+        <div class="as-head">${c.top_item_url?`<a href="${esc(c.top_item_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(c.top_item_title)||"activist headline"}</a>`:(esc(c.top_item_title)||"—")}</div>
+        <div class="as-score">${c.score}</div></div>`).join("");
+  }catch(e){}
+}
+
 async function refreshAll(){
-  await Promise.all([loadStatus(),loadFeed(),loadShortlist()]);
+  await Promise.all([loadStatus(),loadFeed(),loadShortlist(),loadActiveSituations()]);
   document.getElementById("updated").textContent="Last updated "+new Date().toLocaleTimeString();
 }
 refreshAll(); setInterval(refreshAll, 5*60*1000);
