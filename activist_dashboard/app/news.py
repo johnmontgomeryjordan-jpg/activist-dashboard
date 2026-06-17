@@ -1,22 +1,16 @@
 """
-Financial news ingestion via a free-tier news API (NewsAPI or GNews).
+Financial news ingestion.
 
-Relevance strategy (tuned for "distressed / activist-attracting" public-company news):
-  1. Ask the API to match distress / activist / proxy / exec / price-move terms
-     in the HEADLINE only.
-  2. Restrict to financial outlets via a domain allowlist (NewsAPI).
-  3. Re-check each headline locally against the keyword sets + MOVE_PATTERN
-     (a bare price verb also needs a finance cue, so non-market "drops/sinks/slips"
-     headlines don't leak in).
-  4. Drop noise: academic journals, sports, govt share sales, crypto promos,
-     entertainment/box-office/music, and law-firm "deadline alert" solicitations.
-  5. De-duplicate the same story from multiple outlets.
+Two complementary sources:
+  * THEMATIC feed (NewsAPI) -- broad activist / distress / governance headlines for
+    the dashboard, restricted to financial outlets and matched to the universe.
+  * COMPANY news (Finnhub, free tier) -- per-ticker news for the names that matter
+    (shortlist / active situations / watchlist), so each company's detail view and
+    its event score are driven by real, company-specific news.
 
-Headlines are bucketed into categories (activist / proxy / exec / price-mover /
-market / distress) on the FRONT END from the stored headline, so no DB change is
-needed here. This module just makes sure the right headlines get fetched + kept.
-
-We only store/display headline, source, date, and a link out -- never article text.
+Relevance is enforced locally (keyword sets + cue-gated price verbs), noise is
+dropped (law-firm/forensic solicitations, academic, sports, crypto, entertainment),
+and repeats are de-duplicated on read. We only store headline, source, date, link.
 """
 import hashlib
 import os
@@ -28,6 +22,7 @@ from . import config, database
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 GNEWS_URL = "https://gnews.io/api/v4/search"
+FINNHUB_URL = "https://finnhub.io/api/v1/company-news"
 
 # Financial outlets only (NewsAPI 'domains' filter). Override via NEWS_DOMAINS env.
 DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatch.com,"
@@ -37,10 +32,11 @@ DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatc
 NEWS_DOMAINS = os.getenv("NEWS_DOMAINS", DEFAULT_DOMAINS)
 
 # Sent to the API; matched against the headline only. Kept under NewsAPI's 500-char
-# query limit. Bare "activist" catches "activist Ancora / Activist Jana ..." styles.
+# query limit. Covers price moves, distress, activist funds/terms, proxy advisors,
+# executive changes, and strategic-review/campaign language.
 QUERY = ('"profit warning" OR "guidance cut" OR "earnings miss" OR "misses estimates" '
          'OR activist OR "proxy fight" OR "proxy contest" OR "short seller" '
-         'OR "strategic review" OR restructuring OR impairment OR "write-down" OR downgraded '
+         'OR "strategic review" OR "strategic alternatives" OR restructuring OR impairment OR downgraded '
          'OR plunges OR tumbles OR slides OR slips OR falls OR drops OR sinks OR slumps '
          'OR "steps down" OR resigns OR "interim CEO" OR "Glass Lewis" OR "13D" '
          'OR "board seat" OR Starboard OR Icahn OR Ancora OR "Jana Partners" OR "Elliott Management"')
@@ -53,8 +49,9 @@ DISTRESS_KEYWORDS = [
     "cuts forecast", "slashes", "earnings miss", "misses estimates",
     "misses expectations", "falls short", "disappointing", "disappoints",
     "write-down", "writedown", "impairment", "restructuring", "layoff",
-    "job cuts", "strategic review", "explores sale", "exploring sale",
-    "considering sale", "steps down", "stepping down", "ousted", "to resign",
+    "job cuts", "strategic review", "strategic alternatives", "explores sale",
+    "exploring sale", "considering sale", "explore alternatives", "exploring alternatives",
+    "steps down", "stepping down", "ousted", "to resign",
     "downgrade", "downgraded", "warns",
     "weak guidance", "turnaround", "scraps", "halts", "slashed",
 ]
@@ -97,23 +94,25 @@ MOVE_PATTERN = re.compile(
 )
 
 # A bare price-move verb only counts as relevant if the headline ALSO contains one
-# of these market cues -- otherwise "set drops", "sinks navy", "slips from No. 1"
+# of these market cues -- otherwise "set drops", "sinks navy", "Talent falls 12%"
 # (non-financial) leak in. Distress / activist / exec keywords don't need a cue.
 FINANCE_CUES = [
     "shares", "stock", "nasdaq", "s&p", " dow ", "dow jones", "wall street",
     " market", "earnings", "guidance", "revenue", "profit", "quarter", "forecast",
     "outlook", "valuation", "premarket", "pre-market", "after-hours", "investor",
     "dividend", "buyback", "analyst", "price target", "bond yield", "shareholder",
-    " etf", "%", " ipo",
+    " etf", " ipo", " shr ", "market cap", "valuation",
 ]
 
 # Drop if the headline contains any of these (noise / off-topic).
 EXCLUDE_PATTERNS = [
-    # law-firm solicitations
+    # law-firm solicitations / forensic-short reports
     "deadline alert", "investor alert", "class action", "law firm", "lead plaintiff",
     "rosen law", "pomerantz", "bragar", "kessler", "levi & korsinsky", "schall law",
     "robbins", "securities fraud", "reminds investors", "encourages investors",
     "investigation on behalf", "notifies investors", "shareholder rights",
+    "hagens berman", "forensic report", "forensic analysis", "investor rights",
+    "class period", "investigates", "investigating whether", "lawsuit",
     # academic / health journals
     "plos", "journal", "study", "accumulation", "glycation", "renal", "peer-review",
     "clinical study", "examination population", "doi.org",
@@ -209,6 +208,59 @@ def _normalize(articles):
             "published_at": a.get("publishedAt") or "", "url": url,
         })
     return out
+
+
+def fetch_company_news(ticker, key, days=21):
+    """Per-company news from Finnhub (free tier), filtered to our relevance rules."""
+    from datetime import datetime, timedelta
+    to = datetime.utcnow().date()
+    frm = to - timedelta(days=days)
+    try:
+        r = requests.get(FINNHUB_URL, params={
+            "symbol": ticker, "from": frm.isoformat(), "to": to.isoformat(), "token": key
+        }, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+    except (requests.RequestException, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out = []
+    for a in data:
+        head = a.get("headline") or ""
+        url = a.get("url") or ""
+        if not head or not url or not is_relevant(head):
+            continue
+        ts = a.get("datetime")
+        try:
+            published = datetime.utcfromtimestamp(ts).isoformat() if ts else ""
+        except (ValueError, OSError, TypeError):
+            published = ""
+        out.append({"id": _hash(url), "headline": head,
+                    "source": a.get("source") or "Finnhub",
+                    "published_at": published, "url": url})
+    return out
+
+
+def refresh_company_news(tickers, key, days=21):
+    """Fetch + store recent relevant news for each ticker (shortlist / watchlist).
+    Finnhub free tier allows 60 calls/min, so a ~30-name set is well within budget."""
+    if not key:
+        return 0
+    import time
+    seen, kept = set(), 0
+    for tk in tickers:
+        tk = (tk or "").strip().upper()
+        if not tk or tk in seen:
+            continue
+        seen.add(tk)
+        for a in fetch_company_news(tk, key, days):
+            a["matched_tickers"] = tk
+            database.upsert_news(a)
+            kept += 1
+        time.sleep(0.25)
+    _prune_stored()
+    return kept
 
 
 def _match_tickers(headline, companies):
