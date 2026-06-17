@@ -1,7 +1,7 @@
 """
 SQLite storage: companies, filings, news, scores, subscribers, SEC XBRL
 fundamentals, stored Alpha Vantage OVERVIEW blobs, a daily score-history snapshot,
-and a shared watchlist with pitch notes.
+a shared watchlist with pitch notes, and a small key/value meta store.
 """
 import json
 import re
@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS score_history (
 CREATE TABLE IF NOT EXISTS watchlist (
     cik TEXT PRIMARY KEY, ticker TEXT, company TEXT,
     note TEXT, added_at TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY, value TEXT
 );
 """
 
@@ -357,6 +360,21 @@ def get_watchlist():
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM watchlist ORDER BY added_at DESC")]
+
+
+# --- Meta key/value (benchmarks, versions, etc.) -----------------------------
+def set_meta(key, value):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO meta (key,value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, str(value)))
+
+
+def get_meta(key, default=None):
+    with get_conn() as conn:
+        r = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else default
 
 
 def _cutoff(days):
