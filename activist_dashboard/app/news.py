@@ -9,9 +9,9 @@ Two complementary sources:
     its event score are driven by real, company-specific news.
 
 Relevance is enforced locally (keyword sets + cue-gated price verbs), noise is
-dropped (law-firm/forensic solicitations, PR awards/associations, academic, sports,
-crypto, entertainment), and repeats are de-duplicated on read. We only store the
-headline, source, date, and a link out -- never article text.
+dropped (law-firm/forensic solicitations, PR awards/associations, macro reports,
+academic, sports, crypto, entertainment), and repeats are de-duplicated on read.
+We only store the headline, source, date, and a link out -- never article text.
 """
 import hashlib
 import os
@@ -121,6 +121,11 @@ EXCLUDE_PATTERNS = [
     "named one of", "named a top", "recognized as", "ranked no.",
     "to present at", "to speak at", "will present at", "investor conference",
     "conference call", "webcast", "award for",
+    # macro reports / rankings / surveys (non-company press releases)
+    "report card", "report cards", "scorecard", "top marks", "earns top",
+    "nation divided", "survey", "study reveals", "report reveals", "survey reveals",
+    "reveal a", "reveals a", "rankings", "best states", "best cities",
+    "most affordable", "state of the", "index reveals",
     # academic / health journals
     "plos", "journal", "study", "accumulation", "glycation", "renal", "peer-review",
     "clinical study", "examination population", "doi.org",
