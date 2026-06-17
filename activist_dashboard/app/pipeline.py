@@ -1,8 +1,8 @@
 """
-Orchestration + SEC XBRL fundamentals + Alpha Vantage enrichment.
+Orchestration + SEC XBRL fundamentals + Alpha Vantage / Finnhub enrichment.
 
 Jobs:
-  refresh_data()             -- thematic news + per-company news + EDGAR + rescore (30m).
+  refresh_data()             -- thematic news + per-company news + 1-yr TSR + EDGAR + rescore (30m).
   refresh_fundamentals()     -- SEC XBRL fundamentals + sector + shares + equity.
   refresh_enrichment()       -- Alpha Vantage: market cap + P/B + overview (shortlist).
   daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
@@ -28,6 +28,7 @@ _HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, defla
 _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
 _SUB_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 _AV_URL = "https://www.alphavantage.co/query"
+_FINNHUB_METRIC_URL = "https://finnhub.io/api/v1/stock/metric"
 _sec = requests.Session(); _sec.headers.update(_HEADERS)
 _web = requests.Session(); _web.headers.update({"User-Agent": "Mozilla/5.0 (compatible; ActivistDashboard/1.0)"})
 
@@ -321,6 +322,51 @@ def _refresh_company_news():
     return news.refresh_company_news(sorted(tickers), key)
 
 
+def _finnhub_metric_1y(symbol, key):
+    """52-week price return (as a fraction) from Finnhub's free metric endpoint."""
+    try:
+        r = requests.get(_FINNHUB_METRIC_URL,
+                         params={"symbol": symbol, "metric": "all", "token": key}, timeout=20)
+        d = r.json() if r.status_code == 200 else {}
+    except (requests.RequestException, ValueError):
+        return None
+    m = (d or {}).get("metric") or {}
+    v = m.get("52WeekPriceReturnDaily")
+    try:
+        return float(v) / 100.0 if v is not None else None
+    except (ValueError, TypeError):
+        return None
+
+
+def refresh_tsr():
+    """1-yr relative TSR for shortlist / active situations / watchlist via Finnhub's
+    free metric endpoint. Stores each name's 1-yr return + the S&P 500 benchmark."""
+    key = os.getenv("FINNHUB_API_KEY", "")
+    if not key:
+        return 0
+    spy = _finnhub_metric_1y("SPY", key); time.sleep(0.25)
+    if spy is not None:
+        database.set_meta("spy_1y", spy)
+    pairs = {}
+    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+        if s.get("ticker"):
+            pairs[s["cik"]] = s["ticker"]
+    for s in database.get_active_situations(limit=40):
+        if s.get("ticker"):
+            pairs[s["cik"]] = s["ticker"]
+    for w in database.get_watchlist():
+        if w.get("ticker"):
+            pairs.setdefault(w["cik"], w["ticker"])
+    done = 0
+    for cik, tk in pairs.items():
+        ret = _finnhub_metric_1y(tk, key); time.sleep(0.25)
+        if ret is not None:
+            database.set_company_market(_unpad(cik), tsr_1y=ret)
+            done += 1
+    print(f"[tsr] updated {done}/{len(pairs)} names (S&P 1y={spy})")
+    return done
+
+
 def refresh_data(max_companies=None):
     uni = get_universe()
     try:
@@ -332,6 +378,10 @@ def refresh_data(max_companies=None):
     except Exception:
         traceback.print_exc(); n_cnews = 0
     try:
+        n_tsr = refresh_tsr()
+    except Exception:
+        traceback.print_exc(); n_tsr = 0
+    try:
         n_filings = edgar.ingest(uni, days=config.SCORE_WINDOW_DAYS, max_companies=max_companies)
     except Exception:
         traceback.print_exc(); n_filings = 0
@@ -339,8 +389,10 @@ def refresh_data(max_companies=None):
         flagged = scoring.recompute_all()
     except Exception:
         traceback.print_exc(); flagged = []
-    print(f"[refresh] news={n_news} company_news={n_cnews} filings={n_filings} flagged={len(flagged)}")
-    return {"news": n_news, "company_news": n_cnews, "filings": n_filings, "flagged": len(flagged)}
+    print(f"[refresh] news={n_news} company_news={n_cnews} tsr={n_tsr} "
+          f"filings={n_filings} flagged={len(flagged)}")
+    return {"news": n_news, "company_news": n_cnews, "tsr": n_tsr,
+            "filings": n_filings, "flagged": len(flagged)}
 
 
 def refresh_fundamentals(max_companies=None):
@@ -393,7 +445,7 @@ def daily_rescore_and_digest():
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=xbrl-quarterly-evidence-finnhub  starting refresh")
+    print("[boot] VERSION=xbrl-quarterly-evidence-finnhub-tsr  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_enrichment()
