@@ -9,8 +9,9 @@ Two complementary sources:
     its event score are driven by real, company-specific news.
 
 Relevance is enforced locally (keyword sets + cue-gated price verbs), noise is
-dropped (law-firm/forensic solicitations, academic, sports, crypto, entertainment),
-and repeats are de-duplicated on read. We only store headline, source, date, link.
+dropped (law-firm/forensic solicitations, PR awards/associations, academic, sports,
+crypto, entertainment), and repeats are de-duplicated on read. We only store the
+headline, source, date, and a link out -- never article text.
 """
 import hashlib
 import os
@@ -113,6 +114,13 @@ EXCLUDE_PATTERNS = [
     "investigation on behalf", "notifies investors", "shareholder rights",
     "hagens berman", "forensic report", "forensic analysis", "investor rights",
     "class period", "investigates", "investigating whether", "lawsuit",
+    # PR fluff: awards, certifications, rankings, associations, speaking gigs
+    "award winner", "award winners", "wins award", "honored with", "honoree",
+    "certification", "certified", "best places to work", "great place to work",
+    "top workplaces", "fastest-growing", "association of", "advisors announces",
+    "named one of", "named a top", "recognized as", "ranked no.",
+    "to present at", "to speak at", "will present at", "investor conference",
+    "conference call", "webcast", "award for",
     # academic / health journals
     "plos", "journal", "study", "accumulation", "glycation", "renal", "peer-review",
     "clinical study", "examination population", "doi.org",
