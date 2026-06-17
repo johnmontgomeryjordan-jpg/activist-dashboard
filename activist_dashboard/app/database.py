@@ -1,10 +1,10 @@
 """
-SQLite storage: companies (incl. market_cap/P-B), filings, news, scores,
-subscribers, SEC XBRL fundamentals, stored Alpha Vantage OVERVIEW blobs, a
-daily score-history snapshot for week-over-week trend tracking, and a shared
-watchlist with pitch notes.
+SQLite storage: companies, filings, news, scores, subscribers, SEC XBRL
+fundamentals, stored Alpha Vantage OVERVIEW blobs, a daily score-history snapshot,
+and a shared watchlist with pitch notes.
 """
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -215,10 +215,26 @@ def upsert_news(n):
         )
 
 
+def _dedup_news(rows, limit):
+    """Collapse repeats of the same headline (syndicated wires / cross-source dupes),
+    keeping the newest, until `limit` items."""
+    seen, out = set(), []
+    for r in rows:
+        k = re.sub(r"\s+", " ", (r.get("headline") or "").strip().lower())
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def recent_news(limit=40):
     with get_conn() as conn:
-        return [dict(r) for r in conn.execute(
-            "SELECT * FROM news ORDER BY published_at DESC LIMIT ?", (limit,))]
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM news ORDER BY published_at DESC LIMIT ?", (limit * 3,))]
+    return _dedup_news(rows, limit)
 
 
 def news_for_ticker_in_window(ticker, days):
@@ -232,9 +248,10 @@ def news_for_ticker_in_window(ticker, days):
 
 def get_news_for_ticker(ticker, limit=10):
     with get_conn() as conn:
-        return [dict(r) for r in conn.execute(
+        rows = [dict(r) for r in conn.execute(
             """SELECT * FROM news WHERE (','||matched_tickers||',') LIKE ?
-               ORDER BY published_at DESC LIMIT ?""", (f"%,{ticker},%", limit))]
+               ORDER BY published_at DESC LIMIT ?""", (f"%,{ticker},%", limit * 3))]
+    return _dedup_news(rows, limit)
 
 
 # --- Scores ------------------------------------------------------------------
