@@ -2,7 +2,7 @@
 Orchestration + SEC XBRL fundamentals + Alpha Vantage enrichment.
 
 Jobs:
-  refresh_data()             -- EDGAR filings + news + rescore (fast, every 30m).
+  refresh_data()             -- thematic news + per-company news + EDGAR + rescore (30m).
   refresh_fundamentals()     -- SEC XBRL fundamentals + sector + shares + equity.
   refresh_enrichment()       -- Alpha Vantage: market cap + P/B + overview (shortlist).
   daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
@@ -302,12 +302,35 @@ def get_universe():
     return _UNIVERSE
 
 
+def _refresh_company_news():
+    """Per-company news (Finnhub) for the names that matter -- current shortlist,
+    active situations, and the shared watchlist. Skipped if no FINNHUB_API_KEY."""
+    key = os.getenv("FINNHUB_API_KEY", "")
+    if not key:
+        return 0
+    tickers = set()
+    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+        if s.get("ticker"):
+            tickers.add(s["ticker"])
+    for s in database.get_active_situations(limit=40):
+        if s.get("ticker"):
+            tickers.add(s["ticker"])
+    for w in database.get_watchlist():
+        if w.get("ticker"):
+            tickers.add(w["ticker"])
+    return news.refresh_company_news(sorted(tickers), key)
+
+
 def refresh_data(max_companies=None):
     uni = get_universe()
     try:
         n_news = news.ingest(uni, limit=40)
     except Exception:
         traceback.print_exc(); n_news = 0
+    try:
+        n_cnews = _refresh_company_news()
+    except Exception:
+        traceback.print_exc(); n_cnews = 0
     try:
         n_filings = edgar.ingest(uni, days=config.SCORE_WINDOW_DAYS, max_companies=max_companies)
     except Exception:
@@ -316,8 +339,8 @@ def refresh_data(max_companies=None):
         flagged = scoring.recompute_all()
     except Exception:
         traceback.print_exc(); flagged = []
-    print(f"[refresh] news={n_news} filings={n_filings} flagged={len(flagged)}")
-    return {"news": n_news, "filings": n_filings, "flagged": len(flagged)}
+    print(f"[refresh] news={n_news} company_news={n_cnews} filings={n_filings} flagged={len(flagged)}")
+    return {"news": n_news, "company_news": n_cnews, "filings": n_filings, "flagged": len(flagged)}
 
 
 def refresh_fundamentals(max_companies=None):
@@ -370,7 +393,7 @@ def daily_rescore_and_digest():
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=xbrl-quarterly-evidence  starting refresh")
+    print("[boot] VERSION=xbrl-quarterly-evidence-finnhub  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_enrichment()
