@@ -19,14 +19,14 @@ Event accelerants (recent filings/news), text-confirmed where it matters:
 Each triggered signal produces an EVIDENCE record (value, the underlying SEC math,
 fiscal period, peer context with sample size, source, and a link to the exact
 filing), stored as JSON on the score so the detail view can prove why each tag fired.
-Delisted/inactive names are dropped; companies where an activist is already engaged
-are pulled off the proactive shortlist into an "active situations" bucket.
 """
 import json
 
 from . import config, database
 
 MIN_PEERS = 5
+# 1-yr stock return must lag the S&P 500 by at least this much (in return terms) to flag.
+TSR_LAG_1Y = -0.15
 
 STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1,
                  "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1, "high_sga": 1,
@@ -39,8 +39,8 @@ LABELS = {
     "cheap_abs": "cheap (low price-to-book < 1.5x)",
     "cheap_pb": "cheap vs peers (low price-to-book)",
     "low_margin": "low operating margin vs peers",
-    "weak_tsr_1y": "weak 1-yr stock return vs peers",
-    "weak_tsr_3y": "weak 3-yr stock return vs peers",
+    "weak_tsr_1y": "1-yr stock return lagging the market",
+    "weak_tsr_3y": "weak 3-yr stock return vs market",
     "low_roa": "low return on assets vs peers",
     "weak_growth": "shrinking / weak revenue growth",
     "high_sga": "bloated SG&A vs peers",
@@ -164,7 +164,24 @@ def _period_label(raw):
     return ""
 
 
+def _tsr_evidence(key, r):
+    metric = "tsr_1y" if key == "weak_tsr_1y" else "tsr_3y"
+    ret = r.get(metric)
+    bench = r.get("_spy_1y")
+    if bench is not None and ret is not None:
+        excess = (ret - bench) * 100
+        ctx = (f"underperformed the S&P 500 by {abs(excess):.0f} pts over the past year "
+               f"(stock {ret * 100:+.0f}% vs index {bench * 100:+.0f}%)")
+    else:
+        ctx = "lagged the broader market over the past year"
+    return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric("tsr_1y", ret),
+            "context": ctx, "inputs": "", "period": "trailing 1 yr",
+            "source": "Finnhub (price return)", "url": None}
+
+
 def _struct_evidence(key, r, t):
+    if key in ("weak_tsr_1y", "weak_tsr_3y"):
+        return _tsr_evidence(key, r)
     metric, direction, source = STRUCT_META[key]
     v = r.get(metric)
     q1, q3, n = t.get(metric, (None, None, 0))
@@ -279,6 +296,11 @@ def recompute_all():
     # and keep them out of the peer benchmarks too.
     recs = [r for r in recs if not r.get("raw", {}).get("inactive")]
 
+    try:
+        spy_1y = float(database.get_meta("spy_1y"))
+    except (TypeError, ValueError):
+        spy_1y = None
+
     metrics = ["pb_ratio", "operating_margin", "tsr_1y", "tsr_3y", "roa",
                "revenue_growth", "sga_pct", "cash_to_assets", "debt_to_assets"]
     by_sector = {}
@@ -290,6 +312,7 @@ def recompute_all():
     rows = []
     for r in recs:
         t = th.get(r["sector"], {})
+        r["_spy_1y"] = spy_1y
         trig = []
 
         def low(metric):
@@ -308,10 +331,9 @@ def recompute_all():
             trig.append("cheap_pb")
         if low("operating_margin"):
             trig.append("low_margin")
-        if low("tsr_1y"):
+        if (r.get("tsr_1y") is not None and spy_1y is not None
+                and (r["tsr_1y"] - spy_1y) <= TSR_LAG_1Y):
             trig.append("weak_tsr_1y")
-        if low("tsr_3y"):
-            trig.append("weak_tsr_3y")
         if low("roa"):
             trig.append("low_roa")
         if r.get("revenue_growth") is not None and (r["revenue_growth"] < 0 or low("revenue_growth")):
