@@ -20,7 +20,6 @@ Each triggered signal produces an EVIDENCE record (value, the underlying SEC mat
 fiscal period, peer context with sample size, source, and a link to the exact
 filing), stored as JSON on the score so the detail view can prove why each tag fired.
 """
-import bisect
 import json
 
 from . import config, database
@@ -36,6 +35,14 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
+POINTS = {**STRUCT_POINTS, **EVENT_POINTS}
+
+# 0-100 vulnerability is an ABSOLUTE severity score, not a percentile. Each triggered
+# signal contributes its point weight scaled by *how severe* it is (0..1) — how cheap,
+# how deep in the peer tail, how far returns lag. VULN_SCALE is the severity-weighted
+# point total that maps to 100; a genuinely strong, multi-signal lead lands in the 80s-90s
+# and lighter leads spread down into the 30s-50s, so the number actually discriminates.
+VULN_SCALE = 9.0
 
 LABELS = {
     "cheap_abs": "cheap (low price-to-book < 1.5x)",
@@ -126,6 +133,81 @@ def _quantiles(values):
         idx = min(len(vals) - 1, max(0, int(round(p * (len(vals) - 1)))))
         return vals[idx]
     return pct(0.25), pct(0.75), len(vals)
+
+
+def _pct_lo_hi(values):
+    """5th / 95th percentile of a metric across a sector (tail anchors for severity)."""
+    vals = sorted(v for v in values if v is not None)
+    if len(vals) < MIN_PEERS:
+        return None, None
+    def pct(p):
+        idx = min(len(vals) - 1, max(0, int(round(p * (len(vals) - 1)))))
+        return vals[idx]
+    return pct(0.05), pct(0.95)
+
+
+def _clamp(x):
+    return max(0.0, min(1.0, x))
+
+
+def _depth_low(metric, r, t, e):
+    """How deep below the bottom-quartile cutoff toward the sector floor (0..1)."""
+    v = r.get(metric)
+    q1, _, _ = t.get(metric, (None, None, 0))
+    lo, _ = e.get(metric, (None, None))
+    if v is None or q1 is None:
+        return 0.5
+    if lo is None or q1 <= lo:
+        return 0.6
+    return _clamp((q1 - v) / (q1 - lo))
+
+
+def _depth_high(metric, r, t, e):
+    """How far above the top-quartile cutoff toward the sector ceiling (0..1)."""
+    v = r.get(metric)
+    _, q3, _ = t.get(metric, (None, None, 0))
+    _, hi = e.get(metric, (None, None))
+    if v is None or q3 is None:
+        return 0.5
+    if hi is None or hi <= q3:
+        return 0.6
+    return _clamp((v - q3) / (hi - q3))
+
+
+def _severity(key, r, t, e):
+    """Magnitude (0..1) of a triggered signal. Events/governance are binary (1.0);
+    peer-relative and valuation/return signals scale by how extreme they are."""
+    if key == "cheap_abs":
+        pb = r.get("pb_ratio")
+        return _clamp((1.5 - pb) / 1.5) if pb is not None else 0.5
+    if key == "cheap_pb":
+        return _depth_low("pb_ratio", r, t, e)
+    if key in ("weak_tsr_1y", "weak_tsr_3y"):
+        ret = r.get("tsr_1y" if key == "weak_tsr_1y" else "tsr_3y")
+        bench = r.get("_spy_1y")
+        if ret is None or bench is None:
+            return 0.5
+        gap = bench - ret  # positive = underperformance vs the index
+        return _clamp((gap - 0.15) / 0.50)  # 15pts behind -> 0, 65pts behind -> 1
+    if key == "low_margin":
+        return _depth_low("operating_margin", r, t, e)
+    if key == "low_roa":
+        return _depth_low("roa", r, t, e)
+    if key == "weak_growth":
+        return _depth_low("revenue_growth", r, t, e)
+    if key == "high_sga":
+        return _depth_high("sga_pct", r, t, e)
+    if key == "cash_hoard":
+        return _depth_high("cash_to_assets", r, t, e)
+    if key == "underlevered":
+        return _depth_low("debt_to_assets", r, t, e)
+    return 1.0  # governance flags + event accelerants
+
+
+def _vuln_score(trig, r, t, e):
+    """0-100 absolute vulnerability from the severity-weighted signal total."""
+    sev_total = sum(POINTS.get(k, 0) * _severity(k, r, t, e) for k in trig)
+    return min(100, int(round(100 * sev_total / VULN_SCALE)))
 
 
 def _fmt_metric(metric, v):
@@ -331,11 +413,14 @@ def recompute_all():
         by_sector.setdefault(r["sector"], []).append(r)
     th = {sec: {m: _quantiles([x.get(m) for x in rows]) for m in metrics}
           for sec, rows in by_sector.items()}
+    # Sector tail anchors (5th/95th pct) used to scale each signal's severity.
+    ext = {sec: {m: _pct_lo_hi([x.get(m) for x in rows]) for m in metrics}
+           for sec, rows in by_sector.items()}
 
-    # --- Pass 1: compute each active company's raw vulnerability total. ---
-    all_totals = []
+    rows = []
     for r in recs:
         t = th.get(r["sector"], {})
+        e = ext.get(r["sector"], {})
         r["_spy_1y"] = spy_1y
         trig = []
 
@@ -385,32 +470,11 @@ def recompute_all():
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
 
-        r["_trig"] = trig
-        r["_total"] = total
-        r["_ev"] = ev
-        r["_activist"] = activist
-        r["_top"] = top
-        all_totals.append(total)
-
-    # 0-100 vulnerability = percentile of the raw total across the whole active
-    # universe (so "92" means more vulnerable than 92% of companies we track).
-    srt = sorted(all_totals)
-    n_all = len(srt)
-
-    def _vuln(v):
-        if n_all == 0:
-            return 0
-        return int(round(100 * bisect.bisect_right(srt, v) / n_all))
-
-    # --- Pass 2: build the flagged rows with their percentile. ---
-    rows = []
-    for r in recs:
-        total = r["_total"]
         if total < config.SCORE_THRESHOLD:
             continue
-        t = th.get(r["sector"], {})
-        trig, ev = r["_trig"], r["_ev"]
-        activist, top = r["_activist"], r["_top"]
+
+        # 0-100 absolute vulnerability, weighted by how severe each signal is.
+        vuln = _vuln_score(trig, r, t, e)
 
         evidence = []
         for key in trig:
@@ -424,7 +488,7 @@ def recompute_all():
         item = activist or top
         rows.append({
             "cik": r["cik"], "ticker": r["ticker"], "company": r["name"],
-            "market_cap": r.get("market_cap"), "score": total, "vuln": _vuln(total),
+            "market_cap": r.get("market_cap"), "score": total, "vuln": vuln,
             "signals": " + ".join(LABELS[s] for s in trig if s in LABELS),
             "top_item_title": item["title"] if item else "",
             "top_item_url": item["url"] if item else "",
@@ -433,7 +497,8 @@ def recompute_all():
             "first_flagged": database.now_iso()[:10],
         })
 
-    rows.sort(key=lambda r: (r["score"], r["market_cap"] or 0), reverse=True)
+    # Rank by the 0-100 vulnerability (tie-break on raw signal count, then size).
+    rows.sort(key=lambda r: (r["vuln"], r["score"], r["market_cap"] or 0), reverse=True)
     database.replace_scores(rows)
     shortlist = [r for r in rows if not r.get("active_situation")]
     return shortlist[: config.SHORTLIST_SIZE]
