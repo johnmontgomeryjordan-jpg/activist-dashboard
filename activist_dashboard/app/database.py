@@ -308,7 +308,7 @@ def get_scores(limit=15):
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM scores WHERE COALESCE(active_situation,0)=0 "
-            "ORDER BY score DESC, company ASC LIMIT ?", (limit,))]
+            "ORDER BY COALESCE(vuln,0) DESC, score DESC, company ASC LIMIT ?", (limit,))]
 
 
 def get_active_situations(limit=40):
@@ -316,7 +316,7 @@ def get_active_situations(limit=40):
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM scores WHERE active_situation=1 "
-            "ORDER BY score DESC, company ASC LIMIT ?", (limit,))]
+            "ORDER BY COALESCE(vuln,0) DESC, score DESC, company ASC LIMIT ?", (limit,))]
 
 
 def get_score_one(cik):
