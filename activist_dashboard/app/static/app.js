@@ -252,7 +252,7 @@ async function openCompany(cik){
       }).join("") : `<div class="siglist">${sigs||"—"}</div>`;
 
     // Scorecard header: gauge + return-vs-S&P + key facts.
-    const rankLabel = d.vuln!=null ? `More exposed than <b>${d.vuln}%</b> of the companies we track` : "Vulnerability percentile pending next refresh";
+    const rankLabel = d.vuln!=null ? `<b>${vulnBand(d.vuln)}</b> activist exposure` : "Vulnerability score pending next refresh";
     const tsr=d.tsr||{}; let tsrPanel="";
     if(tsr.tsr_1y!=null){
       const gap=tsr.gap, gcol=(gap!=null)?(gap<0?"var(--hot)":"var(--ok)"):"var(--muted)";
@@ -369,6 +369,13 @@ function vulnInfo(v){
 function vulnChip(v){
   const i=vulnInfo(v);
   return `<span class="vchip ${i.cls}">${v==null?"—":v}</span>`;
+}
+function vulnBand(v){
+  if(v==null) return "Unscored";
+  if(v>=75) return "Severe";
+  if(v>=50) return "High";
+  if(v>=25) return "Elevated";
+  return "Moderate";
 }
 function gaugeSvg(v){
   const val=(v==null)?0:Math.max(0,Math.min(100,v));
