@@ -1,6 +1,6 @@
 """
 FastAPI app: serves the dashboard, JSON API (incl. per-company detail + CSV
-export), the subscribe + watchlist endpoints, and runs the background scheduler.
+export), the subscribe endpoint, and runs the background scheduler.
 """
 import json
 import re
@@ -97,13 +97,14 @@ def api_watchlist():
             prior = database.prior_score(cik)
             week_change = (sc.get("score") - prior) if prior is not None else None
             score, signals, mcap = sc.get("score"), sc.get("signals"), sc.get("market_cap")
+            vuln = sc.get("vuln")
         else:
             status = "inactive" if fraw.get("inactive") else "dropped"
-            score = signals = week_change = mcap = None
+            score = signals = week_change = mcap = vuln = None
         out.append({"cik": cik, "ticker": w.get("ticker"), "company": w.get("company"),
                     "note": w.get("note") or "", "status": status, "score": score,
-                    "signals": signals, "week_change": week_change, "market_cap": mcap,
-                    "added_at": w.get("added_at")})
+                    "vuln": vuln, "signals": signals, "week_change": week_change,
+                    "market_cap": mcap, "added_at": w.get("added_at")})
     return {"items": out}
 
 
@@ -163,6 +164,18 @@ def api_company(cik: str):
     fund = database.get_fundamentals_one(cik)
     av = database.get_av_overview(cik)
     prior = database.prior_score(cik)
+    gov = database.get_governance(cik) or {}
+    market = database.get_company_market(cik)
+
+    def _f(v):
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    tsr_1y = _f(market.get("tsr_1y"))
+    spy_1y = _f(database.get_meta("spy_1y"))
+    tsr_gap = (tsr_1y - spy_1y) if (tsr_1y is not None and spy_1y is not None) else None
 
     try:
         evidence = json.loads(score.get("evidence") or "[]")
@@ -192,12 +205,21 @@ def api_company(cik: str):
         "ticker": ticker,
         "company": score.get("company"),
         "score": score.get("score"),
+        "vuln": score.get("vuln"),
+        "active_situation": score.get("active_situation"),
         "signals": score.get("signals"),
         "evidence": evidence,
-        "active_situation": score.get("active_situation") or 0,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
         "week_change": (score.get("score") - prior) if prior is not None else None,
+        "tsr": {"tsr_1y": tsr_1y, "spy_1y": spy_1y, "gap": tsr_gap},
+        "governance": {
+            "classified_board": bool(gov.get("classified_board")),
+            "poison_pill": bool(gov.get("poison_pill")),
+            "dual_class": bool(gov.get("dual_class")),
+            "proxy_url": gov.get("proxy_url"),
+            "proxy_date": gov.get("proxy_date"),
+        },
         "overview": {
             "description": av.get("Description"),
             "sector": av.get("Sector"),
