@@ -30,7 +30,8 @@ TSR_LAG_1Y = -0.15
 
 STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1,
                  "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1, "high_sga": 1,
-                 "cash_hoard": 1, "underlevered": 1}
+                 "cash_hoard": 1, "underlevered": 1,
+                 "gov_classified": 1, "gov_poison": 1, "gov_dual": 1}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
@@ -53,6 +54,17 @@ LABELS = {
     "leadership_change": "recent leadership change",
     "results_update": "recent results",
     "news_negative": "negative activist headline",
+    "gov_classified": "classified / staggered board",
+    "gov_poison": "poison pill / rights plan",
+    "gov_dual": "dual-class / super-voting stock",
+}
+
+# Governance red flags (from DEF 14A). Boolean signals -> their own evidence cards.
+GOV_KEYS = ("gov_classified", "gov_poison", "gov_dual")
+GOV_META = {
+    "gov_classified": "directors elected in staggered classes — entrenches the board against change",
+    "gov_poison": "shareholder rights plan in place — blocks an activist from accumulating a stake",
+    "gov_dual": "super-voting share structure — insiders control the vote",
 }
 
 # Structural signal -> (metric, direction, source label).
@@ -179,9 +191,18 @@ def _tsr_evidence(key, r):
             "source": "Finnhub (price return)", "url": None}
 
 
+def _gov_evidence(key, r):
+    return {"key": key, "label": LABELS.get(key, key), "value": "",
+            "context": GOV_META.get(key, ""), "inputs": "",
+            "period": (f"proxy {r.get('_gov_date')}" if r.get("_gov_date") else "DEF 14A"),
+            "source": "SEC DEF 14A", "url": r.get("_gov_url")}
+
+
 def _struct_evidence(key, r, t):
     if key in ("weak_tsr_1y", "weak_tsr_3y"):
         return _tsr_evidence(key, r)
+    if key in GOV_KEYS:
+        return _gov_evidence(key, r)
     metric, direction, source = STRUCT_META[key]
     v = r.get(metric)
     q1, q3, n = t.get(metric, (None, None, 0))
@@ -300,6 +321,7 @@ def recompute_all():
         spy_1y = float(database.get_meta("spy_1y"))
     except (TypeError, ValueError):
         spy_1y = None
+    gov = database.get_all_governance()
 
     metrics = ["pb_ratio", "operating_margin", "tsr_1y", "tsr_3y", "roa",
                "revenue_growth", "sga_pct", "cash_to_assets", "debt_to_assets"]
@@ -345,6 +367,17 @@ def recompute_all():
         if low("debt_to_assets"):
             trig.append("underlevered")
 
+        # Governance red flags (from DEF 14A; only present for parsed names).
+        g = gov.get(r["cik"]) or {}
+        r["_gov_url"] = g.get("proxy_url")
+        r["_gov_date"] = g.get("proxy_date")
+        if g.get("classified_board"):
+            trig.append("gov_classified")
+        if g.get("poison_pill"):
+            trig.append("gov_poison")
+        if g.get("dual_class"):
+            trig.append("gov_dual")
+
         struct = sum(STRUCT_POINTS[s] for s in trig)
         events, top, ev, activist = _event_signals(r["cik"], r["ticker"])
         total = struct + sum(EVENT_POINTS[s] for s in events)
@@ -355,7 +388,7 @@ def recompute_all():
 
         evidence = []
         for key in trig:
-            if key in STRUCT_META:
+            if key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
                 evidence.append(_event_evidence(key, ev))
