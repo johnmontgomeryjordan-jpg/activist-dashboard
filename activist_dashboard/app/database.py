@@ -1,7 +1,7 @@
 """
-SQLite storage: companies, filings, news, scores, subscribers, SEC XBRL
-fundamentals, stored Alpha Vantage OVERVIEW blobs, a daily score-history snapshot,
-a shared watchlist with pitch notes, a key/value meta store, and DEF 14A governance.
+SQLite storage: companies (incl. market_cap/P-B), filings, news, scores,
+subscribers, SEC XBRL fundamentals, stored Alpha Vantage OVERVIEW blobs, and a
+daily score-history snapshot for week-over-week trend tracking.
 """
 import json
 import re
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS news (
 CREATE TABLE IF NOT EXISTS scores (
     cik TEXT PRIMARY KEY, ticker TEXT, company TEXT, market_cap REAL,
     score INTEGER, signals TEXT, top_item_title TEXT, top_item_url TEXT,
-    first_flagged TEXT, evidence TEXT, active_situation INTEGER, updated_at TEXT
+    first_flagged TEXT, evidence TEXT, active_situation INTEGER, vuln INTEGER, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS subscribers (
     email TEXT PRIMARY KEY, created_at TEXT
@@ -78,6 +78,8 @@ def init_db():
             conn.execute("ALTER TABLE scores ADD COLUMN evidence TEXT")
         if "active_situation" not in scols:
             conn.execute("ALTER TABLE scores ADD COLUMN active_situation INTEGER")
+        if "vuln" not in scols:
+            conn.execute("ALTER TABLE scores ADD COLUMN vuln INTEGER")
         fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
         if "raw" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
@@ -119,6 +121,20 @@ def set_company_market(cik, market_cap=None, pb_ratio=None, tsr_1y=None, tsr_3y=
 def get_companies():
     with get_conn() as conn:
         return [dict(r) for r in conn.execute("SELECT * FROM companies")]
+
+
+def get_company_market(cik):
+    """Look up a company row by CIK, tolerating padded or unpadded form
+    (companies stores the unpadded CIK; scores/fundamentals store padded)."""
+    try:
+        unpadded = str(int(cik))
+    except (ValueError, TypeError):
+        unpadded = str(cik)
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT * FROM companies WHERE cik IN (?,?)", (str(cik), unpadded)
+        ).fetchone()
+        return dict(r) if r else {}
 
 
 # --- Fundamentals ------------------------------------------------------------
@@ -272,12 +288,12 @@ def replace_scores(rows):
             conn.execute(
                 """INSERT INTO scores
                    (cik,ticker,company,market_cap,score,signals,top_item_title,
-                    top_item_url,first_flagged,evidence,active_situation,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    top_item_url,first_flagged,evidence,active_situation,vuln,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (r["cik"], r["ticker"], r["company"], r["market_cap"], r["score"],
                  r["signals"], r["top_item_title"], r["top_item_url"], first,
                  json.dumps(r.get("evidence") or []), r.get("active_situation") or 0,
-                 now_iso()),
+                 r.get("vuln") or 0, now_iso()),
             )
         today = datetime.utcnow().date().isoformat()
         for r in rows:
