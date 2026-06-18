@@ -1,16 +1,13 @@
 """
-Orchestration + SEC XBRL fundamentals + Alpha Vantage / Finnhub enrichment.
+Orchestration + SEC XBRL fundamentals + Alpha Vantage / Finnhub enrichment + governance.
 
 Jobs:
   refresh_data()             -- thematic news + per-company news + 1-yr TSR + EDGAR + rescore (30m).
-  refresh_fundamentals()     -- SEC XBRL fundamentals + sector + shares + equity.
+  refresh_fundamentals()     -- SEC XBRL fundamentals (latest quarter) + sector + delisting flags.
+  refresh_governance()       -- DEF 14A governance red flags (shortlist/watchlist), cached.
   refresh_enrichment()       -- Alpha Vantage: market cap + P/B + overview (shortlist).
-  daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
-  startup_full_refresh()     -- once after boot: data, fundamentals, enrich, score.
-
-Fundamentals are computed from each company's MOST RECENT reporting period (latest
-10-Q year-to-date, annual fallback), capture the raw line items + source filing for
-the evidence view, and flag delisted/deregistered/dormant companies.
+  daily_rescore_and_digest() -- 4pm ET: data + fundamentals + governance + enrich, rescore, email.
+  startup_full_refresh()     -- once after boot: data, fundamentals, governance, enrich, score.
 """
 import os
 import time
@@ -20,7 +17,7 @@ from datetime import datetime, timedelta
 
 import requests
 
-from . import config, database, universe, edgar, news, scoring, emailer
+from . import config, database, universe, edgar, news, scoring, emailer, governance
 
 _UNIVERSE = None
 
@@ -437,17 +434,40 @@ def refresh_fundamentals(max_companies=None):
     return done
 
 
+def refresh_governance():
+    """Parse DEF 14A governance red flags for shortlist / active / watchlist names
+    (cached by filing accession), then rescore. Free SEC data."""
+    ciks = set()
+    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+        if s.get("cik"):
+            ciks.add(s["cik"])
+    for s in database.get_active_situations(limit=40):
+        if s.get("cik"):
+            ciks.add(s["cik"])
+    for w in database.get_watchlist():
+        if w.get("cik"):
+            ciks.add(w["cik"])
+    n = governance.refresh_governance(sorted(ciks))
+    try:
+        scoring.recompute_all()
+    except Exception:
+        traceback.print_exc()
+    return n
+
+
 def daily_rescore_and_digest():
     refresh_data()
     refresh_fundamentals()
+    refresh_governance()
     refresh_enrichment()
     return emailer.send_digest()
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=xbrl-quarterly-evidence-finnhub-tsr  starting refresh")
+    print("[boot] VERSION=quarterly-evidence-finnhub-tsr-governance  starting refresh")
     refresh_data()
     refresh_fundamentals()
+    refresh_governance()
     refresh_enrichment()
 
 
