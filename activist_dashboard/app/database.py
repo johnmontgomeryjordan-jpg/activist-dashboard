@@ -1,7 +1,7 @@
 """
 SQLite storage: companies, filings, news, scores, subscribers, SEC XBRL
 fundamentals, stored Alpha Vantage OVERVIEW blobs, a daily score-history snapshot,
-a shared watchlist with pitch notes, and a small key/value meta store.
+a shared watchlist with pitch notes, a key/value meta store, and DEF 14A governance.
 """
 import json
 import re
@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS watchlist (
 );
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY, value TEXT
+);
+CREATE TABLE IF NOT EXISTS governance (
+    cik TEXT PRIMARY KEY, classified_board INTEGER, poison_pill INTEGER,
+    dual_class INTEGER, proxy_accn TEXT, proxy_date TEXT, proxy_url TEXT, updated_at TEXT
 );
 """
 
@@ -375,6 +379,35 @@ def get_meta(key, default=None):
     with get_conn() as conn:
         r = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
         return r["value"] if r else default
+
+
+# --- Governance (from DEF 14A proxies) ---------------------------------------
+def upsert_governance(cik, flags, accn, date, url):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO governance
+               (cik,classified_board,poison_pill,dual_class,proxy_accn,proxy_date,proxy_url,updated_at)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 classified_board=excluded.classified_board, poison_pill=excluded.poison_pill,
+                 dual_class=excluded.dual_class, proxy_accn=excluded.proxy_accn,
+                 proxy_date=excluded.proxy_date, proxy_url=excluded.proxy_url,
+                 updated_at=excluded.updated_at""",
+            (cik, 1 if flags.get("classified_board") else 0,
+             1 if flags.get("poison_pill") else 0, 1 if flags.get("dual_class") else 0,
+             accn, date, url, now_iso()),
+        )
+
+
+def get_governance(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM governance WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def get_all_governance():
+    with get_conn() as conn:
+        return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM governance")}
 
 
 def _cutoff(days):
