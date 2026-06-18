@@ -193,7 +193,6 @@ async function loadShortlist(){
     if(!d.companies.length){ tb.innerHTML=`<tr><td colspan="7" class="empty">No companies flagged yet. Scores build as data loads.</td></tr>`; return; }
     tb.innerHTML = d.companies.map((c,i)=>{
       regInfo(c);
-      const cls=c.score>=7?"hot":c.score>=5?"warn":"mid";
       const chg = weekChip(c.week_change);
       const link=c.top_item_url?`<span class="pill-link"><a href="${esc(c.top_item_url)}" target="_blank" rel="noopener">${esc(c.top_item_title)||"view"}</a></span>`:"—";
       const star=`<span class="star" onclick="event.stopPropagation();toggleStar('${esc(c.cik)}', this)" title="Add to watchlist">${WATCHLIST_SET.has(c.cik)?'★':'☆'}</span>`;
@@ -201,7 +200,7 @@ async function loadShortlist(){
       return `<tr><td>${i+1}</td>
         <td>${co}<div class="meta">${esc(c.ticker)}</div></td>
         <td class="mcap">${fmtCap(c.market_cap)}</td>
-        <td class="score ${cls}">${c.score}${chg}</td>
+        <td class="vcell" title="raw signal score ${c.score}">${vulnChip(c.vuln)}${chg}</td>
         <td class="signals">${esc(c.signals)}</td>
         <td>${link}</td>
         <td class="mcap">${esc(c.first_flagged)}</td></tr>`;
@@ -223,12 +222,15 @@ async function openCompany(cik){
       [o.sector,o.industry,o.exchange].filter(Boolean).map(esc).join(" · ") +
       (d.first_flagged?` · first flagged ${esc(d.first_flagged)}`:"") +
       (d.week_change!=null?` · ${d.week_change>0?"▲":d.week_change<0?"▼":"±"}${Math.abs(d.week_change)} vs last week`:"");
-    const sc=d.score, cls=sc>=7?"hot":sc>=5?"warn":"mid";
-    const sb=document.getElementById("mScore"); sb.textContent=sc; sb.className="score scorebadge "+cls;
+    // Header badge now shows the 0–100 vulnerability percentile.
+    const vi=vulnInfo(d.vuln);
+    const sb=document.getElementById("mScore");
+    sb.textContent=(d.vuln==null?"—":d.vuln); sb.className="score scorebadge"; sb.style.color=vi.col;
     const f=d.financials||{};
     const sigs=(d.signals||"").split(" + ").filter(Boolean).map(s=>`<span class="tag sig">${esc(s)}</span>`).join(" ");
-    const ev=d.evidence||[];
-    const evHtml = ev.length ? ev.map(e=>{
+
+    // Single evidence card.
+    const evCard = e=>{
         const src = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.source||"source")} ↗</a>` : esc(e.source||"");
         const val = e.value ? `<span class="evval">${esc(e.value)}</span>` : "";
         const ctxLine = e.context ? `<div class="evctx">${esc(e.context)}</div>` : "";
@@ -237,7 +239,47 @@ async function openCompany(cik){
         const srcLine = (e.source||e.url) ? `<div class="evsrc">Source: ${src}</div>` : "";
         return `<div class="evrow"><div class="evtop"><span class="evlabel">${esc(e.label)}</span>${val}</div>
           ${ctxLine}${mathLine}${srcLine}</div>`;
+      };
+    // Group evidence into the five activist pillars + catalysts.
+    const ev=d.evidence||[];
+    const groups={}; ev.forEach(e=>{ const p=PILLAR_OF[e.key]||"event"; (groups[p]=groups[p]||[]).push(e); });
+    const pillarHtml = ev.length ? PILLAR_ORDER.filter(p=>groups[p]).map(p=>{
+        const m=PILLAR_META[p];
+        return `<div class="pillar"><div class="pillar-h"><span class="pillar-t">${m.t}</span>
+            <span class="pillar-n">${groups[p].length}</span></div>
+          <div class="pillar-d">${m.d}</div>
+          <div class="evlist">${groups[p].map(evCard).join("")}</div></div>`;
       }).join("") : `<div class="siglist">${sigs||"—"}</div>`;
+
+    // Scorecard header: gauge + return-vs-S&P + key facts.
+    const rankLabel = d.vuln!=null ? `More exposed than <b>${d.vuln}%</b> of the companies we track` : "Vulnerability percentile pending next refresh";
+    const tsr=d.tsr||{}; let tsrPanel="";
+    if(tsr.tsr_1y!=null){
+      const gap=tsr.gap, gcol=(gap!=null)?(gap<0?"var(--hot)":"var(--ok)"):"var(--muted)";
+      const gtxt=(gap!=null)?((gap>0?"+":"")+(gap*100).toFixed(0)+" pts"):"—";
+      tsrPanel=`<div class="tsr-panel"><div class="tsr-h">1-yr total return vs S&amp;P 500</div>
+        <div class="tsr-grid">
+          <div><div class="tsr-k">This stock</div><div class="tsr-v">${fmtPct(tsr.tsr_1y)}</div></div>
+          <div><div class="tsr-k">S&amp;P 500</div><div class="tsr-v">${fmtPct(tsr.spy_1y)}</div></div>
+          <div><div class="tsr-k">Gap</div><div class="tsr-v" style="color:${gcol}">${gtxt}</div></div>
+        </div></div>`;
+    }
+    const scHtml=`<div class="scorecard">
+      <div class="sc-gauge">${gaugeSvg(d.vuln)}<div class="sc-rank">${rankLabel}</div></div>
+      <div class="sc-side">${tsrPanel}
+        <div class="sc-facts">
+          ${kvMini("Market cap", fmtCap(d.market_cap))}
+          ${kvMini("Price / book", fmtNum(f.pb_ratio))}
+          ${kvMini("Signal score", d.score!=null?d.score:"—")}
+        </div></div></div>`;
+    // Governance badge strip.
+    const g=d.governance||{};
+    const gbadge=(on,txt)=>`<span class="gov-badge ${on?'on':'off'}">${on?'●':'○'} ${txt}</span>`;
+    const anyGov=g.classified_board||g.poison_pill||g.dual_class;
+    const govRow=`<div class="gov-row">${gbadge(g.classified_board,"Classified board")}${gbadge(g.poison_pill,"Poison pill")}${gbadge(g.dual_class,"Dual-class stock")}`+
+      (g.proxy_url?`<a class="extlink" href="${esc(g.proxy_url)}" target="_blank" rel="noopener">DEF 14A ↗</a>`:"")+
+      (!anyGov && !g.proxy_url?`<span class="gov-note">proxy not yet parsed</span>`:"")+`</div>`;
+    // External quick-links built from ticker / CIK / company name.
     const tk=d.ticker;
     const L=[];
     if(tk) L.push(`<a class="extlink" href="https://finance.yahoo.com/quote/${encodeURIComponent(tk)}" target="_blank" rel="noopener">Yahoo Finance ↗</a>`);
@@ -256,9 +298,11 @@ async function openCompany(cik){
     document.getElementById("mBody").innerHTML = `
       ${warn}
       <div class="wl-star-row">${starBtn}</div>
+      ${scHtml}
       ${linkBar}
       ${o.description?`<div class="mh3">Overview</div><div class="desc">${esc(o.description)}</div>`:""}
-      <div class="mh3">Why it's flagged</div><div class="evlist">${evHtml}</div>
+      <div class="mh3">Why it's flagged</div><div class="pillars">${pillarHtml}</div>
+      <div class="mh3">Governance</div>${govRow}
       <div class="mh3">Financials</div>
       <div class="grid">
         ${kv("Market cap", fmtCap(d.market_cap))}
@@ -314,6 +358,47 @@ function weekChip(ch){
   if(ch<0) return ` <span class="chg down" title="vs last week">▼${Math.abs(ch)}</span>`;
   return ` <span class="chg flat" title="vs last week">±0</span>`;
 }
+/* ---- Vulnerability score helpers (0–100 percentile) ---- */
+function vulnInfo(v){
+  if(v==null) return {col:"var(--muted)", cls:"v0"};
+  if(v>=75) return {col:"var(--hot)", cls:"v3"};
+  if(v>=50) return {col:"var(--warn)", cls:"v2"};
+  if(v>=25) return {col:"var(--accent)", cls:"v1"};
+  return {col:"var(--muted)", cls:"v0"};
+}
+function vulnChip(v){
+  const i=vulnInfo(v);
+  return `<span class="vchip ${i.cls}">${v==null?"—":v}</span>`;
+}
+function gaugeSvg(v){
+  const val=(v==null)?0:Math.max(0,Math.min(100,v));
+  const C=Math.PI*84, on=(val/100)*C, col=vulnInfo(v).col;
+  return `<svg viewBox="0 0 200 118" class="gauge" role="img" aria-label="vulnerability ${val} of 100">
+    <path d="M16,102 A84,84 0 0 1 184,102" fill="none" stroke="var(--line)" stroke-width="15" stroke-linecap="round"/>
+    <path d="M16,102 A84,84 0 0 1 184,102" fill="none" stroke="${col}" stroke-width="15" stroke-linecap="round" stroke-dasharray="${on.toFixed(1)} ${(C+4).toFixed(1)}"/>
+    <text x="100" y="88" text-anchor="middle" class="gnum" fill="${col}">${v==null?"—":val}</text>
+    <text x="100" y="108" text-anchor="middle" class="glabel">/ 100 vulnerability</text>
+  </svg>`;
+}
+function kvMini(k,v){ return `<div class="kvm"><div class="kvm-k">${k}</div><div class="kvm-v">${v}</div></div>`; }
+const PILLAR_OF={
+  cheap_abs:"value", cheap_pb:"value",
+  weak_tsr_1y:"perf", weak_tsr_3y:"perf",
+  low_margin:"ops", low_roa:"ops", weak_growth:"ops", high_sga:"ops",
+  cash_hoard:"capital", underlevered:"capital",
+  gov_classified:"gov", gov_poison:"gov", gov_dual:"gov",
+  ceo_departure:"event", earnings_miss:"event", impairment:"event",
+  layoffs:"event", leadership_change:"event", results_update:"event", news_negative:"event"
+};
+const PILLAR_META={
+  value:{t:"Valuation gap", d:"Trading cheap relative to assets or peers"},
+  perf:{t:"Shareholder returns", d:"Stock lagging the broader market"},
+  ops:{t:"Operating performance", d:"Margins, returns or growth below peers"},
+  capital:{t:"Capital allocation", d:"Balance sheet an activist could push to optimize"},
+  gov:{t:"Governance red flags", d:"Entrenchment provisions in the proxy"},
+  event:{t:"Recent catalysts", d:"Events that tend to draw activist attention"}
+};
+const PILLAR_ORDER=["value","perf","ops","capital","gov","event"];
 function exportCsv(){ window.open("/api/shortlist.csv","_blank"); }
 
 function withinDays(dateStr, n){
@@ -329,7 +414,7 @@ function renderNewRising(companies){
   const rising = companies.filter(c => !isNew(c) && c.week_change!=null && c.week_change>0);
   const card = (c,badge) => `<div class="nr-card" onclick="openCompany('${esc(c.cik)}')">
       ${badge}<span class="nr-co">${esc(c.company)} <span class="meta">${esc(c.ticker)}</span></span>
-      <span class="nr-score">${c.score}</span></div>`;
+      <span class="nr-score">${vulnChip(c.vuln)}</span></div>`;
   const html = fresh.map(c=>card(c,`<span class="nr-badge new">NEW</span>`)).join("")
              + rising.map(c=>card(c,`<span class="nr-badge up">▲${c.week_change}</span>`)).join("");
   sec.style.display="block";
@@ -345,7 +430,7 @@ async function loadActiveSituations(){
     el.innerHTML = list.map(c=>{ regInfo(c); return `<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
         <div class="as-co"><span class="co-link">${esc(c.company)}</span><div class="meta">${esc(c.ticker)}</div></div>
         <div class="as-head">${c.top_item_url?`<a href="${esc(c.top_item_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(c.top_item_title)||"activist headline"}</a>`:(esc(c.top_item_title)||"—")}</div>
-        <div class="as-score">${c.score}</div></div>`; }).join("");
+        <div class="as-score">${vulnChip(c.vuln)}</div></div>`; }).join("");
   }catch(e){}
 }
 
@@ -369,7 +454,7 @@ function renderWatchlist(items){
   const el=document.getElementById("watchlistBody"); if(!el) return;
   if(!items.length){ el.innerHTML=`<div class="empty">No companies yet. Click the ☆ star next to any company on the dashboard to add it here.</div>`; return; }
   el.innerHTML = items.map(c=>{
-    const score = c.score!=null ? `<span class="wl-score">${c.score}</span>` : "";
+    const score = c.vuln!=null ? vulnChip(c.vuln) : (c.score!=null ? `<span class="wl-score">${c.score}</span>` : "");
     return `<div class="wl-row">
       <div class="wl-top">
         <span class="co-link" onclick="openCompany('${esc(c.cik)}')">${esc(c.company)}</span>
