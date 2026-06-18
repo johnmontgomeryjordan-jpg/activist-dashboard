@@ -20,6 +20,7 @@ Each triggered signal produces an EVIDENCE record (value, the underlying SEC mat
 fiscal period, peer context with sample size, source, and a link to the exact
 filing), stored as JSON on the score so the detail view can prove why each tag fired.
 """
+import bisect
 import json
 
 from . import config, database
@@ -331,7 +332,8 @@ def recompute_all():
     th = {sec: {m: _quantiles([x.get(m) for x in rows]) for m in metrics}
           for sec, rows in by_sector.items()}
 
-    rows = []
+    # --- Pass 1: compute each active company's raw vulnerability total. ---
+    all_totals = []
     for r in recs:
         t = th.get(r["sector"], {})
         r["_spy_1y"] = spy_1y
@@ -383,8 +385,32 @@ def recompute_all():
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
 
+        r["_trig"] = trig
+        r["_total"] = total
+        r["_ev"] = ev
+        r["_activist"] = activist
+        r["_top"] = top
+        all_totals.append(total)
+
+    # 0-100 vulnerability = percentile of the raw total across the whole active
+    # universe (so "92" means more vulnerable than 92% of companies we track).
+    srt = sorted(all_totals)
+    n_all = len(srt)
+
+    def _vuln(v):
+        if n_all == 0:
+            return 0
+        return int(round(100 * bisect.bisect_right(srt, v) / n_all))
+
+    # --- Pass 2: build the flagged rows with their percentile. ---
+    rows = []
+    for r in recs:
+        total = r["_total"]
         if total < config.SCORE_THRESHOLD:
             continue
+        t = th.get(r["sector"], {})
+        trig, ev = r["_trig"], r["_ev"]
+        activist, top = r["_activist"], r["_top"]
 
         evidence = []
         for key in trig:
@@ -398,7 +424,7 @@ def recompute_all():
         item = activist or top
         rows.append({
             "cik": r["cik"], "ticker": r["ticker"], "company": r["name"],
-            "market_cap": r.get("market_cap"), "score": total,
+            "market_cap": r.get("market_cap"), "score": total, "vuln": _vuln(total),
             "signals": " + ".join(LABELS[s] for s in trig if s in LABELS),
             "top_item_title": item["title"] if item else "",
             "top_item_url": item["url"] if item else "",
