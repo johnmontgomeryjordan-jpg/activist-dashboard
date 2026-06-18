@@ -69,6 +69,46 @@
   th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; position:sticky; top:0; background:var(--panel); }
   .score { font-weight:700; font-size:16px; }
   .score.hot{color:var(--hot);} .score.warn{color:var(--warn);} .score.mid{color:var(--accent);}
+  /* 0–100 vulnerability chip */
+  .vcell { white-space:nowrap; }
+  .vchip { display:inline-block; min-width:34px; text-align:center; padding:3px 9px; border-radius:7px;
+    font-weight:800; font-size:14px; font-variant-numeric:tabular-nums; color:#0f1419; }
+  .vchip.v3 { background:var(--hot); } .vchip.v2 { background:var(--warn); }
+  .vchip.v1 { background:var(--accent); } .vchip.v0 { background:var(--muted); }
+  /* Scorecard header (gauge + return panel + facts) */
+  .scorecard { display:grid; grid-template-columns:240px 1fr; gap:18px; align-items:center;
+    background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; }
+  @media (max-width:640px){ .scorecard{ grid-template-columns:1fr; } }
+  .sc-gauge { text-align:center; }
+  .gauge { width:100%; max-width:210px; }
+  .gnum { font-size:42px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .glabel { font-size:11px; fill:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+  .sc-rank { color:var(--muted); font-size:12px; margin-top:2px; }
+  .sc-rank b { color:var(--text); }
+  .sc-side { display:flex; flex-direction:column; gap:12px; }
+  .tsr-panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .tsr-h { font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); margin-bottom:8px; }
+  .tsr-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .tsr-k { font-size:11px; color:var(--muted); }
+  .tsr-v { font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:2px; }
+  .sc-facts { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .kvm { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  .kvm-k { font-size:10px; text-transform:uppercase; letter-spacing:.3px; color:var(--muted); }
+  .kvm-v { font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:2px; }
+  /* Evidence grouped into pillars */
+  .pillars { display:flex; flex-direction:column; gap:14px; }
+  .pillar-h { display:flex; align-items:center; gap:8px; }
+  .pillar-t { font-weight:700; font-size:13px; }
+  .pillar-n { font-size:11px; font-weight:700; color:var(--muted); background:var(--panel2);
+    border-radius:20px; padding:1px 8px; }
+  .pillar-d { color:var(--muted); font-size:11px; margin:2px 0 7px; }
+  /* Governance badge strip */
+  .gov-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .gov-badge { font-size:12px; font-weight:600; padding:4px 10px; border-radius:20px;
+    border:1px solid var(--line); }
+  .gov-badge.on { background:rgba(255,92,92,.15); color:#ff8a8a; border-color:rgba(255,92,92,.4); }
+  .gov-badge.off { color:var(--muted); }
+  .gov-note { color:var(--muted); font-size:12px; }
   .mcap { color:var(--muted); font-variant-numeric:tabular-nums; }
   .signals { color:#cdd8e2; }
   .pill-link a { color:var(--accent); text-decoration:none; }
@@ -228,11 +268,11 @@
   </div>
 
   <div class="section-title">Companies to Pitch — ranked by vulnerability score</div>
-  <p class="hint">Click any company to open its full profile — overview, financials, recent filings &amp; news. Click the ☆ to add it to the watchlist.</p>
+  <p class="hint">Click any company to open its full profile — overview, financials, recent filings &amp; news.</p>
   <div class="panel">
     <table>
       <thead>
-        <tr><th>#</th><th>Company / Ticker</th><th>Market Cap</th><th>Score</th>
+        <tr><th>#</th><th>Company / Ticker</th><th>Market Cap</th><th>Vuln</th>
             <th>Key Signals</th><th>Latest Item</th><th>First Flagged</th></tr>
       </thead>
       <tbody id="shortlist">
@@ -260,12 +300,6 @@
   </div>
 </div>
 
-<div class="wrap" id="tab-watchlist" style="display:none;">
-  <div class="section-title">Watchlist</div>
-  <p class="hint">Shared across the team. Star any company to track it here with pitch notes — it stays even if it drops off the shortlist, and shows its current status.</p>
-  <div id="watchlistBody"><div class="empty">Loading…</div></div>
-</div>
-
 <div class="wrap about" id="tab-about" style="display:none;">
   <h2>What this is</h2>
   <p class="lead">A <em>predictive</em> screen that finds companies likely to attract an
@@ -276,13 +310,9 @@
 
   <h3>How the score works</h3>
   <p>Each company is scored on traits measured <b>relative to its industry peers</b>
-  (grouped by SIC code) from its latest quarterly SEC filing, plus recent event
-  "accelerants" that signal it's time to reach out. Flagged at/above the threshold
-  (currently <b id="aboutThreshold">4</b>); the highest scorers become the shortlist.
-  Open any company to see the exact number, the underlying SEC math, and the peer
-  cutoff behind every signal — each linked to its source filing. Delisted or acquired
-  names are dropped automatically, and companies where an activist is already engaged
-  are moved to a separate "active situations" list.</p>
+  (grouped by SIC code), plus recent event "accelerants" that signal it's time to
+  reach out. Flagged at/above the threshold (currently <b id="aboutThreshold">4</b>);
+  the highest scorers become the shortlist.</p>
   <div class="card">
     <table class="legend">
       <thead><tr><th>Signal</th><th class="pts">Pts</th><th>Source</th></tr></thead>
@@ -308,42 +338,45 @@
   <h3>Where the data comes from (all free)</h3>
   <ul>
     <li><b>SEC XBRL financials</b> — each company's actual reported revenue, margins,
-      SG&amp;A, returns, and balance sheet from its latest 10-Q, compared to industry
-      peers. The core of the predictive screen, and the source for the line-item math.</li>
+      SG&amp;A, returns, and balance sheet, compared to industry peers. The core of the
+      predictive screen.</li>
     <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events (CEO changes, impairments,
-      guidance cuts) used as timing accelerants and shown in the live feed, grouped by type.</li>
+      guidance cuts) used as timing accelerants and shown in the live feed.</li>
     <li><b>Financial news API</b> — activist / distress headlines (headline + outlet +
-      link only), grouped into categories you can open.</li>
+      link only), grouped into categories you can expand.</li>
     <li><b>Alpha Vantage</b> — market cap, valuation multiples, and a company overview,
-      pulled only for the shortlisted companies. The only market-price input.</li>
+      pulled for the shortlisted companies to power the detail view.</li>
   </ul>
 
   <h3>The company detail view</h3>
-  <p>Click any flagged company to open a full profile: quick links out (Yahoo, Google,
-  EDGAR, IR), a plain-English overview, and the proof behind each signal — the value,
-  the exact SEC math, the fiscal period, the peer cutoff with sample size, and a link
-  straight to the source filing. Followed by SEC-derived financials, recent filings,
-  and recent related news. Star it to add to the shared watchlist.</p>
+  <p>Click any flagged company to open a full profile: a plain-English overview, the
+  exact signals it triggered, SEC-derived financials and Alpha Vantage market data,
+  its recent SEC filings, and recent related news — everything needed to prep a pitch.</p>
 
   <h3>How often it updates</h3>
   <ul>
     <li><b>Every 30 minutes</b> — news + EDGAR filings refresh and scores recompute.</li>
-    <li><b>Daily</b> — full SEC fundamentals refresh (latest quarter), shortlist
-      enrichment, delisting checks, and the 4:00 PM ET email digest.</li>
+    <li><b>Daily</b> — full SEC fundamentals refresh, shortlist enrichment, and the
+      4:00 PM ET email digest.</li>
   </ul>
 
   <h3>Current limits &amp; roadmap</h3>
   <ul>
     <li><b>Valuation coverage:</b> on the free data tier, market-cap/valuation is pulled
       for the shortlist (not all 1,500). A paid market-data tier would extend valuation
-      and live price/movement across the whole universe.</li>
-    <li><b>One-time charges:</b> a big one-time impairment in a quarter will depress the
-      margin/return signals for that period — usually a real vulnerability, but worth a
-      glance at the filing.</li>
+      and multi-year total-return signals across the whole universe.</li>
+    <li><b>Trend tracking:</b> the score column shows week-over-week movement (▲/▼) once
+      a few days of history have accumulated.</li>
     <li><b>Classification</b> is a strong first pass but can occasionally mis-tag a
       filing, so the shortlist is a lead-generation starting point for human review —
       not a final determination.</li>
   </ul>
+</div>
+
+<div class="wrap" id="tab-watchlist" style="display:none;">
+  <div class="section-title">Watchlist</div>
+  <p class="hint">Shared across the team. Star any company to track it here with pitch notes — it stays even if it drops off the shortlist, and shows its current status.</p>
+  <div id="watchlistBody"><div class="empty">Loading…</div></div>
 </div>
 
 <div class="overlay" id="overlay" onclick="if(event.target===this)closeCompany()">
