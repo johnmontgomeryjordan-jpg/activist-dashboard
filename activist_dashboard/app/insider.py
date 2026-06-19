@@ -14,6 +14,12 @@ and the like, which are routine compensation mechanics, not conviction trades.
 Parsed only for the names that matter (shortlist / watchlist / active situations) and
 CACHED per Form 4 accession, so each filing is parsed once. Aggregates are recomputed
 over a trailing window each refresh.
+
+NOTE: a Form 4 is filed BY the insider, so it does NOT appear in the company's own
+submissions feed (that feed is filer-centric). We therefore find a company's Form 4s
+via EDGAR full-text search filtered by the issuer's CIK -- each hit's `ciks` array
+contains both the insider (filer) and the issuer, and the filing's XML lives under the
+filer's CIK.
 """
 import time
 import xml.etree.ElementTree as ET
@@ -23,10 +29,9 @@ import requests
 from . import config, database
 
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
-SUB_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
+EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
 WINDOW_DAYS = 120          # trailing window for the insider aggregate
-MAX_FORMS_PER_CIK = 60     # safety cap on Form 4s parsed per company per refresh
 _session = requests.Session()
 _session.headers.update(HEADERS)
 
@@ -84,32 +89,36 @@ def _float(s):
         return None
 
 
-def _recent_form4s(cik10, cut_date):
-    """Return [{accn, doc, date}] for Form 4 filings on/after cut_date."""
-    r = _get(SUB_URL.format(cik10=cik10))
-    if not r:
+def _recent_form4s(cik10, start, end):
+    """Return [{accn, doc, date, filer}] for Form 4 filings where cik10 is the issuer,
+    via EDGAR full-text search (the company's own submissions feed does NOT list them)."""
+    j = None
+    for i in range(3):
+        try:
+            r = _session.get(EFTS_URL, params={"q": "", "forms": "4", "ciks": cik10,
+                             "startdt": start, "enddt": end}, timeout=25)
+            if r.status_code == 200:
+                j = r.json(); break
+            if r.status_code == 429:
+                time.sleep(1.5 * (i + 1)); continue
+            return []
+        except (requests.RequestException, ValueError):
+            time.sleep(1.0 * (i + 1))
+    if not j:
         return []
-    try:
-        j = r.json()
-    except ValueError:
-        return []
-    recent = j.get("filings", {}).get("recent", {})
-    forms = recent.get("form", []) or []
-    accs = recent.get("accessionNumber", []) or []
-    docs = recent.get("primaryDocument", []) or []
-    dates = recent.get("filingDate", []) or []
+    subj = cik10.lstrip("0")
     out = []
-    for i, f in enumerate(forms):
-        if f != "4":
-            continue
-        dt = dates[i] if i < len(dates) else ""
-        if dt and dt < cut_date:
-            continue
-        out.append({"accn": accs[i] if i < len(accs) else "",
-                    "doc": docs[i] if i < len(docs) else "",
-                    "date": dt})
-        if len(out) >= MAX_FORMS_PER_CIK:
-            break
+    for h in (j.get("hits", {}) or {}).get("hits", []) or []:
+        src = h.get("_source", {})
+        adsh, _, doc = (h.get("_id") or "").partition(":")
+        if not adsh:
+            adsh = src.get("adsh", "")
+        ciks = src.get("ciks", []) or []
+        # the Form 4 XML lives under the filer (insider) CIK, i.e. the non-issuer cik
+        filer = next((c for c in ciks if c.lstrip("0") != subj),
+                     ciks[0] if ciks else cik10)
+        out.append({"accn": adsh, "doc": doc, "date": src.get("file_date"),
+                    "filer": filer})
     return out
 
 
@@ -157,19 +166,21 @@ def refresh_insider(ciks, window_days=WINDOW_DAYS):
     """Parse new Form 4s for each (padded) CIK and recompute its insider aggregate.
     Returns the number of newly-parsed Form 4 filings."""
     from datetime import datetime, timedelta
-    cut = (datetime.utcnow() - timedelta(days=window_days)).date().isoformat()
+    start = (datetime.utcnow() - timedelta(days=window_days)).date().isoformat()
+    end = datetime.utcnow().date().isoformat()
     parsed = 0
     for cik in ciks:
         cik10 = _pad(cik)
-        forms = _recent_form4s(cik10, cut); time.sleep(0.12)
+        forms = _recent_form4s(cik10, start, end); time.sleep(0.15)
         for f in forms:
             accn = f.get("accn")
             if not accn or database.insider_txn_seen(accn):
                 continue
             doc = f.get("doc") or ""
+            filer = f.get("filer") or cik10
             nod = accn.replace("-", "")
-            url = f"{ARCHIVE}/{int(cik10)}/{nod}/{doc}"
-            idx_url = f"{ARCHIVE}/{int(cik10)}/{nod}/{accn}-index.htm"
+            url = f"{ARCHIVE}/{int(filer)}/{nod}/{doc}"
+            idx_url = f"{ARCHIVE}/{int(filer)}/{nod}/{accn}-index.htm"
             r = _get(url); time.sleep(0.1)
             if not r or not r.text or "<" not in r.text:
                 # Cache a no-op so we don't refetch a non-XML primary doc forever.
