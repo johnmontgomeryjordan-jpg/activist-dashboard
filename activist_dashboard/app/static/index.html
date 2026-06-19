@@ -69,10 +69,14 @@
   th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; position:sticky; top:0; background:var(--panel); }
   .score { font-weight:700; font-size:16px; }
   .score.hot{color:var(--hot);} .score.warn{color:var(--warn);} .score.mid{color:var(--accent);}
-  /* 0–100 vulnerability chip */
+  /* Activist-target profile: rating band (headline) + index chip (support) */
   .vcell { white-space:nowrap; }
-  .vchip { display:inline-block; min-width:34px; text-align:center; padding:3px 9px; border-radius:7px;
-    font-weight:800; font-size:14px; font-variant-numeric:tabular-nums; color:#0f1419; }
+  .vwrap { display:inline-flex; flex-direction:column; gap:3px; align-items:flex-start; vertical-align:middle; }
+  .vband { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; }
+  .vband.v3 { color:var(--hot); } .vband.v2 { color:var(--warn); }
+  .vband.v1 { color:var(--accent); } .vband.v0 { color:var(--muted); }
+  .vchip { display:inline-block; min-width:34px; text-align:center; padding:2px 9px; border-radius:7px;
+    font-weight:800; font-size:13px; font-variant-numeric:tabular-nums; color:#0f1419; }
   .vchip.v3 { background:var(--hot); } .vchip.v2 { background:var(--warn); }
   .vchip.v1 { background:var(--accent); } .vchip.v0 { background:var(--muted); }
   /* Scorecard header (gauge + return panel + facts) */
@@ -267,12 +271,12 @@
     <div class="nr-wrap" id="newRising"></div>
   </div>
 
-  <div class="section-title">Companies to Pitch — ranked by vulnerability score</div>
-  <p class="hint">Click any company to open its full profile — overview, financials, recent filings &amp; news.</p>
+  <div class="section-title">Companies to Pitch — ranked by activist-target profile</div>
+  <p class="hint">A rating of how strongly each company matches the profile activists target — <b>not</b> a probability of a campaign. Click any company for its full profile, financials, filings &amp; news.</p>
   <div class="panel">
     <table>
       <thead>
-        <tr><th>#</th><th>Company / Ticker</th><th>Market Cap</th><th>Vuln</th>
+        <tr><th>#</th><th>Company / Ticker</th><th>Market Cap</th><th>Rating</th>
             <th>Key Signals</th><th>Latest Item</th><th>First Flagged</th></tr>
       </thead>
       <tbody id="shortlist">
@@ -328,10 +332,16 @@
       </tbody>
     </table>
     <p style="margin:12px 0 0; color:var(--muted); font-size:13px;">
-      Reading the score: <span class="pill" style="color:#ff8a8a;">7+ high</span>
-      <span class="pill" style="color:#ffce85;">5–6 elevated</span>
-      <span class="pill" style="color:#9fd0ff;">4 watch</span>
-      — higher means more activist-attractive traits stacked together.
+      The dashboard turns these signals into a 0–92 <b>activist-target profile index</b>,
+      weighted by how severe each signal is (how cheap, how far margins/returns lag peers),
+      and shown as a rating band:
+      <span class="pill" style="color:#ff8a8a;">75+ Severe</span>
+      <span class="pill" style="color:#ffce85;">50–74 High</span>
+      <span class="pill" style="color:#9fd0ff;">25–49 Elevated</span>
+      <span class="pill">&lt;25 Moderate</span>
+      It measures how strongly a company matches the profile activists target — it is
+      <b>not</b> a probability that a campaign will happen, and is deliberately capped
+      below 100 so it never implies certainty.
     </p>
   </div>
 
