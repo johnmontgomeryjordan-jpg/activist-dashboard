@@ -96,6 +96,10 @@
   .tsr-k { font-size:11px; color:var(--muted); }
   .tsr-v { font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:2px; }
   .sc-facts { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .timing { margin-top:4px; font-size:12px; color:#cdd8e2; background:rgba(63,167,255,.08);
+    border:1px solid var(--line); border-radius:8px; padding:7px 10px; }
+  .timing i { color:var(--accent); font-style:normal; margin-right:5px; }
+  .timing b { color:var(--text); font-variant-numeric:tabular-nums; }
   .kvm { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
   .kvm-k { font-size:10px; text-transform:uppercase; letter-spacing:.3px; color:var(--muted); }
   .kvm-v { font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:2px; }
@@ -212,6 +216,7 @@
   .evtop { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
   .evlabel { font-weight:650; font-size:13px; color:var(--text); }
   .evval { font-weight:800; font-variant-numeric:tabular-nums; color:var(--hot); font-size:14px; white-space:nowrap; }
+  .evval.good { color:var(--ok); }
   .evctx { color:#cdd8e2; font-size:12px; margin-top:5px; }
   .evmath { color:var(--muted); font-size:12px; margin-top:4px; font-variant-numeric:tabular-nums;
     background:rgba(63,167,255,.07); border-left:2px solid var(--accent); padding:4px 8px; border-radius:4px; }
