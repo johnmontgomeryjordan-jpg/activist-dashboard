@@ -1,13 +1,16 @@
 """
-Orchestration + SEC XBRL fundamentals + Alpha Vantage / Finnhub enrichment + governance.
+Orchestration + SEC XBRL fundamentals + Alpha Vantage enrichment.
 
 Jobs:
-  refresh_data()             -- thematic news + per-company news + 1-yr TSR + EDGAR + rescore (30m).
-  refresh_fundamentals()     -- SEC XBRL fundamentals (latest quarter) + sector + delisting flags.
-  refresh_governance()       -- DEF 14A governance red flags (shortlist/watchlist), cached.
+  refresh_data()             -- EDGAR filings + news + rescore (fast, every 30m).
+  refresh_fundamentals()     -- SEC XBRL fundamentals + sector + shares + equity.
   refresh_enrichment()       -- Alpha Vantage: market cap + P/B + overview (shortlist).
-  daily_rescore_and_digest() -- 4pm ET: data + fundamentals + governance + enrich, rescore, email.
-  startup_full_refresh()     -- once after boot: data, fundamentals, governance, enrich, score.
+  daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
+  startup_full_refresh()     -- once after boot: data, fundamentals, enrich, score.
+
+Fundamentals now also capture the RAW XBRL line items (operating income, revenue,
+net income, assets, equity, cash, debt) plus the source 10-K (fiscal year + period
+end + accession), so the detail view can show the exact math + a link to the filing.
 """
 import os
 import time
@@ -17,7 +20,8 @@ from datetime import datetime, timedelta
 
 import requests
 
-from . import config, database, universe, edgar, news, scoring, emailer, governance
+from . import (config, database, universe, edgar, news, scoring, emailer,
+               governance, insider, activist, earnings)
 
 _UNIVERSE = None
 
@@ -455,19 +459,95 @@ def refresh_governance():
     return n
 
 
+def refresh_insider():
+    """Parse Form 4 insider buys/sells for shortlist / active / watchlist names
+    (cached by accession), then rescore. Free SEC data."""
+    ciks = set()
+    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+        if s.get("cik"):
+            ciks.add(s["cik"])
+    for s in database.get_active_situations(limit=40):
+        if s.get("cik"):
+            ciks.add(s["cik"])
+    for w in database.get_watchlist():
+        if w.get("cik"):
+            ciks.add(w["cik"])
+    n = insider.refresh_insider(sorted(ciks))
+    try:
+        scoring.recompute_all()
+    except Exception:
+        traceback.print_exc()
+    return n
+
+
+def _tracked_ciks():
+    ciks = set()
+    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+        if s.get("cik"):
+            ciks.add(s["cik"])
+    for s in database.get_active_situations(limit=40):
+        if s.get("cik"):
+            ciks.add(s["cik"])
+    for w in database.get_watchlist():
+        if w.get("cik"):
+            ciks.add(w["cik"])
+    return ciks
+
+
+def _tracked_pairs():
+    pairs = {}
+    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+        if s.get("ticker"):
+            pairs[s["cik"]] = s["ticker"]
+    for s in database.get_active_situations(limit=40):
+        if s.get("ticker"):
+            pairs.setdefault(s["cik"], s["ticker"])
+    for w in database.get_watchlist():
+        if w.get("ticker"):
+            pairs.setdefault(w["cik"], w["ticker"])
+    return pairs
+
+
+def refresh_activist(full=False):
+    """Sweep EDGAR full-text search for activist filings (13D + contested proxy),
+    routing any hit into Active Situations. `full` sweeps the whole universe (daily);
+    otherwise just the names we're already tracking (cheaper, for boot). Free SEC data."""
+    if full:
+        ciks = [c["cik"] for c in get_universe() if c.get("cik")]
+    else:
+        ciks = sorted(_tracked_ciks())
+    n = activist.refresh_activist(ciks)
+    try:
+        scoring.recompute_all()
+    except Exception:
+        traceback.print_exc()
+    return n
+
+
+def refresh_earnings():
+    """Next/last earnings dates (timing layer) for tracked names via Finnhub."""
+    return earnings.refresh_earnings(_tracked_pairs())
+
+
 def daily_rescore_and_digest():
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
+    refresh_insider()
+    refresh_activist(full=True)
+    refresh_earnings()
     refresh_enrichment()
     return emailer.send_digest()
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=quarterly-evidence-finnhub-tsr-governance  starting refresh")
+    print("[boot] VERSION=quarterly-evidence-finnhub-tsr-governance-insider-activist  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
+    refresh_insider()
+    refresh_activist(full=False)
+    refresh_earnings()
     refresh_enrichment()
 
 
