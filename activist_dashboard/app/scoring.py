@@ -31,7 +31,8 @@ TSR_LAG_1Y = -0.15
 STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1,
                  "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1, "high_sga": 1,
                  "cash_hoard": 1, "underlevered": 1,
-                 "gov_classified": 1, "gov_poison": 1, "gov_dual": 1}
+                 "gov_classified": 1, "gov_poison": 1, "gov_dual": 1,
+                 "insider_selling": 1, "insider_buying": 0}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
@@ -82,7 +83,13 @@ LABELS = {
     "gov_classified": "classified / staggered board",
     "gov_poison": "poison pill / rights plan",
     "gov_dual": "dual-class / super-voting stock",
+    "insider_selling": "cluster of insider selling",
+    "insider_buying": "insiders buying (confidence signal)",
 }
+
+# Insider activity (Form 4). insider_selling is a leading vulnerability signal;
+# insider_buying is shown as a 0-point defense/confidence note.
+INSIDER_KEYS = ("insider_selling", "insider_buying")
 
 # Governance red flags (from DEF 14A). Boolean signals -> their own evidence cards.
 GOV_KEYS = ("gov_classified", "gov_poison", "gov_dual")
@@ -218,7 +225,16 @@ def _severity(key, r, t, e):
         return _depth_high("cash_to_assets", r, t, e)
     if key == "underlevered":
         return _depth_low("debt_to_assets", r, t, e)
-    return 1.0  # governance flags + event accelerants
+    if key == "insider_selling":
+        ins = r.get("_insider") or {}
+        ns = ins.get("n_sellers") or 0
+        net = (ins.get("sell_value") or 0) - (ins.get("buy_value") or 0)
+        mcap = r.get("market_cap")
+        sev = 0.5 + 0.15 * max(0, ns - 2)            # more distinct sellers = worse
+        if mcap and net > 0:
+            sev += min(0.4, (net / mcap) * 40.0)     # ~1% of market cap sold -> +0.4
+        return _clamp(sev)
+    return 1.0  # governance flags + insider_buying + event accelerants
 
 
 def _vuln_score(trig, r, t, e):
@@ -297,6 +313,26 @@ def _gov_evidence(key, r):
             "context": GOV_META.get(key, ""), "inputs": "",
             "period": (f"proxy {r.get('_gov_date')}" if r.get("_gov_date") else "DEF 14A"),
             "source": "SEC DEF 14A", "url": r.get("_gov_url")}
+
+
+def _insider_evidence(key, r):
+    ins = r.get("_insider") or {}
+    buy, sell = ins.get("buy_value") or 0, ins.get("sell_value") or 0
+    nb, ns = ins.get("n_buyers") or 0, ins.get("n_sellers") or 0
+    win = ins.get("window_days") or 120
+    if key == "insider_selling":
+        net = sell - buy
+        ctx = (f"{ns} insider{'s' if ns != 1 else ''} sold a net {_money(net)} of stock on "
+               f"the open market over the past {win} days — a crack in insider confidence")
+        val = "-" + _money(net)
+    else:
+        net = buy - sell
+        ctx = (f"{nb} insider{'s' if nb != 1 else ''} bought a net {_money(net)} of stock on "
+               f"the open market over the past {win} days — insiders are aligned (a defense signal)")
+        val = "+" + _money(net)
+    return {"key": key, "label": LABELS.get(key, key), "value": val,
+            "context": ctx, "inputs": "", "period": f"trailing {win} days",
+            "source": "SEC Form 4", "url": ins.get("top_url")}
 
 
 def _struct_evidence(key, r, t):
@@ -423,6 +459,8 @@ def recompute_all():
     except (TypeError, ValueError):
         spy_1y = None
     gov = database.get_all_governance()
+    ins_all = database.get_all_insider()
+    aflags = database.get_all_activist_flags()
 
     metrics = ["pb_ratio", "operating_margin", "tsr_1y", "tsr_3y", "roa",
                "revenue_growth", "sga_pct", "cash_to_assets", "debt_to_assets"]
@@ -483,34 +521,61 @@ def recompute_all():
         if g.get("dual_class"):
             trig.append("gov_dual")
 
+        # Insider activity (Form 4; only present for parsed names).
+        ins = ins_all.get(r["cik"]) or {}
+        r["_insider"] = ins
+        buy_v, sell_v = ins.get("buy_value") or 0, ins.get("sell_value") or 0
+        ns, nb = ins.get("n_sellers") or 0, ins.get("n_buyers") or 0
+        if ns >= 2 and sell_v > buy_v:
+            trig.append("insider_selling")
+        elif nb >= 1 and buy_v > sell_v and buy_v > 0:
+            trig.append("insider_buying")
+
         struct = sum(STRUCT_POINTS[s] for s in trig)
         events, top, ev, activist = _event_signals(r["cik"], r["ticker"])
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
 
-        if total < config.SCORE_THRESHOLD:
+        # An activist SEC filing (13D / contested-proxy) is an authoritative marker that
+        # an activist has ALREADY engaged -- always surface it as an active situation,
+        # even if the company's own vulnerability score is below the flag threshold.
+        aflag = aflags.get(r["cik"])
+        if total < config.SCORE_THRESHOLD and not aflag:
             continue
 
         # 0-100 absolute vulnerability, weighted by how severe each signal is.
         vuln = _vuln_score(trig, r, t, e)
 
         evidence = []
+        if aflag:
+            evidence.append({
+                "key": "activist_filing", "label": "Activist already engaged",
+                "value": "", "context": aflag.get("label") or "Activist filing on record",
+                "inputs": "", "period": (aflag.get("form") or "") +
+                (f" · filed {aflag['filed']}" if aflag.get("filed") else ""),
+                "source": "SEC EDGAR (full-text search)", "url": aflag.get("url")})
         for key in trig:
-            if key in STRUCT_META or key in GOV_KEYS:
+            if key in INSIDER_KEYS:
+                evidence.append(_insider_evidence(key, r))
+            elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
                 evidence.append(_event_evidence(key, ev))
 
-        # Activist already on the scene -> move to the "active situations" bucket
-        # (too late to pitch) and surface the activist headline as its latest item.
-        item = activist or top
+        # Active situation if an activist filing exists OR a news headline named one.
+        # The SEC filing is authoritative, so it wins as the headline item.
+        is_active = bool(aflag) or bool(activist)
+        if aflag:
+            item = {"title": f"{r['name']} — {aflag.get('label')}", "url": aflag.get("url")}
+        else:
+            item = activist or top
         rows.append({
             "cik": r["cik"], "ticker": r["ticker"], "company": r["name"],
             "market_cap": r.get("market_cap"), "score": total, "vuln": vuln,
             "signals": " + ".join(LABELS[s] for s in trig if s in LABELS),
             "top_item_title": item["title"] if item else "",
             "top_item_url": item["url"] if item else "",
-            "active_situation": 1 if activist else 0,
+            "active_situation": 1 if is_active else 0,
             "evidence": evidence,
             "first_flagged": database.now_iso()[:10],
         })
