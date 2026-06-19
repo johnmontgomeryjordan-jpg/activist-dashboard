@@ -165,6 +165,9 @@ def api_company(cik: str):
     av = database.get_av_overview(cik)
     prior = database.prior_score(cik)
     gov = database.get_governance(cik) or {}
+    ins = database.get_insider(cik) or {}
+    ear = database.get_earnings(cik) or {}
+    aflag = database.get_activist_flag(cik) or {}
     market = database.get_company_market(cik)
 
     def _f(v):
@@ -219,6 +222,27 @@ def api_company(cik: str):
             "dual_class": bool(gov.get("dual_class")),
             "proxy_url": gov.get("proxy_url"),
             "proxy_date": gov.get("proxy_date"),
+        },
+        "insider": {
+            "buy_value": ins.get("buy_value"),
+            "sell_value": ins.get("sell_value"),
+            "net_value": ins.get("net_value"),
+            "n_buyers": ins.get("n_buyers"),
+            "n_sellers": ins.get("n_sellers"),
+            "last_date": ins.get("last_date"),
+            "window_days": ins.get("window_days"),
+            "top_url": ins.get("top_url"),
+        },
+        "earnings": {
+            "next_date": ear.get("next_date"),
+            "last_date": ear.get("last_date"),
+        },
+        "activist": {
+            "kind": aflag.get("kind"),
+            "form": aflag.get("form"),
+            "label": aflag.get("label"),
+            "filed": aflag.get("filed"),
+            "url": aflag.get("url"),
         },
         "overview": {
             "description": av.get("Description"),
