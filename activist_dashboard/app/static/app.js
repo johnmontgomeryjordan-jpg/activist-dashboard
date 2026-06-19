@@ -200,7 +200,7 @@ async function loadShortlist(){
       return `<tr><td>${i+1}</td>
         <td>${co}<div class="meta">${esc(c.ticker)}</div></td>
         <td class="mcap">${fmtCap(c.market_cap)}</td>
-        <td class="vcell" title="raw signal score ${c.score}">${vulnChip(c.vuln)}${chg}</td>
+        <td class="vcell" title="activist-target profile index · raw signal score ${c.score}">${vulnCell(c.vuln)}${chg}</td>
         <td class="signals">${esc(c.signals)}</td>
         <td>${link}</td>
         <td class="mcap">${esc(c.first_flagged)}</td></tr>`;
@@ -252,7 +252,7 @@ async function openCompany(cik){
       }).join("") : `<div class="siglist">${sigs||"—"}</div>`;
 
     // Scorecard header: gauge + return-vs-S&P + key facts.
-    const rankLabel = d.vuln!=null ? `<b>${vulnBand(d.vuln)}</b> activist exposure` : "Vulnerability score pending next refresh";
+    const rankLabel = d.vuln!=null ? `<b>${vulnBand(d.vuln)}</b> · matches the activist-target profile` : "Profile index pending next refresh";
     const tsr=d.tsr||{}; let tsrPanel="";
     if(tsr.tsr_1y!=null){
       const gap=tsr.gap, gcol=(gap!=null)?(gap<0?"var(--hot)":"var(--ok)"):"var(--muted)";
@@ -377,6 +377,12 @@ function vulnBand(v){
   if(v>=25) return "Elevated";
   return "Moderate";
 }
+/* Grade band (headline) + index chip (support), stacked. */
+function vulnCell(v){
+  const i=vulnInfo(v);
+  return `<div class="vwrap"><span class="vband ${i.cls}">${vulnBand(v)}</span>`
+    + `<span class="vchip ${i.cls}">${v==null?"—":v}</span></div>`;
+}
 function gaugeSvg(v){
   const val=(v==null)?0:Math.max(0,Math.min(100,v));
   const C=Math.PI*84, on=(val/100)*C, col=vulnInfo(v).col;
@@ -384,7 +390,7 @@ function gaugeSvg(v){
     <path d="M16,102 A84,84 0 0 1 184,102" fill="none" stroke="var(--line)" stroke-width="15" stroke-linecap="round"/>
     <path d="M16,102 A84,84 0 0 1 184,102" fill="none" stroke="${col}" stroke-width="15" stroke-linecap="round" stroke-dasharray="${on.toFixed(1)} ${(C+4).toFixed(1)}"/>
     <text x="100" y="88" text-anchor="middle" class="gnum" fill="${col}">${v==null?"—":val}</text>
-    <text x="100" y="108" text-anchor="middle" class="glabel">/ 100 vulnerability</text>
+    <text x="100" y="108" text-anchor="middle" class="glabel">profile index / 100</text>
   </svg>`;
 }
 function kvMini(k,v){ return `<div class="kvm"><div class="kvm-k">${k}</div><div class="kvm-v">${v}</div></div>`; }
