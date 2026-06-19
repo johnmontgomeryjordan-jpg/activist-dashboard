@@ -37,12 +37,29 @@ EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "news_negative": 1}
 POINTS = {**STRUCT_POINTS, **EVENT_POINTS}
 
-# 0-100 vulnerability is an ABSOLUTE severity score, not a percentile. Each triggered
-# signal contributes its point weight scaled by *how severe* it is (0..1) — how cheap,
-# how deep in the peer tail, how far returns lag. VULN_SCALE is the severity-weighted
-# point total that maps to 100; a genuinely strong, multi-signal lead lands in the 80s-90s
-# and lighter leads spread down into the 30s-50s, so the number actually discriminates.
-VULN_SCALE = 9.0
+# The 0-100 number is an ABSOLUTE "activist-target profile" index, NOT a probability of
+# a campaign. Each triggered signal contributes its point weight scaled by *how severe*
+# it is (0..1) — how cheap, how deep in the peer tail, how far returns lag. VULN_SCALE is
+# the severity-weighted point total that maps to the top of the range. We deliberately
+# cap the index at VULN_MAX (below 100) so it never reads as "100% certain to be targeted"
+# — the highest a company can score is "matches the activist-target profile as strongly as
+# we measure." A strong multi-signal lead lands in the 80s; lighter leads spread down into
+# the 30s-50s. The headline a partner sees is a RATING BAND (see VULN_BANDS), with this
+# index as supporting detail.
+VULN_SCALE = 10.0
+VULN_MAX = 92
+
+# Rating bands shown as the headline (defensible, no probability implied).
+def vuln_band(v):
+    if v is None:
+        return "Unscored"
+    if v >= 75:
+        return "Severe"
+    if v >= 50:
+        return "High"
+    if v >= 25:
+        return "Elevated"
+    return "Moderate"
 
 LABELS = {
     "cheap_abs": "cheap (low price-to-book < 1.5x)",
@@ -205,9 +222,10 @@ def _severity(key, r, t, e):
 
 
 def _vuln_score(trig, r, t, e):
-    """0-100 absolute vulnerability from the severity-weighted signal total."""
+    """0-VULN_MAX activist-target-profile index from the severity-weighted signal total.
+    Capped below 100 so it never implies a guaranteed campaign."""
     sev_total = sum(POINTS.get(k, 0) * _severity(k, r, t, e) for k in trig)
-    return min(100, int(round(100 * sev_total / VULN_SCALE)))
+    return min(VULN_MAX, int(round(100 * sev_total / VULN_SCALE)))
 
 
 def _fmt_metric(metric, v):
