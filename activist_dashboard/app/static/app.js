@@ -232,7 +232,8 @@ async function openCompany(cik){
     // Single evidence card.
     const evCard = e=>{
         const src = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.source||"source")} ↗</a>` : esc(e.source||"");
-        const val = e.value ? `<span class="evval">${esc(e.value)}</span>` : "";
+        const valCls = e.key==="insider_buying" ? "evval good" : "evval";
+        const val = e.value ? `<span class="${valCls}">${esc(e.value)}</span>` : "";
         const ctxLine = e.context ? `<div class="evctx">${esc(e.context)}</div>` : "";
         const mp=[]; if(e.inputs) mp.push(esc(e.inputs)); if(e.period) mp.push(esc(e.period));
         const mathLine = mp.length ? `<div class="evmath">${mp.join(" · ")}</div>` : "";
@@ -264,6 +265,10 @@ async function openCompany(cik){
           <div><div class="tsr-k">Gap</div><div class="tsr-v" style="color:${gcol}">${gtxt}</div></div>
         </div></div>`;
     }
+    const ern=d.earnings||{};
+    const ernLine = ern.next_date
+      ? `<div class="timing"><i>◷</i> Next earnings <b>${esc(ern.next_date)}</b> — often the most receptive window to reach out</div>`
+      : "";
     const scHtml=`<div class="scorecard">
       <div class="sc-gauge">${gaugeSvg(d.vuln)}<div class="sc-rank">${rankLabel}</div></div>
       <div class="sc-side">${tsrPanel}
@@ -271,7 +276,7 @@ async function openCompany(cik){
           ${kvMini("Market cap", fmtCap(d.market_cap))}
           ${kvMini("Price / book", fmtNum(f.pb_ratio))}
           ${kvMini("Signal score", d.score!=null?d.score:"—")}
-        </div></div></div>`;
+        </div>${ernLine}</div></div>`;
     // Governance badge strip.
     const g=d.governance||{};
     const gbadge=(on,txt)=>`<span class="gov-badge ${on?'on':'off'}">${on?'●':'○'} ${txt}</span>`;
@@ -288,7 +293,10 @@ async function openCompany(cik){
     if(o.website) L.push(`<a class="extlink" href="${esc(o.website)}" target="_blank" rel="noopener">Company site ↗</a>`);
     L.push(`<a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations")}" target="_blank" rel="noopener">IR / contacts ↗</a>`);
     const linkBar=`<div class="links">${L.join("")}</div>`;
-    const warn = d.active_situation ? `<div class="modal-warn">⚠ Activist already engaged — likely too late to pitch proactively.</div>` : "";
+    const act=d.activist||{};
+    const warn = d.active_situation
+      ? `<div class="modal-warn">⚠ Activist already engaged${act.label?` — ${esc(act.label)}`:""}${act.form?` (${esc(act.form)}${act.filed?`, ${esc(act.filed)}`:""})`:""}. Likely too late to pitch proactively.${act.url?` <a href="${esc(act.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">View filing ↗</a>`:""}</div>`
+      : "";
     const starBtn = `<button class="ghost wl-star-btn" id="mStarBtn" onclick="toggleStar('${esc(cik)}', this)">${WATCHLIST_SET.has(cik)?'★ On watchlist':'☆ Add to watchlist'}</button>`;
     const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
     const filings=(d.filings||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.company)} — ${esc(x.title)}</a>
@@ -400,6 +408,7 @@ const PILLAR_OF={
   low_margin:"ops", low_roa:"ops", weak_growth:"ops", high_sga:"ops",
   cash_hoard:"capital", underlevered:"capital",
   gov_classified:"gov", gov_poison:"gov", gov_dual:"gov",
+  insider_selling:"insider", insider_buying:"insider",
   ceo_departure:"event", earnings_miss:"event", impairment:"event",
   layoffs:"event", leadership_change:"event", results_update:"event", news_negative:"event"
 };
@@ -409,9 +418,10 @@ const PILLAR_META={
   ops:{t:"Operating performance", d:"Margins, returns or growth below peers"},
   capital:{t:"Capital allocation", d:"Balance sheet an activist could push to optimize"},
   gov:{t:"Governance red flags", d:"Entrenchment provisions in the proxy"},
+  insider:{t:"Insider activity", d:"What management is doing with their own money (Form 4)"},
   event:{t:"Recent catalysts", d:"Events that tend to draw activist attention"}
 };
-const PILLAR_ORDER=["value","perf","ops","capital","gov","event"];
+const PILLAR_ORDER=["value","perf","ops","capital","gov","insider","event"];
 function exportCsv(){ window.open("/api/shortlist.csv","_blank"); }
 
 function withinDays(dateStr, n){
