@@ -55,6 +55,26 @@ CREATE TABLE IF NOT EXISTS governance (
     cik TEXT PRIMARY KEY, classified_board INTEGER, poison_pill INTEGER,
     dual_class INTEGER, proxy_accn TEXT, proxy_date TEXT, proxy_url TEXT, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS insider_txn (
+    accn TEXT PRIMARY KEY, cik TEXT, filed TEXT, name TEXT, role TEXT,
+    buy_value REAL, sell_value REAL, url TEXT, ingested_at TEXT
+);
+CREATE TABLE IF NOT EXISTS insider (
+    cik TEXT PRIMARY KEY, buy_value REAL, sell_value REAL, net_value REAL,
+    n_buyers INTEGER, n_sellers INTEGER, last_date TEXT, top_url TEXT,
+    window_days INTEGER, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS activist_flag (
+    cik TEXT PRIMARY KEY, kind TEXT, form TEXT, label TEXT,
+    filed TEXT, url TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS votes (
+    cik TEXT PRIMARY KEY, say_on_pay REAL, low_director REAL, director_name TEXT,
+    meeting_date TEXT, accn TEXT, url TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS earnings (
+    cik TEXT PRIMARY KEY, ticker TEXT, next_date TEXT, last_date TEXT, updated_at TEXT
+);
 """
 
 
@@ -424,6 +444,140 @@ def get_governance(cik):
 def get_all_governance():
     with get_conn() as conn:
         return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM governance")}
+
+
+# --- Insider transactions (Form 4) -------------------------------------------
+def insider_txn_seen(accn):
+    with get_conn() as conn:
+        return conn.execute("SELECT 1 FROM insider_txn WHERE accn=?", (accn,)).fetchone() is not None
+
+
+def add_insider_txn(accn, cik, filed, name, role, buy_value, sell_value, url):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO insider_txn
+               (accn,cik,filed,name,role,buy_value,sell_value,url,ingested_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (accn, cik, filed, name, role, buy_value, sell_value, url, now_iso()))
+
+
+def recompute_insider(cik, window_days=120):
+    """Aggregate cached Form-4 open-market buys/sells for one CIK over the window."""
+    cut = (datetime.utcnow() - timedelta(days=window_days)).date().isoformat()
+    with get_conn() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM insider_txn WHERE cik=? AND filed>=?", (cik, cut))]
+        buy_value = sum(r["buy_value"] or 0 for r in rows)
+        sell_value = sum(r["sell_value"] or 0 for r in rows)
+        n_buyers = len({r["name"] for r in rows if (r["buy_value"] or 0) > 0 and r["name"]})
+        n_sellers = len({r["name"] for r in rows if (r["sell_value"] or 0) > 0 and r["name"]})
+        last_date = max((r["filed"] for r in rows if r["filed"]), default=None)
+        # surface the largest single open-market filing as the headline link
+        ranked = sorted(rows, key=lambda r: ((r["buy_value"] or 0) + (r["sell_value"] or 0)),
+                        reverse=True)
+        top_url = ranked[0]["url"] if ranked else None
+        conn.execute(
+            """INSERT INTO insider
+               (cik,buy_value,sell_value,net_value,n_buyers,n_sellers,last_date,top_url,window_days,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 buy_value=excluded.buy_value, sell_value=excluded.sell_value,
+                 net_value=excluded.net_value, n_buyers=excluded.n_buyers,
+                 n_sellers=excluded.n_sellers, last_date=excluded.last_date,
+                 top_url=excluded.top_url, window_days=excluded.window_days,
+                 updated_at=excluded.updated_at""",
+            (cik, buy_value, sell_value, buy_value - sell_value, n_buyers, n_sellers,
+             last_date, top_url, window_days, now_iso()))
+        return {"buy_value": buy_value, "sell_value": sell_value,
+                "n_buyers": n_buyers, "n_sellers": n_sellers}
+
+
+def get_insider(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM insider WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def get_all_insider():
+    with get_conn() as conn:
+        return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM insider")}
+
+
+# --- Activist filings (13D/13G + dissident proxy) ----------------------------
+def set_activist_flag(cik, kind, form, label, filed, url):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO activist_flag (cik,kind,form,label,filed,url,updated_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 kind=excluded.kind, form=excluded.form, label=excluded.label,
+                 filed=excluded.filed, url=excluded.url, updated_at=excluded.updated_at""",
+            (cik, kind, form, label, filed, url, now_iso()))
+
+
+def clear_activist_flag(cik):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM activist_flag WHERE cik=?", (cik,))
+
+
+def get_activist_flag(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM activist_flag WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def get_all_activist_flags():
+    with get_conn() as conn:
+        return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM activist_flag")}
+
+
+# --- Shareholder votes (8-K Item 5.07) ---------------------------------------
+def upsert_votes(cik, say_on_pay, low_director, director_name, meeting_date, accn, url):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO votes
+               (cik,say_on_pay,low_director,director_name,meeting_date,accn,url,updated_at)
+               VALUES (?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 say_on_pay=excluded.say_on_pay, low_director=excluded.low_director,
+                 director_name=excluded.director_name, meeting_date=excluded.meeting_date,
+                 accn=excluded.accn, url=excluded.url, updated_at=excluded.updated_at""",
+            (cik, say_on_pay, low_director, director_name, meeting_date, accn, url, now_iso()))
+
+
+def votes_accn_seen(cik, accn):
+    with get_conn() as conn:
+        r = conn.execute("SELECT accn FROM votes WHERE cik=?", (cik,)).fetchone()
+        return bool(r and r["accn"] == accn)
+
+
+def get_votes(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM votes WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def get_all_votes():
+    with get_conn() as conn:
+        return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM votes")}
+
+
+# --- Earnings calendar (timing) ----------------------------------------------
+def upsert_earnings(cik, ticker, next_date, last_date):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO earnings (cik,ticker,next_date,last_date,updated_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 ticker=excluded.ticker, next_date=excluded.next_date,
+                 last_date=excluded.last_date, updated_at=excluded.updated_at""",
+            (cik, ticker, next_date, last_date, now_iso()))
+
+
+def get_earnings(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM earnings WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
 
 
 def _cutoff(days):
