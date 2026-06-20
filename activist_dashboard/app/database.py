@@ -83,6 +83,14 @@ CREATE TABLE IF NOT EXISTS finnhub_extra (
     rec_strongbuy INTEGER, rec_buy INTEGER, rec_hold INTEGER,
     rec_sell INTEGER, rec_strongsell INTEGER, rec_period TEXT, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS company_profile (
+    cik TEXT PRIMARY KEY, ceo TEXT, phone TEXT, address TEXT, city TEXT, state TEXT,
+    zip TEXT, country TEXT, employees INTEGER, ipo TEXT, website TEXT,
+    sector TEXT, industry TEXT, description TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS prices (
+    cik TEXT PRIMARY KEY, series TEXT, last_close REAL, updated_at TEXT
+);
 """
 
 
@@ -640,6 +648,51 @@ def get_finnhub_extra(cik):
     with get_conn() as conn:
         r = conn.execute("SELECT * FROM finnhub_extra WHERE cik=?", (cik,)).fetchone()
         return dict(r) if r else {}
+
+
+# --- FMP company profile (contacts + description) + price history -------------
+def upsert_company_profile(cik, d):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO company_profile
+               (cik,ceo,phone,address,city,state,zip,country,employees,ipo,website,sector,industry,description,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 ceo=excluded.ceo, phone=excluded.phone, address=excluded.address, city=excluded.city,
+                 state=excluded.state, zip=excluded.zip, country=excluded.country, employees=excluded.employees,
+                 ipo=excluded.ipo, website=excluded.website, sector=excluded.sector, industry=excluded.industry,
+                 description=excluded.description, updated_at=excluded.updated_at""",
+            (cik, d.get("ceo"), d.get("phone"), d.get("address"), d.get("city"), d.get("state"),
+             d.get("zip"), d.get("country"), d.get("employees"), d.get("ipo"), d.get("website"),
+             d.get("sector"), d.get("industry"), d.get("description"), now_iso()))
+
+
+def get_company_profile(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM company_profile WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def upsert_prices(cik, series, last_close):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO prices (cik,series,last_close,updated_at) VALUES (?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET series=excluded.series,
+                 last_close=excluded.last_close, updated_at=excluded.updated_at""",
+            (cik, json.dumps(series or []), last_close, now_iso()))
+
+
+def get_prices(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM prices WHERE cik=?", (cik,)).fetchone()
+        if not r:
+            return {}
+        d = dict(r)
+        try:
+            d["series"] = json.loads(d.get("series") or "[]")
+        except (ValueError, TypeError):
+            d["series"] = []
+        return d
 
 
 def _cutoff(days):
