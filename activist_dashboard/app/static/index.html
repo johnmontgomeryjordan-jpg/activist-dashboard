@@ -3,414 +3,431 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>FGS Global — Activist Vulnerability Early Warning Dashboard</title>
+<title>FGS Global — Activist Vulnerability Early Warning</title>
 <style>
   :root {
-    --bg:#0f1419; --panel:#1a2129; --panel2:#222c36; --text:#e6edf3; --muted:#8b98a5;
-    --line:#2d3742; --accent:#3fa7ff; --hot:#ff5c5c; --warn:#ffb547; --ok:#3ddc84; --brand:#00b15a;
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --text:#e6edf3; --muted:#8b98a5; --dim:#6b7785;
+    --line:#283040; --line2:#333d4d; --accent:#4c8dff; --hot:#ff6b6b; --warn:#ffb454; --ok:#46d39a; --brand:#1fb56b;
   }
   * { box-sizing:border-box; }
   body { margin:0; font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
-    background:var(--bg); color:var(--text); font-size:14px; }
-  header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex;
+    background:var(--bg); color:var(--text); font-size:14px; -webkit-font-smoothing:antialiased; }
+  a { color:inherit; }
+  .wrap { padding:22px 26px; max-width:1320px; margin:0 auto; }
+  /* Header */
+  header { padding:14px 26px; border-bottom:1px solid var(--line); display:flex;
     align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
-  .brand { color:var(--brand); font-weight:800; font-size:20px; letter-spacing:.3px; }
-  header h1 { font-size:17px; margin:4px 0 0; font-weight:650; }
-  header .sub { color:var(--muted); font-size:12px; margin-top:2px; }
-  .status { color:var(--muted); font-size:12px; display:flex; gap:16px; flex-wrap:wrap; }
-  .status b { color:var(--text); }
-  .tabs { display:flex; gap:4px; padding:0 24px; border-bottom:1px solid var(--line); }
-  .tab { padding:12px 18px; cursor:pointer; color:var(--muted); font-weight:600;
-    border-bottom:2px solid transparent; }
-  .tab:hover { color:var(--text); }
-  .tab.active { color:var(--text); border-bottom-color:var(--brand); }
-  .wrap { padding:20px 24px; max-width:1400px; margin:0 auto; }
-  .row { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
-  @media (max-width:900px){ .row{ grid-template-columns:1fr; } }
-  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
-  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.5px; margin:0;
-    padding:12px 16px; border-bottom:1px solid var(--line); color:var(--muted); }
-  .feed { max-height:460px; overflow-y:auto; }
-  .item { padding:11px 16px; border-bottom:1px solid var(--line); }
-  .item:last-child { border-bottom:none; }
-  .item a { color:var(--text); text-decoration:none; font-weight:550; }
-  .item a:hover { color:var(--accent); text-decoration:underline; }
-  .meta { color:var(--muted); font-size:12px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; }
-  .tag { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; background:var(--panel2); color:var(--muted); }
-  .tag.sig { background:rgba(255,92,92,.15); color:#ff8a8a; }
-  /* Top-5 strip + section sub-headers */
-  .topline { border-bottom:1px solid var(--line); }
-  .topline-h { padding:8px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.5px;
-    color:var(--brand); font-weight:800; background:var(--panel2); }
-  .cat-h { padding:9px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.5px;
-    color:var(--muted); font-weight:700; }
-  /* Broadcast ticker */
-  .ticker { background:var(--panel); border:1px solid var(--line); border-radius:8px;
-    overflow:hidden; white-space:nowrap; position:relative; margin-bottom:14px; }
-  .ticker-track { display:inline-block; padding:9px 0; will-change:transform;
-    animation-name:tickerscroll; animation-timing-function:linear; animation-iteration-count:infinite; }
-  .ticker:hover .ticker-track { animation-play-state:paused; }
-  .ticker-item { display:inline-block; padding:0 24px; font-size:13px; }
-  .ticker-item a { color:var(--text); text-decoration:none; }
-  .ticker-item a:hover { color:var(--accent); text-decoration:underline; }
-  .ticker-dot { color:var(--brand); font-size:9px; vertical-align:middle; margin-right:4px; }
-  @keyframes tickerscroll { from{transform:translateX(0);} to{transform:translateX(-50%);} }
-  /* Clickable category rows (open a larger popup) */
-  .catrow { padding:14px 16px; cursor:pointer; display:flex; justify-content:space-between;
-    align-items:center; border-bottom:1px solid var(--line); user-select:none; }
-  .catrow:last-child { border-bottom:none; }
-  .catrow:hover { background:var(--panel2); }
-  .catname { font-weight:800; font-size:14px; color:var(--text); letter-spacing:.2px; }
-  .catright { display:flex; align-items:center; gap:12px; }
-  .acc-count { color:var(--muted); font-size:12px; background:var(--panel2); border-radius:20px; padding:2px 10px; }
-  .chev { color:var(--muted); font-size:20px; line-height:1; }
+  .brand { color:var(--brand); font-weight:700; font-size:18px; letter-spacing:.2px; }
+  header h1 { font-size:15px; margin:3px 0 0; font-weight:550; color:var(--text); }
+  header .sub { color:var(--dim); font-size:12px; margin-top:2px; }
+  .status { color:var(--dim); font-size:11.5px; display:flex; gap:14px; flex-wrap:wrap; text-align:right; }
+  .status b { color:var(--muted); font-weight:550; }
+  /* Premium nav tabs */
+  .nav { padding:10px 26px 0; border-bottom:1px solid var(--line); }
+  .nav-tabs { display:flex; gap:6px; max-width:1320px; margin:0 auto; flex-wrap:wrap; }
+  .navtab { background:transparent; color:var(--muted); border:none; border-radius:9px 9px 0 0;
+    padding:11px 16px; font-size:13.5px; font-weight:550; cursor:pointer; position:relative; }
+  .navtab:hover { color:var(--text); }
+  .navtab.active { color:var(--text); }
+  .navtab.active::after { content:""; position:absolute; left:12px; right:12px; bottom:-1px; height:2px;
+    background:var(--accent); border-radius:2px; }
+  .navcount { color:var(--dim); font-weight:600; font-size:12px; }
+  .page { display:block; }
+  /* Toolbar */
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:18px; }
+  button { background:var(--accent); color:#06101f; border:none; padding:8px 14px; border-radius:8px; font-weight:600; cursor:pointer; font-size:13px; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line2); }
+  button.ghost:hover { border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:default; }
+  .updated { color:var(--dim); font-size:12px; }
+  .hint { color:var(--muted); font-size:12.5px; margin:0 0 14px; line-height:1.5; }
+  h2.sec { font-size:16px; font-weight:600; margin:0 0 4px; }
+  h3.sub { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:0 0 10px; font-weight:600; }
+  /* Summary metric cards */
+  .summary { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:22px; }
+  @media (max-width:720px){ .summary{ grid-template-columns:repeat(2,1fr);} }
+  .scard { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:13px 15px; }
+  .scard .lbl { font-size:11.5px; color:var(--muted); }
+  .scard .val { font-size:25px; font-weight:600; margin-top:3px; font-variant-numeric:tabular-nums; }
+  /* Fresh picks (new & rising + spotlight) */
+  .freshrow { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-bottom:24px; }
+  @media (max-width:820px){ .freshrow{ grid-template-columns:1fr; } }
+  .nr-wrap { display:flex; flex-wrap:wrap; gap:9px; }
+  .nr-card { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:9px 12px; cursor:pointer; display:flex; align-items:center; gap:9px; }
+  .nr-card:hover { border-color:var(--accent); }
+  .nr-badge { font-size:10.5px; font-weight:700; padding:2px 7px; border-radius:20px; white-space:nowrap; }
+  .nr-badge.new { background:rgba(76,141,255,.16); color:#9cc2ff; }
+  .nr-badge.up { background:rgba(255,107,107,.16); color:#ff9a9a; }
+  .nr-badge.spot { background:rgba(31,181,107,.16); color:#5fd6a0; }
+  .nr-co { font-weight:550; font-size:13px; }
+  .nr-co .meta { color:var(--dim); font-size:11px; }
+  /* Lead table header tools */
+  .leadhead { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+  .leadtools { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .lead-search { background:var(--panel); border:1px solid var(--line); color:var(--text);
+    padding:7px 11px; border-radius:8px; font-size:12.5px; min-width:230px; }
+  .lead-search::placeholder { color:var(--dim); }
+  .fchip { font-size:11.5px; color:var(--muted); border:1px solid var(--line2); border-radius:7px; padding:5px 11px; cursor:pointer; }
+  .fchip.on { background:var(--accent); color:#06101f; border-color:var(--accent); font-weight:600; }
+  /* Panels + tables */
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .panel h2 { font-size:12.5px; text-transform:uppercase; letter-spacing:.5px; margin:0;
+    padding:13px 16px; border-bottom:1px solid var(--line); color:var(--muted); font-weight:600; }
   table { width:100%; border-collapse:collapse; }
-  th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.4px; position:sticky; top:0; background:var(--panel); }
-  .score { font-weight:700; font-size:16px; }
-  .score.hot{color:var(--hot);} .score.warn{color:var(--warn);} .score.mid{color:var(--accent);}
-  /* Activist-target profile: rating band (headline) + index chip (support) */
+  th,td { text-align:left; padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr:hover { background:var(--panel2); }
+  th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.4px; font-weight:600;
+    position:sticky; top:0; background:var(--panel); user-select:none; }
+  th.sortable { cursor:pointer; }
+  th.sortable:hover { color:var(--text); }
+  th .arr { color:var(--accent); font-size:10px; }
+  .mcap { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .signals { color:#cdd8e2; font-size:12.5px; }
+  .co-link { color:var(--text); cursor:pointer; font-weight:550; }
+  .co-link:hover { color:var(--accent); }
+  .co-meta { color:var(--dim); font-size:11.5px; margin-top:1px; }
+  .star { cursor:pointer; color:var(--warn); font-size:15px; margin-right:7px; user-select:none; vertical-align:middle; }
+  .star:hover { color:#ffce85; }
+  .notedot { color:var(--accent); font-size:10px; margin-left:5px; }
+  .chg { font-size:11px; font-weight:700; margin-left:7px; vertical-align:middle; }
+  .chg.up{color:var(--hot);} .chg.down{color:var(--ok);} .chg.new{color:var(--accent);} .chg.flat{color:var(--dim);}
+  .pill-link a { color:var(--accent); text-decoration:none; font-size:12.5px; }
+  .pill-link a:hover { text-decoration:underline; }
+  .empty { padding:24px 16px; color:var(--muted); text-align:center; }
+  /* Rating chip + band */
   .vcell { white-space:nowrap; }
   .vwrap { display:inline-flex; flex-direction:column; gap:3px; align-items:flex-start; vertical-align:middle; }
-  .vband { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.4px; }
-  .vband.v3 { color:var(--hot); } .vband.v2 { color:var(--warn); }
-  .vband.v1 { color:var(--accent); } .vband.v0 { color:var(--muted); }
-  .vchip { display:inline-block; min-width:34px; text-align:center; padding:2px 9px; border-radius:7px;
-    font-weight:800; font-size:13px; font-variant-numeric:tabular-nums; color:#0f1419; }
-  .vchip.v3 { background:var(--hot); } .vchip.v2 { background:var(--warn); }
-  .vchip.v1 { background:var(--accent); } .vchip.v0 { background:var(--muted); }
-  /* Scorecard header (gauge + return panel + facts) */
-  .scorecard { display:grid; grid-template-columns:240px 1fr; gap:18px; align-items:center;
-    background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:14px; }
-  @media (max-width:640px){ .scorecard{ grid-template-columns:1fr; } }
-  .sc-gauge { text-align:center; }
-  .gauge { width:100%; max-width:210px; }
-  .gnum { font-size:42px; font-weight:800; font-variant-numeric:tabular-nums; }
-  .glabel { font-size:11px; fill:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
-  .sc-rank { color:var(--muted); font-size:12px; margin-top:2px; }
-  .sc-rank b { color:var(--text); }
-  .sc-side { display:flex; flex-direction:column; gap:12px; }
-  .tsr-panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
-  .tsr-h { font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); margin-bottom:8px; }
-  .tsr-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-  .tsr-k { font-size:11px; color:var(--muted); }
-  .tsr-v { font-size:16px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:2px; }
-  .sc-facts { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
-  .timing { margin-top:4px; font-size:12px; color:#cdd8e2; background:rgba(63,167,255,.08);
-    border:1px solid var(--line); border-radius:8px; padding:7px 10px; }
-  .timing i { color:var(--accent); font-style:normal; margin-right:5px; }
-  .timing b { color:var(--text); font-variant-numeric:tabular-nums; }
-  .kvm { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
-  .kvm-k { font-size:10px; text-transform:uppercase; letter-spacing:.3px; color:var(--muted); }
-  .kvm-v { font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:2px; }
-  /* Evidence grouped into pillars */
-  .pillars { display:flex; flex-direction:column; gap:14px; }
-  .pillar-h { display:flex; align-items:center; gap:8px; }
-  .pillar-t { font-weight:700; font-size:13px; }
-  .pillar-n { font-size:11px; font-weight:700; color:var(--muted); background:var(--panel2);
-    border-radius:20px; padding:1px 8px; }
-  .pillar-d { color:var(--muted); font-size:11px; margin:2px 0 7px; }
-  /* Governance badge strip */
-  .gov-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-  .gov-badge { font-size:12px; font-weight:600; padding:4px 10px; border-radius:20px;
-    border:1px solid var(--line); }
-  .gov-badge.on { background:rgba(255,92,92,.15); color:#ff8a8a; border-color:rgba(255,92,92,.4); }
-  .gov-badge.off { color:var(--muted); }
-  .gov-note { color:var(--muted); font-size:12px; }
-  .mcap { color:var(--muted); font-variant-numeric:tabular-nums; }
-  .signals { color:#cdd8e2; }
-  .pill-link a { color:var(--accent); text-decoration:none; }
-  .pill-link a:hover { text-decoration:underline; }
-  .co-link { color:var(--accent); cursor:pointer; font-weight:650; }
-  .co-link:hover { text-decoration:underline; }
-  .chg { font-size:11px; font-weight:700; margin-left:6px; vertical-align:middle; }
-  .chg.up{color:var(--hot);} .chg.down{color:var(--ok);} .chg.new{color:var(--accent);} .chg.flat{color:var(--muted);}
-  .section-title { font-size:16px; margin:26px 0 12px; font-weight:650; }
-  /* New & rising this week */
-  .nr-wrap { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:6px; }
-  .nr-card { background:var(--panel); border:1px solid var(--line); border-radius:9px;
-    padding:9px 13px; cursor:pointer; display:flex; align-items:center; gap:10px; }
-  .nr-card:hover { border-color:var(--accent); }
-  .nr-badge { font-size:11px; font-weight:800; padding:2px 8px; border-radius:20px; white-space:nowrap; }
-  .nr-badge.new { background:rgba(63,167,255,.15); color:var(--accent); }
-  .nr-badge.up { background:rgba(255,92,92,.15); color:#ff8a8a; }
-  .nr-co { font-weight:650; }
-  .nr-score { color:var(--muted); font-weight:700; font-variant-numeric:tabular-nums; }
-  /* Active situations */
-  .as-list .as-row { display:grid; grid-template-columns:1.1fr 2fr auto; gap:14px; align-items:center;
-    padding:12px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .vband { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; }
+  .vband.v3{color:var(--hot);} .vband.v2{color:var(--warn);} .vband.v1{color:var(--accent);} .vband.v0{color:var(--dim);}
+  .vchip { display:inline-block; min-width:32px; text-align:center; padding:2px 8px; border-radius:7px;
+    font-weight:700; font-size:13px; font-variant-numeric:tabular-nums; color:#06101f; }
+  .vchip.v3{background:var(--hot);} .vchip.v2{background:var(--warn);} .vchip.v1{background:var(--accent);} .vchip.v0{background:var(--dim);}
+  /* Two-column row (top news + signup) */
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:820px){ .row{ grid-template-columns:1fr; } }
+  .row2col { display:grid; grid-template-columns:1.3fr 1fr; gap:18px; margin-top:22px; }
+  @media (max-width:820px){ .row2col{ grid-template-columns:1fr; } }
+  .feed { max-height:520px; overflow-y:auto; }
+  .item { padding:11px 16px; border-bottom:1px solid var(--line); }
+  .item:last-child { border-bottom:none; }
+  .item a { color:var(--text); text-decoration:none; font-weight:500; }
+  .item a:hover { color:var(--accent); text-decoration:underline; }
+  .meta { color:var(--dim); font-size:11.5px; margin-top:3px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .tag { display:inline-block; padding:1px 7px; border-radius:20px; font-size:11px; background:var(--panel2); color:var(--muted); }
+  .tag.sig { background:rgba(255,107,107,.15); color:#ff9a9a; }
+  .topline-h { padding:9px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.5px;
+    color:var(--brand); font-weight:700; background:var(--panel2); }
+  .cat-h { padding:9px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); font-weight:600; }
+  .catrow { padding:13px 16px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); }
+  .catrow:last-child { border-bottom:none; }
+  .catrow:hover { background:var(--panel2); }
+  .catname { font-weight:600; font-size:13.5px; }
+  .catright { display:flex; align-items:center; gap:12px; }
+  .acc-count { color:var(--muted); font-size:12px; background:var(--panel2); border-radius:20px; padding:2px 10px; }
+  .chev { color:var(--dim); font-size:18px; line-height:1; }
+  /* Ticker */
+  .ticker { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; white-space:nowrap; position:relative; margin-bottom:16px; }
+  .ticker-track { display:inline-block; padding:9px 0; will-change:transform; animation-name:tick; animation-timing-function:linear; animation-iteration-count:infinite; }
+  .ticker:hover .ticker-track { animation-play-state:paused; }
+  .ticker-item { display:inline-block; padding:0 22px; font-size:12.5px; }
+  .ticker-item a { color:var(--text); text-decoration:none; }
+  .ticker-dot { color:var(--brand); font-size:8px; vertical-align:middle; margin-right:5px; }
+  @keyframes tick { from{transform:translateX(0);} to{transform:translateX(-50%);} }
+  /* Active situations rows */
+  .as-list .as-row { display:grid; grid-template-columns:1.1fr 2fr auto; gap:14px; align-items:center; padding:13px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
   .as-list .as-row:last-child { border-bottom:none; }
   .as-list .as-row:hover { background:var(--panel2); }
-  .as-co .co-link { font-weight:650; }
-  .as-head a { color:#cdd8e2; text-decoration:none; font-weight:550; }
+  .as-head a { color:#cdd8e2; text-decoration:none; font-weight:500; }
   .as-head a:hover { color:var(--accent); text-decoration:underline; }
-  .as-score { color:var(--warn); font-weight:800; font-size:16px; font-variant-numeric:tabular-nums; }
-  .modal-warn { background:rgba(255,181,71,.12); border:1px solid rgba(255,181,71,.4); color:#ffce85;
-    border-radius:8px; padding:10px 12px; font-size:13px; font-weight:600; margin-bottom:8px; }
-  /* Watchlist + stars */
-  .star { cursor:pointer; color:var(--warn); font-size:16px; margin-right:6px; user-select:none; vertical-align:middle; }
-  .star:hover { color:#ffce85; }
-  .wl-count { color:var(--muted); font-weight:600; margin-left:2px; }
-  .wl-star-row { margin-bottom:10px; }
-  .wl-star-btn { font-weight:600; }
-  .wl-row { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:12px; }
-  .wl-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:15px; }
-  .wl-top .co-link { font-weight:650; }
-  .wl-score { color:var(--accent); font-weight:800; font-variant-numeric:tabular-nums; }
-  .wl-sig { color:#cdd8e2; font-size:13px; margin:7px 0 9px; }
-  .wl-note { width:100%; min-height:60px; background:var(--panel2); border:1px solid var(--line);
-    color:var(--text); border-radius:8px; padding:8px 10px; font-size:13px; font-family:inherit; resize:vertical; }
-  .wl-actions { display:flex; align-items:center; gap:10px; margin-top:8px; }
-  .wl-msg { color:var(--ok); font-size:12px; }
-  .wl-badge { font-size:11px; font-weight:700; padding:2px 9px; border-radius:20px; text-transform:uppercase; letter-spacing:.3px; }
-  .wl-badge.ok { background:rgba(61,220,132,.15); color:var(--ok); }
-  .wl-badge.warn { background:rgba(255,181,71,.15); color:#ffce85; }
-  .wl-badge.gone { background:rgba(255,92,92,.15); color:#ff8a8a; }
+  /* Watchlist */
+  .wl-row { background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:13px 16px; margin-bottom:11px; display:flex; align-items:center; justify-content:space-between; gap:12px; cursor:pointer; }
+  .wl-row:hover { border-color:var(--accent); }
+  .wl-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:14px; }
+  .wl-sig { color:var(--dim); font-size:12px; margin-top:4px; }
+  .wl-badge { font-size:10.5px; font-weight:600; padding:2px 9px; border-radius:20px; text-transform:uppercase; letter-spacing:.3px; }
+  .wl-badge.ok { background:rgba(70,211,154,.15); color:var(--ok); }
+  .wl-badge.warn { background:rgba(255,180,84,.15); color:#ffce85; }
+  .wl-badge.gone { background:rgba(255,107,107,.15); color:#ff9a9a; }
   .wl-badge.muted { background:var(--panel2); color:var(--muted); }
-  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
-  button { background:var(--accent); color:#04121f; border:none; padding:8px 14px; border-radius:7px; font-weight:600; cursor:pointer; font-size:13px; }
-  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
-  button:disabled { opacity:.5; cursor:default; }
-  input[type=email] { background:var(--panel2); border:1px solid var(--line); color:var(--text); padding:8px 12px; border-radius:7px; font-size:13px; min-width:240px; }
-  .subscribe { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin-top:26px; }
-  .subscribe h2 { font-size:14px; margin:0 0 4px; }
-  .subscribe p { color:var(--muted); margin:0 0 12px; font-size:13px; }
-  .msg { font-size:13px; margin-left:4px; } .msg.ok{color:var(--ok);} .msg.err{color:var(--hot);}
-  .empty { padding:24px 16px; color:var(--muted); text-align:center; }
-  .updated { color:var(--muted); font-size:12px; }
-  .hint { color:var(--muted); font-size:12px; margin:0 0 12px; }
+  /* Subscribe */
+  .subscribe { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .subscribe h2 { font-size:13px; margin:0 0 4px; text-transform:none; letter-spacing:0; padding:0; border:none; color:var(--text); font-weight:600; }
+  .subscribe p { color:var(--muted); margin:0 0 12px; font-size:12.5px; }
+  input[type=email] { background:var(--panel2); border:1px solid var(--line2); color:var(--text); padding:8px 12px; border-radius:8px; font-size:13px; width:100%; margin-bottom:9px; }
+  .msg { font-size:12.5px; } .msg.ok{color:var(--ok);} .msg.err{color:var(--hot);}
+  /* About */
   .about { max-width:920px; }
-  .about h2 { font-size:18px; margin:22px 0 8px; }
-  .about h3 { font-size:14px; text-transform:uppercase; letter-spacing:.5px; color:var(--brand); margin:26px 0 10px; }
-  .about p,.about li { color:#cdd8e2; line-height:1.6; }
+  .about h2 { font-size:18px; margin:22px 0 8px; font-weight:600; }
+  .about h3 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--brand); margin:24px 0 10px; font-weight:600; }
+  .about p,.about li { color:#cdd8e2; line-height:1.65; }
   .about ul { padding-left:20px; }
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; margin-top:12px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-top:12px; }
   .legend td,.legend th { padding:8px 12px; }
   .pts { color:var(--hot); font-weight:700; text-align:center; white-space:nowrap; }
-  .src { color:var(--muted); }
   .lead { font-size:15px; color:var(--text); }
   .pill { display:inline-block; padding:2px 9px; border-radius:20px; font-size:12px; background:var(--panel2); color:var(--muted); margin-right:6px; }
-  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; z-index:50;
-    align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 16px; }
-  .overlay.open { display:flex; }
-  .modal { background:var(--panel); border:1px solid var(--line); border-radius:12px; width:100%; max-width:840px; }
-  .modal-head { padding:18px 22px; border-bottom:1px solid var(--line); display:flex;
-    justify-content:space-between; align-items:flex-start; gap:12px; position:sticky; top:0; background:var(--panel); border-radius:12px 12px 0 0; }
-  .modal-head h2 { margin:0; font-size:19px; }
-  .modal-head .sub { color:var(--muted); font-size:12px; margin-top:3px; }
-  .modal-body { padding:18px 22px; }
-  .close-x { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:7px; padding:6px 11px; }
-  .mh3 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:20px 0 8px; }
-  .desc { color:#cdd8e2; line-height:1.6; }
+  /* ===== Company profile (full page) ===== */
+  .cv-back { color:var(--muted); font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:5px; margin-bottom:14px; }
+  .cv-back:hover { color:var(--text); }
+  .cv-head { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+  .cv-title { font-size:24px; font-weight:600; }
+  .cv-meta { color:var(--muted); font-size:13px; margin-top:3px; }
+  .cv-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .cv-band { display:grid; grid-template-columns:230px 1fr; gap:16px; align-items:center; margin-top:16px;
+    background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:16px; }
+  @media (max-width:720px){ .cv-band{ grid-template-columns:1fr; } }
+  .cv-gauge { text-align:center; }
+  .gauge { width:100%; max-width:200px; }
+  .gnum { font-size:40px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .glabel { font-size:10px; fill:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .cv-rank { color:var(--muted); font-size:12px; margin-top:2px; }
+  .cv-rank b { color:var(--text); font-weight:600; }
+  .cv-facts { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  @media (max-width:560px){ .cv-facts{ grid-template-columns:repeat(2,1fr);} }
+  .kvm { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:9px 11px; }
+  .kvm-k { font-size:10px; text-transform:uppercase; letter-spacing:.3px; color:var(--muted); }
+  .kvm-v { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:3px; }
+  .cv-trend { display:flex; align-items:center; gap:10px; margin-top:10px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; }
+  .cv-trend .lab { font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); }
+  .cv-warn { background:rgba(255,180,84,.12); border:1px solid rgba(255,180,84,.4); color:#ffce85; border-radius:10px; padding:11px 13px; font-size:13px; font-weight:550; margin-top:14px; }
+  .cv-tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-top:20px; flex-wrap:wrap; }
+  .cv-tab { padding:10px 14px; font-size:13px; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; font-weight:550; }
+  .cv-tab:hover { color:var(--text); }
+  .cv-tab.active { color:var(--text); border-bottom-color:var(--accent); }
+  .cv-tabcount { color:var(--dim); font-size:11.5px; }
+  .cv-body { padding:18px 0; }
+  .mh3 { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin:18px 0 9px; font-weight:600; }
+  .mh3:first-child { margin-top:0; }
+  .desc { color:#cdd8e2; line-height:1.65; max-width:760px; }
+  .verdict { color:#dbe4ec; font-size:15px; line-height:1.6; max-width:760px; }
   .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
   @media (max-width:640px){ .grid{ grid-template-columns:repeat(2,1fr);} }
-  .kv { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:9px 11px; }
-  .kv .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.3px; }
+  .kv { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:9px 11px; }
+  .kv .k { color:var(--muted); font-size:10.5px; text-transform:uppercase; letter-spacing:.3px; }
   .kv .v { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:2px; }
-  .scorebadge { font-size:22px; font-weight:800; }
-  .siglist { display:flex; flex-wrap:wrap; gap:6px; }
-  .siglist .tag.sig { font-size:12px; padding:3px 9px; }
-  /* Evidence cards (why it's flagged) */
+  .tsr-panel { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:11px 13px; max-width:420px; }
+  .tsr-h { font-size:10.5px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); margin-bottom:8px; }
+  .tsr-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .tsr-k { font-size:11px; color:var(--muted); }
+  .tsr-v { font-size:16px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:2px; }
+  .timing { margin-top:12px; font-size:12.5px; color:#cdd8e2; background:rgba(76,141,255,.08); border:1px solid var(--line); border-radius:10px; padding:8px 12px; max-width:420px; }
+  .timing i { color:var(--accent); font-style:normal; margin-right:5px; }
+  .timing b { color:var(--text); }
+  .sigchips { display:flex; flex-wrap:wrap; gap:7px; }
+  .sigchip { background:rgba(255,107,107,.14); color:#ff9a9a; font-size:12px; padding:4px 10px; border-radius:7px; }
+  .sigchip.warnchip { background:rgba(255,180,84,.14); color:#ffce85; }
+  .pillar { margin-bottom:16px; }
+  .pillar-h { display:flex; align-items:center; gap:8px; }
+  .pillar-t { font-weight:600; font-size:13px; }
+  .pillar-n { font-size:11px; font-weight:600; color:var(--muted); background:var(--panel2); border-radius:20px; padding:1px 8px; }
+  .pillar-d { color:var(--muted); font-size:11px; margin:2px 0 8px; }
   .evlist { display:flex; flex-direction:column; gap:8px; }
-  .evrow { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .evrow { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
   .evtop { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
-  .evlabel { font-weight:650; font-size:13px; color:var(--text); }
-  .evval { font-weight:800; font-variant-numeric:tabular-nums; color:var(--hot); font-size:14px; white-space:nowrap; }
+  .evlabel { font-weight:550; font-size:13px; }
+  .evval { font-weight:700; font-variant-numeric:tabular-nums; color:var(--hot); font-size:14px; white-space:nowrap; }
   .evval.good { color:var(--ok); }
   .evctx { color:#cdd8e2; font-size:12px; margin-top:5px; }
-  .evmath { color:var(--muted); font-size:12px; margin-top:4px; font-variant-numeric:tabular-nums;
-    background:rgba(63,167,255,.07); border-left:2px solid var(--accent); padding:4px 8px; border-radius:4px; }
+  .evmath { color:var(--muted); font-size:12px; margin-top:4px; font-variant-numeric:tabular-nums; background:rgba(76,141,255,.07); border-left:2px solid var(--accent); padding:4px 8px; border-radius:4px; }
   .evsrc { color:var(--muted); font-size:11px; margin-top:6px; text-transform:uppercase; letter-spacing:.3px; }
   .evsrc a { color:var(--accent); text-decoration:none; }
-  .evsrc a:hover { text-decoration:underline; }
-  /* External quick links */
-  .links { display:flex; flex-wrap:wrap; gap:8px; margin:2px 0 6px; }
-  .extlink { display:inline-block; padding:6px 11px; border:1px solid var(--line); border-radius:7px;
-    color:var(--accent); text-decoration:none; font-size:12px; font-weight:600; background:var(--panel2); }
+  .gov-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .gov-badge { font-size:12px; font-weight:550; padding:4px 10px; border-radius:20px; border:1px solid var(--line2); }
+  .gov-badge.on { background:rgba(255,107,107,.15); color:#ff9a9a; border-color:rgba(255,107,107,.4); }
+  .gov-badge.off { color:var(--muted); }
+  .gov-note { color:var(--muted); font-size:12px; }
+  .links { display:flex; flex-wrap:wrap; gap:8px; margin:4px 0; }
+  .extlink { display:inline-block; padding:6px 11px; border:1px solid var(--line2); border-radius:8px; color:var(--accent); text-decoration:none; font-size:12px; font-weight:550; background:var(--panel2); }
   .extlink:hover { border-color:var(--accent); }
-  .dlist a { color:var(--text); text-decoration:none; font-weight:550; }
+  .dlist a { color:var(--text); text-decoration:none; font-weight:500; }
   .dlist a:hover { color:var(--accent); text-decoration:underline; }
   .dlist .row2 { padding:9px 0; border-bottom:1px solid var(--line); }
   .dlist .row2:last-child { border-bottom:none; }
+  .ins-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; max-width:520px; }
+  .notes-area { width:100%; min-height:160px; background:var(--panel2); border:1px solid var(--line2); color:var(--text); border-radius:10px; padding:12px 13px; font-size:13.5px; font-family:inherit; line-height:1.6; resize:vertical; }
+  .notes-actions { display:flex; align-items:center; gap:12px; margin-top:10px; }
+  .notes-msg { color:var(--ok); font-size:12.5px; }
+  /* List-modal overlay (news/filing category drill-down only) */
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.62); display:none; z-index:50; align-items:flex-start; justify-content:center; overflow-y:auto; padding:48px 16px; }
+  .overlay.open { display:flex; }
+  .modal { background:var(--panel); border:1px solid var(--line2); border-radius:14px; width:100%; max-width:760px; }
+  .modal-head { padding:16px 20px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .modal-head h2 { margin:0; font-size:17px; font-weight:600; }
+  .modal-head .sub { color:var(--muted); font-size:12px; margin-top:3px; }
+  .modal-body { padding:14px 20px 20px; }
+  .scorebadge { font-size:20px; font-weight:700; }
+  .close-x { background:transparent; color:var(--muted); border:1px solid var(--line2); border-radius:8px; padding:6px 11px; }
 </style>
 </head>
 <body>
 <header>
   <div>
     <div class="brand">FGS Global</div>
-    <h1>Activist Vulnerability — Early Warning Dashboard</h1>
-    <div class="sub">Predictive activist-defense intelligence · public data (SEC EDGAR · SEC XBRL · news API · Alpha Vantage)</div>
+    <h1>Activist Vulnerability — Early Warning</h1>
+    <div class="sub">Predictive activist-defense intelligence · free public data</div>
   </div>
   <div class="status" id="status">Loading…</div>
 </header>
 
-<div class="tabs">
-  <div class="tab active" id="tabbtn-dashboard" onclick="showTab('dashboard')">Dashboard</div>
-  <div class="tab" id="tabbtn-watchlist" onclick="showTab('watchlist')">Watchlist<span id="wlCount" class="wl-count"></span></div>
-  <div class="tab" id="tabbtn-about" onclick="showTab('about')">How it works</div>
-</div>
+<nav class="nav">
+  <div class="nav-tabs">
+    <button class="navtab active" id="nt-dashboard" onclick="showView('dashboard')">Dashboard</button>
+    <button class="navtab" id="nt-active" onclick="showView('active')">Active situations <span class="navcount" id="navActive"></span></button>
+    <button class="navtab" id="nt-watchlist" onclick="showView('watchlist')">Watchlist <span class="navcount" id="navWatch"></span></button>
+    <button class="navtab" id="nt-feed" onclick="showView('feed')">Live feed</button>
+    <button class="navtab" id="nt-about" onclick="showView('about')">How it works</button>
+  </div>
+</nav>
 
-<div class="wrap" id="tab-dashboard">
+<!-- DASHBOARD -->
+<div class="wrap page" id="page-dashboard">
   <div class="toolbar">
-    <button id="refreshBtn" onclick="manualRefresh()">↻ Refresh now</button>
+    <button id="refreshBtn" onclick="manualRefresh()">↻ Refresh</button>
     <button class="ghost" id="enrichBtn" onclick="runEnrichment()" title="Re-pull insider, votes, activist &amp; earnings data on demand">⟳ Run enrichment now</button>
     <button class="ghost" onclick="exportCsv()">⤓ Export CSV</button>
     <span class="updated" id="updated"></span>
   </div>
 
-  <div class="ticker" id="ticker" style="display:none;"></div>
+  <div class="summary" id="summary"></div>
 
-  <div class="row">
-    <div class="panel">
-      <h2>Live News Feed — by category (click to open)</h2>
-      <div class="feed" id="newsFeed"><div class="empty">Loading headlines…</div></div>
-    </div>
-    <div class="panel">
-      <h2>Live EDGAR Filings — by type (click to open)</h2>
-      <div class="feed" id="filingFeed"><div class="empty">Loading filings…</div></div>
-    </div>
+  <div class="freshrow">
+    <div><h3 class="sub">New &amp; rising this week</h3><div class="nr-wrap" id="newRising"></div></div>
+    <div><h3 class="sub">Spotlight — rotating picks</h3><div class="nr-wrap" id="spotlight"></div></div>
   </div>
 
-  <div id="newRisingSection" style="display:none;">
-    <div class="section-title">New &amp; rising this week</div>
-    <p class="hint">Companies newly flagged or climbing in score — the freshest leads.</p>
-    <div class="nr-wrap" id="newRising"></div>
+  <div class="leadhead">
+    <h2 class="sec">Companies to pitch</h2>
+    <div class="leadtools">
+      <input class="lead-search" id="leadSearch" placeholder="Search company, ticker, or signal…" oninput="renderLeads()" />
+      <span class="fchip on" data-filter="all" onclick="setFilter('all',this)">All</span>
+      <span class="fchip" data-filter="severe" onclick="setFilter('severe',this)">Severe</span>
+      <span class="fchip" data-filter="high" onclick="setFilter('high',this)">High</span>
+    </div>
   </div>
-
-  <div class="section-title">Companies to Pitch — ranked by activist-target profile</div>
-  <p class="hint">A rating of how strongly each company matches the profile activists target — <b>not</b> a probability of a campaign. Click any company for its full profile, financials, filings &amp; news.</p>
+  <p class="hint">A rating of how strongly each company matches the profile activists target — <b>not</b> a probability of a campaign. Click a company for its full profile.</p>
   <div class="panel">
     <table>
       <thead>
-        <tr><th>#</th><th>Company / Ticker</th><th>Market Cap</th><th>Rating</th>
-            <th>Key Signals</th><th>Latest Item</th><th>First Flagged</th></tr>
+        <tr>
+          <th>Company</th>
+          <th class="sortable" onclick="sortLeads('market_cap')">Market cap</th>
+          <th class="sortable" onclick="sortLeads('vuln')">Rating</th>
+          <th>Key signals</th>
+          <th class="sortable" onclick="sortLeads('first_flagged')">First flagged</th>
+        </tr>
       </thead>
-      <tbody id="shortlist">
-        <tr><td colspan="7" class="empty">Loading shortlist…</td></tr>
-      </tbody>
+      <tbody id="shortlist"><tr><td colspan="5" class="empty">Loading…</td></tr></tbody>
     </table>
   </div>
 
-  <div id="activeSitSection" style="display:none;">
-    <div class="section-title" style="color:var(--warn);">⚠ Active situations — activist already engaged</div>
-    <p class="hint">An activist is already involved with these — likely too late to pitch proactively. Shown for awareness, not as fresh leads.</p>
-    <div class="panel"><div class="as-list" id="activeSit"></div></div>
-  </div>
-
-  <div class="subscribe">
-    <h2>Daily email digest</h2>
-    <p>Get the day's top 5 headlines and top 5 companies to pitch, sent automatically at 4:00 PM ET.</p>
-    <div class="toolbar" style="margin-bottom:0;">
+  <div class="row2col">
+    <div class="panel">
+      <h2>Top headlines</h2>
+      <div id="topNews"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="subscribe">
+      <h2>Daily email digest</h2>
+      <p>Top headlines and top companies to pitch, sent automatically at 4:00 PM ET.</p>
       <input type="email" id="emailInput" placeholder="you@fgsglobal.com" />
-      <button onclick="subscribe()">Subscribe</button>
-      <button class="ghost" onclick="unsubscribe()">Unsubscribe</button>
-      <button class="ghost" onclick="sendTestDigest()">Send test digest now</button>
-      <span class="msg" id="subMsg"></span>
+      <div class="toolbar" style="margin-bottom:0; gap:8px;">
+        <button onclick="subscribe()">Subscribe</button>
+        <button class="ghost" onclick="unsubscribe()">Unsubscribe</button>
+        <button class="ghost" onclick="sendTestDigest()">Send test</button>
+      </div>
+      <div class="msg" id="subMsg" style="margin-top:8px;"></div>
     </div>
   </div>
 </div>
 
-<div class="wrap about" id="tab-about" style="display:none;">
-  <h2>What this is</h2>
-  <p class="lead">A <em>predictive</em> screen that finds companies likely to attract an
-  activist investor — <em>before</em> the activist starts building a position — so FGS
-  can get in the door early. It ranks the entire S&amp;P 1500 on the structural traits
-  activists screen for, measured against each company's industry peers, using free
-  public data.</p>
-
-  <h3>How the score works</h3>
-  <p>Each company is scored on traits measured <b>relative to its industry peers</b>
-  (grouped by SIC code), plus recent event "accelerants" that signal it's time to
-  reach out. Flagged at/above the threshold (currently <b id="aboutThreshold">4</b>);
-  the highest scorers become the shortlist.</p>
-  <div class="card">
-    <table class="legend">
-      <thead><tr><th>Signal</th><th class="pts">Pts</th><th>Source</th></tr></thead>
-      <tbody>
-        <tr><td>Cheap valuation (low price-to-book)</td><td class="pts">2</td><td class="src">Alpha Vantage</td></tr>
-        <tr><td>Operating margin in bottom quartile of sector</td><td class="pts">2</td><td class="src">SEC XBRL</td></tr>
-        <tr><td>Low return on assets vs peers</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
-        <tr><td>Shrinking / weak revenue growth</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
-        <tr><td>Bloated SG&amp;A vs peers</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
-        <tr><td>Cash-heavy balance sheet (lazy capital)</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
-        <tr><td>Under-levered balance sheet</td><td class="pts">1</td><td class="src">SEC XBRL</td></tr>
-        <tr><td>Event accelerants: CEO exit, earnings miss, impairment, layoffs, activist headline</td><td class="pts">1 ea</td><td class="src">EDGAR · News</td></tr>
-      </tbody>
-    </table>
-    <p style="margin:12px 0 0; color:var(--muted); font-size:13px;">
-      The dashboard turns these signals into a 0–92 <b>activist-target profile index</b>,
-      weighted by how severe each signal is (how cheap, how far margins/returns lag peers),
-      and shown as a rating band:
-      <span class="pill" style="color:#ff8a8a;">75+ Severe</span>
-      <span class="pill" style="color:#ffce85;">50–74 High</span>
-      <span class="pill" style="color:#9fd0ff;">25–49 Elevated</span>
-      <span class="pill">&lt;25 Moderate</span>
-      It measures how strongly a company matches the profile activists target — it is
-      <b>not</b> a probability that a campaign will happen, and is deliberately capped
-      below 100 so it never implies certainty.
-    </p>
-  </div>
-
-  <h3>Where the data comes from (all free)</h3>
-  <ul>
-    <li><b>SEC XBRL financials</b> — each company's actual reported revenue, margins,
-      SG&amp;A, returns, and balance sheet, compared to industry peers. The core of the
-      predictive screen.</li>
-    <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events (CEO changes, impairments,
-      guidance cuts) used as timing accelerants and shown in the live feed.</li>
-    <li><b>Financial news API</b> — activist / distress headlines (headline + outlet +
-      link only), grouped into categories you can expand.</li>
-    <li><b>Alpha Vantage</b> — market cap, valuation multiples, and a company overview,
-      pulled for the shortlisted companies to power the detail view.</li>
-  </ul>
-
-  <h3>The company detail view</h3>
-  <p>Click any flagged company to open a full profile: a plain-English overview, the
-  exact signals it triggered, SEC-derived financials and Alpha Vantage market data,
-  its recent SEC filings, and recent related news — everything needed to prep a pitch.</p>
-
-  <h3>How often it updates</h3>
-  <ul>
-    <li><b>Every 30 minutes</b> — news + EDGAR filings refresh and scores recompute.</li>
-    <li><b>Daily</b> — full SEC fundamentals refresh, shortlist enrichment, and the
-      4:00 PM ET email digest.</li>
-  </ul>
-
-  <h3>Current limits &amp; roadmap</h3>
-  <ul>
-    <li><b>Valuation coverage:</b> on the free data tier, market-cap/valuation is pulled
-      for the shortlist (not all 1,500). A paid market-data tier would extend valuation
-      and multi-year total-return signals across the whole universe.</li>
-    <li><b>Trend tracking:</b> the score column shows week-over-week movement (▲/▼) once
-      a few days of history have accumulated.</li>
-    <li><b>Classification</b> is a strong first pass but can occasionally mis-tag a
-      filing, so the shortlist is a lead-generation starting point for human review —
-      not a final determination.</li>
-  </ul>
+<!-- ACTIVE SITUATIONS -->
+<div class="wrap page" id="page-active" style="display:none;">
+  <h2 class="sec" style="color:var(--warn);">⚠ Active situations — activist already engaged</h2>
+  <p class="hint">An activist has already shown up at these (a 13D, contested proxy, or named campaign). Likely too late to pitch proactively — but worth knowing, and a fresh 13D can be an urgent defense lead.</p>
+  <div class="panel"><div class="as-list" id="activeSit"><div class="empty">Loading…</div></div></div>
 </div>
 
-<div class="wrap" id="tab-watchlist" style="display:none;">
-  <div class="section-title">Watchlist</div>
-  <p class="hint">Shared across the team. Star any company to track it here with pitch notes — it stays even if it drops off the shortlist, and shows its current status.</p>
+<!-- WATCHLIST -->
+<div class="wrap page" id="page-watchlist" style="display:none;">
+  <h2 class="sec">Watchlist</h2>
+  <p class="hint">Shared across the team. Star any company to track it here; it stays even if it drops off the shortlist. Open a company to read or edit its notes.</p>
   <div id="watchlistBody"><div class="empty">Loading…</div></div>
 </div>
 
-<div class="overlay" id="overlay" onclick="if(event.target===this)closeCompany()">
-  <div class="modal">
-    <div class="modal-head">
-      <div>
-        <h2 id="mTitle">Company</h2>
-        <div class="sub" id="mSub"></div>
-      </div>
-      <div style="display:flex; gap:10px; align-items:center;">
-        <span class="score scorebadge" id="mScore"></span>
-        <button class="close-x" onclick="closeCompany()">✕ Close</button>
-      </div>
+<!-- LIVE FEED -->
+<div class="wrap page" id="page-feed" style="display:none;">
+  <h2 class="sec">Live feed</h2>
+  <p class="hint">Real-time news and SEC filings across the universe, grouped by category. Reference material — your leads live on the Dashboard.</p>
+  <div class="ticker" id="ticker" style="display:none;"></div>
+  <div class="row">
+    <div class="panel">
+      <h2>Live news — by category</h2>
+      <div class="feed" id="newsFeed"><div class="empty">Loading…</div></div>
     </div>
-    <div class="modal-body" id="mBody"><div class="empty">Loading…</div></div>
+    <div class="panel">
+      <h2>Live EDGAR filings — by type</h2>
+      <div class="feed" id="filingFeed"><div class="empty">Loading…</div></div>
+    </div>
   </div>
 </div>
 
+<!-- HOW IT WORKS -->
+<div class="wrap page about" id="page-about" style="display:none;">
+  <h2>What this is</h2>
+  <p class="lead">A <em>predictive</em> screen that finds companies likely to attract an activist
+  investor — <em>before</em> the activist starts building a position — so FGS can get in the door
+  early. It ranks the S&amp;P 1500 on the traits activists screen for, measured against each
+  company's industry peers, using free public data.</p>
+
+  <h3>How the rating works</h3>
+  <p>Each company is scored on traits measured <b>relative to its industry peers</b> plus recent
+  event accelerants. Those signals become a 0–92 <b>activist-target profile index</b>, weighted by
+  how severe each one is, shown as a rating band:
+  <span class="pill" style="color:#ff9a9a;">75+ Severe</span>
+  <span class="pill" style="color:#ffce85;">50–74 High</span>
+  <span class="pill" style="color:#9cc2ff;">25–49 Elevated</span>
+  <span class="pill">&lt;25 Moderate</span>
+  It measures how strongly a company matches the profile activists target — it is <b>not</b> a
+  probability that a campaign will happen, and is capped below 100 so it never implies certainty.</p>
+
+  <h3>Where the data comes from (all free)</h3>
+  <ul>
+    <li><b>SEC XBRL fundamentals</b> — revenue, margins, SG&amp;A, returns, balance sheet vs peers.</li>
+    <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events, Form 4 insider trades, 8-K 5.07 vote
+      results, and a 13D / contested-proxy sweep for active situations.</li>
+    <li><b>Finnhub</b> — market cap, price-to-book, P/E, 1-yr return, and the earnings calendar.</li>
+    <li><b>News API</b> — activist / distress headlines, grouped on the Live feed.</li>
+  </ul>
+
+  <h3>How often it updates</h3>
+  <ul>
+    <li><b>Every 30 minutes</b> — news, filings, market cap &amp; valuation refresh and scores recompute.</li>
+    <li><b>Daily (4 PM ET)</b> — full SEC fundamentals, governance, insider, votes, and the
+      universe-wide activist sweep, then the email digest.</li>
+  </ul>
+</div>
+
+<!-- COMPANY PROFILE (full page) -->
+<div class="wrap page" id="page-company" style="display:none;">
+  <div id="companyView"><div class="empty">Loading…</div></div>
+</div>
+
+<!-- List-modal overlay (category drill-down) -->
+<div class="overlay" id="overlay" onclick="if(event.target===this)closeOverlay()">
+  <div class="modal">
+    <div class="modal-head">
+      <div><h2 id="mTitle">…</h2><div class="sub" id="mSub"></div></div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <span class="scorebadge" id="mScore"></span>
+        <button class="close-x" onclick="closeOverlay()">✕ Close</button>
+      </div>
+    </div>
+    <div class="modal-body" id="mBody"></div>
+  </div>
+</div>
+
+<span id="aboutThreshold" style="display:none;"></span>
 <script src="/static/app.js"></script>
 </body>
 </html>
