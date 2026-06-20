@@ -32,7 +32,8 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 
                  "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1, "high_sga": 1,
                  "cash_hoard": 1, "underlevered": 1,
                  "gov_classified": 1, "gov_poison": 1, "gov_dual": 1,
-                 "insider_selling": 1, "insider_buying": 0}
+                 "insider_selling": 1, "insider_buying": 0,
+                 "weak_vote_support": 1}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
@@ -85,11 +86,17 @@ LABELS = {
     "gov_dual": "dual-class / super-voting stock",
     "insider_selling": "cluster of insider selling",
     "insider_buying": "insiders buying (confidence signal)",
+    "weak_vote_support": "weak say-on-pay support",
 }
 
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
 # insider_buying is shown as a 0-point defense/confidence note.
 INSIDER_KEYS = ("insider_selling", "insider_buying")
+
+# Shareholder-vote discontent (8-K Item 5.07). Flag when say-on-pay support falls below
+# this fraction -- well under the ~90%+ norm, a recognized pre-activism warning.
+VOTE_KEYS = ("weak_vote_support",)
+SAY_ON_PAY_FLAG = 0.75
 
 # Governance red flags (from DEF 14A). Boolean signals -> their own evidence cards.
 GOV_KEYS = ("gov_classified", "gov_poison", "gov_dual")
@@ -234,6 +241,11 @@ def _severity(key, r, t, e):
         if mcap and net > 0:
             sev += min(0.4, (net / mcap) * 40.0)     # ~1% of market cap sold -> +0.4
         return _clamp(sev)
+    if key == "weak_vote_support":
+        sop = (r.get("_votes") or {}).get("say_on_pay")
+        if sop is None:
+            return 0.5
+        return _clamp((0.75 - sop) / 0.25)           # 75% -> 0, 50% or worse -> 1
     return 1.0  # governance flags + insider_buying + event accelerants
 
 
@@ -333,6 +345,19 @@ def _insider_evidence(key, r):
     return {"key": key, "label": LABELS.get(key, key), "value": val,
             "context": ctx, "inputs": "", "period": f"trailing {win} days",
             "source": "SEC Form 4", "url": ins.get("top_url")}
+
+
+def _vote_evidence(key, r):
+    v = r.get("_votes") or {}
+    sop = v.get("say_on_pay")
+    mtg = v.get("meeting_date")
+    pct = f"{sop * 100:.0f}% for" if sop is not None else ""
+    ctx = (f"only {sop * 100:.0f}% of votes backed executive pay at the last annual "
+           f"meeting{(' (' + mtg + ')') if mtg else ''} — shareholder discontent that "
+           f"often precedes an activist campaign") if sop is not None else ""
+    return {"key": key, "label": LABELS.get(key, key), "value": pct, "context": ctx,
+            "inputs": "", "period": (f"meeting {mtg}" if mtg else "annual meeting"),
+            "source": "SEC 8-K Item 5.07", "url": v.get("url")}
 
 
 def _struct_evidence(key, r, t):
@@ -460,6 +485,7 @@ def recompute_all():
         spy_1y = None
     gov = database.get_all_governance()
     ins_all = database.get_all_insider()
+    votes_all = database.get_all_votes()
     aflags = database.get_all_activist_flags()
 
     metrics = ["pb_ratio", "operating_margin", "tsr_1y", "tsr_3y", "roa",
@@ -531,6 +557,13 @@ def recompute_all():
         elif nb >= 1 and buy_v > sell_v and buy_v > 0:
             trig.append("insider_buying")
 
+        # Shareholder-vote discontent (8-K 5.07; only present for parsed names).
+        vrow = votes_all.get(r["cik"]) or {}
+        r["_votes"] = vrow
+        sop = vrow.get("say_on_pay")
+        if sop is not None and sop < SAY_ON_PAY_FLAG:
+            trig.append("weak_vote_support")
+
         struct = sum(STRUCT_POINTS[s] for s in trig)
         events, top, ev, activist = _event_signals(r["cik"], r["ticker"])
         total = struct + sum(EVENT_POINTS[s] for s in events)
@@ -557,6 +590,8 @@ def recompute_all():
         for key in trig:
             if key in INSIDER_KEYS:
                 evidence.append(_insider_evidence(key, r))
+            elif key in VOTE_KEYS:
+                evidence.append(_vote_evidence(key, r))
             elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
