@@ -128,31 +128,31 @@ def fetch_prices(symbol, k, points=260):
 
 
 def refresh_fmp(pairs, db, only_missing_profile=True):
-    """pairs: {cik: ticker}. Pulls profile (cached) + price history. `db` is the
-    database module (passed in to avoid a circular import)."""
+    """pairs: {cik: ticker}. Pulls company profile (CEO/HQ/IR/description), cached once
+    per company. Historical prices are NOT free on FMP (legacy/premium-gated), so the
+    price chart is sourced from Twelve Data instead -- see twelvedata.py."""
     global LAST_ERROR
     LAST_ERROR = None
     k = key()
     if not k:
-        print("[fmp] no FMP_API_KEY set; skipping contacts + price charts")
+        print("[fmp] no FMP_API_KEY set; skipping contacts + descriptions")
         return 0
     from datetime import datetime, timedelta
     stale_before = (datetime.utcnow() - timedelta(days=PROFILE_MAX_AGE_DAYS)).isoformat()
-    prof_done = px_done = 0
+    prof_done = cached = 0
     for cik, tk in pairs.items():
         if not tk:
             continue
         existing = db.get_company_profile(cik)
         need_profile = (not existing) or (existing.get("updated_at") or "") < stale_before
-        if need_profile or not only_missing_profile:
-            p = fetch_profile(tk, k); time.sleep(0.25)
-            if p:
-                db.upsert_company_profile(cik, p); prof_done += 1
-        closes, last = fetch_prices(tk, k); time.sleep(0.25)
-        if closes:
-            db.upsert_prices(cik, closes, last); px_done += 1
-    msg = f"[fmp] profiles {prof_done} · price series {px_done} (of {len(pairs)} names)"
-    if (prof_done == 0 or px_done == 0) and LAST_ERROR:
+        if not (need_profile or not only_missing_profile):
+            cached += 1
+            continue
+        p = fetch_profile(tk, k); time.sleep(0.25)
+        if p:
+            db.upsert_company_profile(cik, p); prof_done += 1
+    msg = f"[fmp] profiles fetched {prof_done} · cached {cached} (of {len(pairs)} names)"
+    if prof_done == 0 and cached == 0 and LAST_ERROR:
         msg += f"  — FMP said: {LAST_ERROR}"
     print(msg)
-    return px_done
+    return prof_done
