@@ -318,6 +318,29 @@ def api_refresh():
     return {"ok": True, **result}
 
 
+@app.post("/api/run-enrichment")
+def api_run_enrichment():
+    """Kick the heavy data passes (insider, votes, activist, earnings) on demand,
+    in a background thread so the request returns immediately. These otherwise only
+    run on boot and in the 4 PM ET daily job."""
+    def _job():
+        import traceback
+        for name, fn in (("insider", pipeline.refresh_insider),
+                         ("votes", pipeline.refresh_votes),
+                         ("activist", lambda: pipeline.refresh_activist(full=False)),
+                         ("earnings", pipeline.refresh_earnings)):
+            try:
+                fn()
+            except Exception:
+                print(f"[run-enrichment] {name} failed")
+                traceback.print_exc()
+        print("[run-enrichment] done")
+    threading.Thread(target=_job, daemon=True).start()
+    return {"ok": True, "message": "Enrichment started — insider, votes, activist and "
+            "earnings are refreshing in the background (about a minute or two). "
+            "Reload the page shortly to see updates."}
+
+
 @app.api_route("/api/send-test-digest", methods=["GET", "POST"])
 def api_send_test_digest():
     subs = database.get_subscribers()
