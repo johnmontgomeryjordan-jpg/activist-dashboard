@@ -78,6 +78,11 @@ CREATE TABLE IF NOT EXISTS earnings (
 CREATE TABLE IF NOT EXISTS notes (
     cik TEXT PRIMARY KEY, note TEXT, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS finnhub_extra (
+    cik TEXT PRIMARY KEY, mspr REAL, mspr_month TEXT,
+    rec_strongbuy INTEGER, rec_buy INTEGER, rec_hold INTEGER,
+    rec_sell INTEGER, rec_strongsell INTEGER, rec_period TEXT, updated_at TEXT
+);
 """
 
 
@@ -611,6 +616,30 @@ def get_notes_set():
     with get_conn() as conn:
         return {r["cik"] for r in conn.execute(
             "SELECT cik FROM notes WHERE note IS NOT NULL AND TRIM(note) <> ''")}
+
+
+# --- Finnhub extras: insider sentiment (MSPR) + analyst recommendations -------
+def upsert_finnhub_extra(cik, d):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO finnhub_extra
+               (cik,mspr,mspr_month,rec_strongbuy,rec_buy,rec_hold,rec_sell,rec_strongsell,rec_period,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 mspr=excluded.mspr, mspr_month=excluded.mspr_month,
+                 rec_strongbuy=excluded.rec_strongbuy, rec_buy=excluded.rec_buy,
+                 rec_hold=excluded.rec_hold, rec_sell=excluded.rec_sell,
+                 rec_strongsell=excluded.rec_strongsell, rec_period=excluded.rec_period,
+                 updated_at=excluded.updated_at""",
+            (cik, d.get("mspr"), d.get("mspr_month"), d.get("rec_strongbuy"), d.get("rec_buy"),
+             d.get("rec_hold"), d.get("rec_sell"), d.get("rec_strongsell"), d.get("rec_period"),
+             now_iso()))
+
+
+def get_finnhub_extra(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM finnhub_extra WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
 
 
 def _cutoff(days):
