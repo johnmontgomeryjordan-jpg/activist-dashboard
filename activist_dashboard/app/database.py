@@ -75,6 +75,9 @@ CREATE TABLE IF NOT EXISTS votes (
 CREATE TABLE IF NOT EXISTS earnings (
     cik TEXT PRIMARY KEY, ticker TEXT, next_date TEXT, last_date TEXT, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS notes (
+    cik TEXT PRIMARY KEY, note TEXT, updated_at TEXT
+);
 """
 
 
@@ -345,6 +348,14 @@ def get_score_one(cik):
         return dict(r) if r else {}
 
 
+def get_score_history(cik, limit=60):
+    """Daily raw-score snapshots (oldest first) for the rating-trend sparkline."""
+    with get_conn() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT date, score FROM score_history WHERE cik=? ORDER BY date ASC", (cik,))]
+    return rows[-limit:]
+
+
 def prior_score(cik, days=7):
     """Most recent history score from at least `days` ago (for week-over-week)."""
     cutoff = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
@@ -578,6 +589,28 @@ def get_earnings(cik):
     with get_conn() as conn:
         r = conn.execute("SELECT * FROM earnings WHERE cik=?", (cik,)).fetchone()
         return dict(r) if r else {}
+
+
+# --- Company-level pitch notes (shared; the single source of truth) ----------
+def get_note(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT note FROM notes WHERE cik=?", (cik,)).fetchone()
+        return (r["note"] if r else "") or ""
+
+
+def set_note(cik, note):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO notes (cik,note,updated_at) VALUES (?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET note=excluded.note, updated_at=excluded.updated_at""",
+            (cik, note or "", now_iso()))
+
+
+def get_notes_set():
+    """Set of CIKs that have a non-empty note (for 'has note' indicators)."""
+    with get_conn() as conn:
+        return {r["cik"] for r in conn.execute(
+            "SELECT cik FROM notes WHERE note IS NOT NULL AND TRIM(note) <> ''")}
 
 
 def _cutoff(days):
