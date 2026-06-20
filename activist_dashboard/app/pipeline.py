@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 import requests
 
 from . import (config, database, universe, edgar, news, scoring, emailer,
-               governance, insider, activist, earnings)
+               governance, insider, activist, earnings, votes)
 
 _UNIVERSE = None
 
@@ -529,11 +529,22 @@ def refresh_earnings():
     return earnings.refresh_earnings(_tracked_pairs())
 
 
+def refresh_votes():
+    """Say-on-pay support (8-K Item 5.07) for tracked names, then rescore. Free SEC data."""
+    n = votes.refresh_votes(sorted(_tracked_ciks()))
+    try:
+        scoring.recompute_all()
+    except Exception:
+        traceback.print_exc()
+    return n
+
+
 def daily_rescore_and_digest():
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
     refresh_insider()
+    refresh_votes()
     refresh_activist(full=True)
     refresh_earnings()
     refresh_enrichment()
@@ -541,11 +552,12 @@ def daily_rescore_and_digest():
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=quarterly-evidence-finnhub-tsr-governance-insider-activist  starting refresh")
+    print("[boot] VERSION=quarterly-evidence-finnhub-tsr-governance-insider-activist-votes  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
     refresh_insider()
+    refresh_votes()
     refresh_activist(full=False)
     refresh_earnings()
     refresh_enrichment()
