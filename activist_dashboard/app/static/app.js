@@ -77,6 +77,20 @@ function sparkline(hist, col){
   return `<svg viewBox="0 0 ${w} ${h}" style="flex:1; height:26px;" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2"/></svg>`;
 }
 function kvMini(k,v){ return `<div class="kvm"><div class="kvm-k">${k}</div><div class="kvm-v">${v}</div></div>`; }
+function priceChart(series, last){
+  if(!series || series.length<2) return "";
+  const w=600,h=120,pad=6, mn=Math.min(...series), mx=Math.max(...series), rng=(mx-mn)||1;
+  const x=i=>(pad+i/(series.length-1)*(w-2*pad)).toFixed(1);
+  const y=v=>(h-pad-((v-mn)/rng)*(h-2*pad)).toFixed(1);
+  const pts=series.map((v,i)=>`${x(i)},${y(v)}`).join(" ");
+  const up=series[series.length-1]>=series[0], col=up?"var(--ok)":"var(--hot)";
+  return `<div style="margin-top:4px;">
+    <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:120px;display:block;">
+      <polygon points="${pad},${h-pad} ${pts} ${w-pad},${h-pad}" fill="${col}" opacity="0.08"/>
+      <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>
+    <div style="display:flex;justify-content:space-between;color:var(--muted);font-size:11.5px;margin-top:4px;">
+      <span>${series.length} trading days</span><span>last <b style="color:var(--text)">$${fmtNum(last)}</b></span><span>range $${fmtNum(mn)} – $${fmtNum(mx)}</span></div></div>`;
+}
 function weekChip(ch){
   if(ch==null) return ` <span class="chg new" title="newly tracked">new</span>`;
   if(ch>0) return ` <span class="chg up" title="vs last week">▲${ch}</span>`;
@@ -415,10 +429,12 @@ function renderTab(){
       ? `<div class="mh3">Analysts <span class="gov-note" style="text-transform:none;letter-spacing:0;">— sell-side view, context only</span></div>
          <div class="verdict" style="font-size:13.5px;"><span style="color:var(--ok)">${aBuy} buy</span> · ${aHold} hold · <span style="color:var(--hot)">${aSell} sell</span>${an.period?` <span class="gov-note">(${esc(an.period)})</span>`:""}</div>`
       : "";
+    const px=d.prices||{}; const pchart=priceChart(px.series, px.last_close);
     body.innerHTML=`
       <div class="mh3">Why it's a target</div>
       <div class="verdict">${o.description?esc(o.description):`Flagged on: ${top.slice(0,5).map(esc).join(", ")||"—"}.`}</div>
       <div class="mh3">Signals</div><div class="sigchips">${chips||"—"}</div>
+      ${pchart?`<div class="mh3">Price · 1-year</div>${pchart}`:""}
       ${tsrPanel?`<div class="mh3">Returns</div>${tsrPanel}${ern}`:ern}
       <div class="mh3">Governance</div>${govRow}
       ${analystHtml}
@@ -447,7 +463,7 @@ function renderTab(){
       ${kvMini("Buyers", ins.n_buyers!=null?ins.n_buyers:"—")}${kvMini("Sellers", ins.n_sellers!=null?ins.n_sellers:"—")}
       ${kvMini("Window", ins.window_days?(ins.window_days+"d"):"—")}</div>
       ${ins.top_url?`<div class="links" style="margin-top:10px;"><a class="extlink" href="${esc(ins.top_url)}" target="_blank" rel="noopener">Largest Form 4 ↗</a></div>`:""}`
-      : `<div class="empty">No open-market insider trades on record in the recent window.</div>`;
+      : `<div class="gov-note">No open-market insider trades on record in the recent window.</div>`;
     const insiderEv=(d.evidence||[]).filter(e=>e.key==="insider_selling"||e.key==="insider_buying");
     const se=d.sentiment||{}; let sentHtml="";
     if(se.mspr!=null){
@@ -455,10 +471,24 @@ function renderTab(){
       const col=se.mspr<=-20?"var(--hot)":se.mspr>=20?"var(--ok)":"var(--muted)";
       sentHtml=`<div class="mh3">Insider sentiment</div><div class="verdict" style="font-size:13.5px;">MSPR <b style="color:${col}">${se.mspr.toFixed(0)}</b> · ${skew}${se.month?` <span class="gov-note">(${esc(se.month)})</span>`:""} <span class="gov-note">— Finnhub monthly insider buy/sell skew, −100…+100</span></div>`;
     }
+    const ct=d.contacts||{};
+    const addr=[ct.address,[ct.city,ct.state].filter(Boolean).join(", "),ct.zip].filter(Boolean).join(" · ");
+    const hasContacts=ct.ceo||ct.phone||addr||ct.website||ct.employees;
+    const contactsHtml = hasContacts
+      ? `<div class="ins-grid" style="grid-template-columns:1fr 1fr;max-width:560px;">
+          ${ct.ceo?kvMini("CEO", esc(ct.ceo)):""}
+          ${ct.phone?kvMini("Phone", esc(ct.phone)):""}
+          ${addr?kvMini("Headquarters", esc(addr)):""}
+          ${ct.employees?kvMini("Employees", ct.employees.toLocaleString()):""}
+          ${ct.ipo?kvMini("IPO", esc(ct.ipo)):""}</div>
+         <div class="links" style="margin-top:10px;">
+          ${ct.website?`<a class="extlink" href="${esc(ct.website)}" target="_blank" rel="noopener">Company site ↗</a>`:""}
+          <a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations")}" target="_blank" rel="noopener">IR / contacts ↗</a></div>`
+      : `<div class="gov-note">No contact data yet — add an FMP_API_KEY (then "Run enrichment now") to populate CEO, HQ &amp; IR.</div>`;
     body.innerHTML=`<div class="mh3">Insider activity (Form 4)</div>${insPanel}
       ${insiderEv.length?`<div class="mh3">Detail</div><div class="evlist">${insiderEv.map(evCard).join("")}</div>`:""}
       ${sentHtml}
-      <div class="mh3">Contacts</div><div class="gov-note">IR &amp; executive contacts coming soon (Phase D — FMP).</div>`;
+      <div class="mh3">Contacts</div>${contactsHtml}`;
   }
   else if(CURRENT_TAB==="filings"){
     const filings=(d.filings||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.company)} — ${esc(x.title)}</a><div class="meta"><span class="tag">${esc(x.form)}</span><span>${fmtDate(x.filed_at)}</span></div></div>`).join("")||`<div class="empty">No recent filings on record.</div>`;
