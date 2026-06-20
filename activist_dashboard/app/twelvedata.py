@@ -1,13 +1,13 @@
 """
 Twelve Data — daily price history for the profile price chart (free; non-commercial).
 
-Free tier: 800 credits/day (1 credit per symbol), 8 requests/minute. We use /time_series
-with BATCH requests (comma-separated symbols) so all tracked names come back in one or
-two HTTP calls instead of one-per-name -- fast, and it never trips the 8-requests/min
-limit. Gated by the TWELVEDATA_API_KEY env var (absent key -> charts stay empty).
+Free tier: 800 credits/day (1 credit per symbol), 8 requests/minute. We try BATCH
+requests first (comma-separated symbols, one HTTP call) and fall back to one-per-symbol
+if batch isn't available on the tier. Gated by TWELVEDATA_API_KEY (absent key -> charts
+stay empty). Any failure is captured in LAST_ERROR and printed so problems are visible.
 
-Note on licensing: the free tier is "internal, non-display" use. Fine for building and
-internal review; a client-facing/commercial deployment needs a paid market-data plan.
+Licensing: the free tier is "internal, non-display" use. Fine for building / internal
+review; a client-facing deployment needs a paid market-data plan.
 """
 import os
 import time
@@ -15,7 +15,8 @@ import time
 import requests
 
 URL = "https://api.twelvedata.com/time_series"
-BATCH = 25                 # symbols per request (well within batch limits)
+BATCH = 25
+RATE_SLEEP = 8.0           # per-symbol fallback: free tier = 8 req/min
 LAST_ERROR = None
 _session = requests.Session()
 _session.headers.update({"User-Agent": "ActivistDashboard/1.0"})
@@ -25,8 +26,31 @@ def key():
     return os.getenv("TWELVEDATA_API_KEY", "")
 
 
+def _request(symbols, k, points=260):
+    """GET /time_series for one or more symbols. Returns parsed JSON or None, capturing
+    the failure reason (HTTP status, body, or API error message) in LAST_ERROR."""
+    global LAST_ERROR
+    try:
+        r = _session.get(URL, params={"symbol": ",".join(symbols), "interval": "1day",
+                                      "outputsize": points, "apikey": k}, timeout=25)
+    except requests.RequestException as e:
+        LAST_ERROR = f"{type(e).__name__}: {str(e)[:120]}"
+        return None
+    if r.status_code != 200:
+        LAST_ERROR = f"HTTP {r.status_code}: {(r.text or '')[:180]}"
+        return None
+    try:
+        d = r.json()
+    except ValueError:
+        LAST_ERROR = "non-JSON response"
+        return None
+    if isinstance(d, dict) and d.get("status") == "error":
+        LAST_ERROR = str(d.get("message"))[:180]
+        return None
+    return d
+
+
 def _closes_from(obj):
-    """One symbol's payload -> (closes oldest-first, last_close)."""
     vals = (obj or {}).get("values") or []
     closes = []
     for row in reversed(vals):            # Twelve Data returns newest-first
@@ -37,31 +61,21 @@ def _closes_from(obj):
     return closes, (closes[-1] if closes else None)
 
 
-def _fetch_batch(symbols, k, points=260):
-    """Return {symbol: (closes, last)} for a list of symbols in ONE request."""
+def _fetch_chunk(symbols, k):
+    """Return {symbol: (closes, last)} for a batch of symbols (one request)."""
     global LAST_ERROR
-    try:
-        r = _session.get(URL, params={"symbol": ",".join(symbols), "interval": "1day",
-                                      "outputsize": points, "apikey": k}, timeout=25)
-        d = r.json() if r.status_code == 200 else {}
-    except (requests.RequestException, ValueError) as e:
-        LAST_ERROR = f"{type(e).__name__}: {str(e)[:120]}"
-        return {}
-    if isinstance(d, dict) and d.get("status") == "error":
-        LAST_ERROR = str(d.get("message"))[:160]
+    d = _request(symbols, k)
+    if d is None:
         return {}
     out = {}
     if len(symbols) == 1:
-        # single-symbol responses are returned flat (not keyed by symbol)
-        if isinstance(d, dict) and d.get("status") == "error":
-            LAST_ERROR = str(d.get("message"))[:160]
-        else:
-            out[symbols[0]] = _closes_from(d)
+        obj = d if "values" in d else (d.get(symbols[0]) or {})
+        out[symbols[0]] = _closes_from(obj)
         return out
     for sym in symbols:
         obj = (d or {}).get(sym)
         if isinstance(obj, dict) and obj.get("status") == "error":
-            LAST_ERROR = str(obj.get("message"))[:160]
+            LAST_ERROR = f"{sym}: {str(obj.get('message'))[:120]}"
             continue
         if obj:
             out[sym] = _closes_from(obj)
@@ -69,8 +83,9 @@ def _fetch_batch(symbols, k, points=260):
 
 
 def refresh_prices(pairs, db):
-    """pairs: {cik: ticker}. Stores a daily-close series per name for the chart, using
-    batch requests. `db` is the database module (passed in to avoid a circular import)."""
+    """pairs: {cik: ticker}. Stores a daily-close series per name. Tries batch first;
+    if batch yields nothing, falls back to one request per symbol. `db` is the database
+    module (passed in to avoid a circular import)."""
     global LAST_ERROR
     LAST_ERROR = None
     k = key()
@@ -82,16 +97,27 @@ def refresh_prices(pairs, db):
         if tk:
             sym_to_cik.setdefault(tk, cik)
     symbols = list(sym_to_cik)
-    done = 0
-    for i in range(0, len(symbols), BATCH):
-        chunk = symbols[i:i + BATCH]
-        results = _fetch_batch(chunk, k)
+
+    def store(results):
+        n = 0
         for sym, (closes, last) in results.items():
             if closes:
-                db.upsert_prices(sym_to_cik[sym], closes, last)
-                done += 1
-        time.sleep(1.0)                   # gentle gap between batches
-    msg = f"[prices] {done}/{len(symbols)} via Twelve Data (batched)"
+                db.upsert_prices(sym_to_cik[sym], closes, last); n += 1
+        return n
+
+    done = 0
+    for i in range(0, len(symbols), BATCH):
+        done += store(_fetch_chunk(symbols[i:i + BATCH], k))
+        time.sleep(1.0)
+
+    mode = "batched"
+    if done == 0 and symbols:             # batch unsupported? fall back to per-symbol
+        mode = "per-symbol"
+        for sym in symbols:
+            done += store(_fetch_chunk([sym], k))
+            time.sleep(RATE_SLEEP)
+
+    msg = f"[prices] {done}/{len(symbols)} via Twelve Data ({mode})"
     if done == 0 and LAST_ERROR:
         msg += f"  — said: {LAST_ERROR}"
     print(msg)
