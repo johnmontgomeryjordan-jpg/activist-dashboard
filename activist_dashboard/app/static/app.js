@@ -409,12 +409,19 @@ function renderTab(){
     L.push(`<a class="extlink" href="${secUrl(d.cik)}" target="_blank" rel="noopener">SEC EDGAR ↗</a>`);
     if(o.website) L.push(`<a class="extlink" href="${esc(o.website)}" target="_blank" rel="noopener">Company site ↗</a>`);
     L.push(`<a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations")}" target="_blank" rel="noopener">IR / contacts ↗</a>`);
+    const an=d.analysts||{};
+    const aBuy=(an.strong_buy||0)+(an.buy||0), aSell=(an.sell||0)+(an.strong_sell||0), aHold=an.hold||0;
+    const analystHtml=(aBuy+aHold+aSell)>0
+      ? `<div class="mh3">Analysts <span class="gov-note" style="text-transform:none;letter-spacing:0;">— sell-side view, context only</span></div>
+         <div class="verdict" style="font-size:13.5px;"><span style="color:var(--ok)">${aBuy} buy</span> · ${aHold} hold · <span style="color:var(--hot)">${aSell} sell</span>${an.period?` <span class="gov-note">(${esc(an.period)})</span>`:""}</div>`
+      : "";
     body.innerHTML=`
       <div class="mh3">Why it's a target</div>
       <div class="verdict">${o.description?esc(o.description):`Flagged on: ${top.slice(0,5).map(esc).join(", ")||"—"}.`}</div>
       <div class="mh3">Signals</div><div class="sigchips">${chips||"—"}</div>
       ${tsrPanel?`<div class="mh3">Returns</div>${tsrPanel}${ern}`:ern}
       <div class="mh3">Governance</div>${govRow}
+      ${analystHtml}
       <div class="mh3">Quick links</div><div class="links">${L.join("")}</div>`;
   }
   else if(CURRENT_TAB==="evidence"){
@@ -442,9 +449,16 @@ function renderTab(){
       ${ins.top_url?`<div class="links" style="margin-top:10px;"><a class="extlink" href="${esc(ins.top_url)}" target="_blank" rel="noopener">Largest Form 4 ↗</a></div>`:""}`
       : `<div class="empty">No open-market insider trades on record in the recent window.</div>`;
     const insiderEv=(d.evidence||[]).filter(e=>e.key==="insider_selling"||e.key==="insider_buying");
+    const se=d.sentiment||{}; let sentHtml="";
+    if(se.mspr!=null){
+      const skew=se.mspr<=-20?"selling-skewed":se.mspr>=20?"buying-skewed":"balanced";
+      const col=se.mspr<=-20?"var(--hot)":se.mspr>=20?"var(--ok)":"var(--muted)";
+      sentHtml=`<div class="mh3">Insider sentiment</div><div class="verdict" style="font-size:13.5px;">MSPR <b style="color:${col}">${se.mspr.toFixed(0)}</b> · ${skew}${se.month?` <span class="gov-note">(${esc(se.month)})</span>`:""} <span class="gov-note">— Finnhub monthly insider buy/sell skew, −100…+100</span></div>`;
+    }
     body.innerHTML=`<div class="mh3">Insider activity (Form 4)</div>${insPanel}
       ${insiderEv.length?`<div class="mh3">Detail</div><div class="evlist">${insiderEv.map(evCard).join("")}</div>`:""}
-      <div class="mh3">Contacts</div><div class="gov-note">IR &amp; executive contacts coming soon.</div>`;
+      ${sentHtml}
+      <div class="mh3">Contacts</div><div class="gov-note">IR &amp; executive contacts coming soon (Phase D — FMP).</div>`;
   }
   else if(CURRENT_TAB==="filings"){
     const filings=(d.filings||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.company)} — ${esc(x.title)}</a><div class="meta"><span class="tag">${esc(x.form)}</span><span>${fmtDate(x.filed_at)}</span></div></div>`).join("")||`<div class="empty">No recent filings on record.</div>`;
