@@ -86,12 +86,14 @@ def fetch_profile(symbol, k):
 
 
 def _rows_to_closes(rows):
-    """rows newest-first with 'price' or 'close' -> closes oldest-first + last."""
+    """rows newest-first with 'price'/'close'/'adjClose' -> closes oldest-first + last."""
     closes = []
     for row in reversed(rows or []):
         c = row.get("price")
         if c is None:
             c = row.get("close")
+        if c is None:
+            c = row.get("adjClose")
         try:
             closes.append(round(float(c), 4))
         except (ValueError, TypeError):
@@ -99,16 +101,29 @@ def _rows_to_closes(rows):
     return closes, (closes[-1] if closes else None)
 
 
+def _rows(d):
+    if isinstance(d, list):
+        return d
+    if isinstance(d, dict):
+        return d.get("historical") or d.get("results") or []
+    return []
+
+
 def fetch_prices(symbol, k, points=260):
-    """(closes oldest-first, last_close). Tries /stable EOD-light then /api/v3 full."""
-    d = _get(f"{STABLE}/historical-price-eod/light", {"symbol": symbol, "apikey": k})
-    if isinstance(d, list) and d:
-        return _rows_to_closes(d[:points])
-    d = _get(f"{V3}/historical-price-full/{symbol}",
-             {"serietype": "line", "timeseries": points, "apikey": k})
-    hist = (d or {}).get("historical") if isinstance(d, dict) else None
-    if hist:
-        return _rows_to_closes(hist)
+    """(closes oldest-first, last_close). Tries several FMP price endpoints with a
+    date window, since free-tier availability varies by endpoint."""
+    from datetime import datetime, timedelta
+    frm = (datetime.utcnow() - timedelta(days=480)).date().isoformat()
+    to = datetime.utcnow().date().isoformat()
+    attempts = [
+        (f"{STABLE}/historical-price-eod/light", {"symbol": symbol, "from": frm, "to": to, "apikey": k}),
+        (f"{STABLE}/historical-price-eod/full", {"symbol": symbol, "from": frm, "to": to, "apikey": k}),
+        (f"{V3}/historical-price-full/{symbol}", {"serietype": "line", "timeseries": points, "apikey": k}),
+    ]
+    for url, params in attempts:
+        rows = _rows(_get(url, params))
+        if rows:
+            return _rows_to_closes(rows[:points])
     return [], None
 
 
@@ -137,7 +152,7 @@ def refresh_fmp(pairs, db, only_missing_profile=True):
         if closes:
             db.upsert_prices(cik, closes, last); px_done += 1
     msg = f"[fmp] profiles {prof_done} · price series {px_done} (of {len(pairs)} names)"
-    if prof_done == 0 and px_done == 0 and LAST_ERROR:
+    if (prof_done == 0 or px_done == 0) and LAST_ERROR:
         msg += f"  — FMP said: {LAST_ERROR}"
     print(msg)
     return px_done
