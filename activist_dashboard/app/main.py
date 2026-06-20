@@ -166,6 +166,7 @@ def api_company(cik: str):
     prior = database.prior_score(cik)
     gov = database.get_governance(cik) or {}
     ins = database.get_insider(cik) or {}
+    vot = database.get_votes(cik) or {}
     ear = database.get_earnings(cik) or {}
     aflag = database.get_activist_flag(cik) or {}
     market = database.get_company_market(cik)
@@ -236,6 +237,11 @@ def api_company(cik: str):
         "earnings": {
             "next_date": ear.get("next_date"),
             "last_date": ear.get("last_date"),
+        },
+        "votes": {
+            "say_on_pay": vot.get("say_on_pay"),
+            "meeting_date": vot.get("meeting_date"),
+            "url": vot.get("url"),
         },
         "activist": {
             "kind": aflag.get("kind"),
