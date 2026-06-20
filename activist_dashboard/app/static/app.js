@@ -342,6 +342,15 @@ async function manualRefresh(){
   try{ await fetch("/api/refresh",{method:"POST"}); }catch(e){}
   await refreshAll(); b.disabled=false; b.textContent="↻ Refresh now";
 }
+async function runEnrichment(){
+  const b=document.getElementById("enrichBtn"); b.disabled=true; b.textContent="Starting…";
+  try{
+    const r=await fetch("/api/run-enrichment",{method:"POST"}); const d=await r.json();
+    b.textContent = d.ok ? "Running in background ✓" : "Error";
+  }catch(e){ b.textContent="Network error"; }
+  // Re-enable after a couple minutes and pull fresh data into the view.
+  setTimeout(async ()=>{ await refreshAll(); b.disabled=false; b.textContent="⟳ Run enrichment now"; }, 120000);
+}
 async function subscribe(){
   const email=document.getElementById("emailInput").value, msg=document.getElementById("subMsg");
   try{ const r=await fetch("/api/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})});
