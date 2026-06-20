@@ -188,6 +188,7 @@ def api_company(cik: str):
     ins = database.get_insider(cik) or {}
     vot = database.get_votes(cik) or {}
     ear = database.get_earnings(cik) or {}
+    fx = database.get_finnhub_extra(cik) or {}
     aflag = database.get_activist_flag(cik) or {}
     market = database.get_company_market(cik)
 
@@ -259,6 +260,18 @@ def api_company(cik: str):
         "earnings": {
             "next_date": ear.get("next_date"),
             "last_date": ear.get("last_date"),
+        },
+        "sentiment": {
+            "mspr": fx.get("mspr"),
+            "month": fx.get("mspr_month"),
+        },
+        "analysts": {
+            "strong_buy": fx.get("rec_strongbuy"),
+            "buy": fx.get("rec_buy"),
+            "hold": fx.get("rec_hold"),
+            "sell": fx.get("rec_sell"),
+            "strong_sell": fx.get("rec_strongsell"),
+            "period": fx.get("rec_period"),
         },
         "votes": {
             "say_on_pay": vot.get("say_on_pay"),
@@ -350,7 +363,8 @@ def api_run_enrichment():
         for name, fn in (("insider", pipeline.refresh_insider),
                          ("votes", pipeline.refresh_votes),
                          ("activist", lambda: pipeline.refresh_activist(full=False)),
-                         ("earnings", pipeline.refresh_earnings)):
+                         ("earnings", pipeline.refresh_earnings),
+                         ("sentiment", pipeline.refresh_sentiment)):
             try:
                 fn()
             except Exception:
