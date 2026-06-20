@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 import requests
 
 from . import (config, database, universe, edgar, news, scoring, emailer,
-               governance, insider, activist, earnings, votes, fmp)
+               governance, insider, activist, earnings, votes, fmp, twelvedata)
 
 _UNIVERSE = None
 
@@ -661,9 +661,15 @@ def refresh_sentiment():
 
 
 def refresh_contacts():
-    """Company contacts + descriptions + price history for tracked names via FMP
-    (free; gated by FMP_API_KEY). Display-only — does not affect the rating."""
+    """Company contacts + descriptions for tracked names via FMP (free; gated by
+    FMP_API_KEY). Display-only — does not affect the rating."""
     return fmp.refresh_fmp(_tracked_pairs(), database)
+
+
+def refresh_prices():
+    """Daily price history (for the profile chart) for tracked names via Twelve Data
+    (free; gated by TWELVEDATA_API_KEY). Display-only."""
+    return twelvedata.refresh_prices(_tracked_pairs(), database)
 
 
 def daily_rescore_and_digest():
@@ -676,12 +682,13 @@ def daily_rescore_and_digest():
     refresh_earnings()
     refresh_sentiment()
     refresh_contacts()
+    refresh_prices()
     refresh_enrichment()
     return emailer.send_digest()
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=finnhub-valuation-insider-votes-earnings-sentiment-fmp  starting refresh")
+    print("[boot] VERSION=finnhub-insider-votes-earnings-sentiment-fmp-twelvedata  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
@@ -691,6 +698,7 @@ def startup_full_refresh():
     refresh_earnings()
     refresh_sentiment()
     refresh_contacts()
+    refresh_prices()
     refresh_enrichment()
 
 
