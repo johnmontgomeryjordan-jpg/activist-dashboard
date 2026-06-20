@@ -64,10 +64,14 @@ def api_feed():
 
 @app.get("/api/shortlist")
 def api_shortlist():
-    rows = database.get_scores(limit=config.SHORTLIST_SIZE)
+    # Return a deeper list (not just the top 15) so the dashboard table is explorable
+    # and the rotating "spotlight" has a pool to draw from.
+    rows = database.get_scores(limit=40)
+    notes = database.get_notes_set()
     for c in rows:
         prior = database.prior_score(c["cik"])
         c["week_change"] = (c["score"] - prior) if prior is not None else None
+        c["has_note"] = c["cik"] in notes
     return {"companies": rows}
 
 
@@ -75,9 +79,11 @@ def api_shortlist():
 def api_active_situations():
     """Flagged companies where an activist is already engaged (too late to pitch)."""
     rows = database.get_active_situations(limit=40)
+    notes = database.get_notes_set()
     for c in rows:
         prior = database.prior_score(c["cik"])
         c["week_change"] = (c["score"] - prior) if prior is not None else None
+        c["has_note"] = c["cik"] in notes
     return {"companies": rows}
 
 
@@ -101,10 +107,12 @@ def api_watchlist():
         else:
             status = "inactive" if fraw.get("inactive") else "dropped"
             score = signals = week_change = mcap = vuln = None
+        note = database.get_note(cik)
         out.append({"cik": cik, "ticker": w.get("ticker"), "company": w.get("company"),
-                    "note": w.get("note") or "", "status": status, "score": score,
-                    "vuln": vuln, "signals": signals, "week_change": week_change,
-                    "market_cap": mcap, "added_at": w.get("added_at")})
+                    "note": note, "has_note": bool(note.strip()), "status": status,
+                    "score": score, "vuln": vuln, "signals": signals,
+                    "week_change": week_change, "market_cap": mcap,
+                    "added_at": w.get("added_at")})
     return {"items": out}
 
 
@@ -127,11 +135,23 @@ async def api_watchlist_remove(request: Request):
     return {"ok": True}
 
 
+@app.post("/api/note")
+async def api_note(request: Request):
+    """Save a company-level pitch note (shared; the single source of truth, shown on
+    the company profile regardless of whether it's on the shortlist or watchlist)."""
+    data = await request.json()
+    cik = (data.get("cik") or "").strip()
+    if not cik:
+        return JSONResponse({"ok": False, "error": "missing cik"}, status_code=400)
+    database.set_note(cik, data.get("note") or "")
+    return {"ok": True}
+
+
 @app.post("/api/watchlist/note")
 async def api_watchlist_note(request: Request):
     data = await request.json()
     cik = (data.get("cik") or "").strip()
-    database.set_watchlist_note(cik, data.get("note") or "")
+    database.set_note(cik, data.get("note") or "")
     return {"ok": True}
 
 
@@ -215,6 +235,8 @@ def api_company(cik: str):
         "evidence": evidence,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
+        "note": database.get_note(cik),
+        "history": [r["score"] for r in database.get_score_history(cik)],
         "week_change": (score.get("score") - prior) if prior is not None else None,
         "tsr": {"tsr_1y": tsr_1y, "spy_1y": spy_1y, "gap": tsr_gap},
         "governance": {
