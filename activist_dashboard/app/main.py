@@ -189,6 +189,8 @@ def api_company(cik: str):
     vot = database.get_votes(cik) or {}
     ear = database.get_earnings(cik) or {}
     fx = database.get_finnhub_extra(cik) or {}
+    prof = database.get_company_profile(cik) or {}
+    px = database.get_prices(cik) or {}
     aflag = database.get_activist_flag(cik) or {}
     market = database.get_company_market(cik)
 
@@ -286,12 +288,25 @@ def api_company(cik: str):
             "url": aflag.get("url"),
         },
         "overview": {
-            "description": av.get("Description"),
-            "sector": av.get("Sector"),
-            "industry": av.get("Industry"),
+            "description": prof.get("description") or av.get("Description"),
+            "sector": prof.get("sector") or av.get("Sector"),
+            "industry": prof.get("industry") or av.get("Industry"),
             "exchange": av.get("Exchange"),
-            "website": av.get("OfficialSite") or av.get("Website"),
+            "website": prof.get("website") or av.get("OfficialSite") or av.get("Website"),
         },
+        "contacts": {
+            "ceo": prof.get("ceo"),
+            "phone": prof.get("phone"),
+            "address": prof.get("address"),
+            "city": prof.get("city"),
+            "state": prof.get("state"),
+            "zip": prof.get("zip"),
+            "country": prof.get("country"),
+            "employees": prof.get("employees"),
+            "ipo": prof.get("ipo"),
+            "website": prof.get("website"),
+        },
+        "prices": {"series": px.get("series") or [], "last_close": px.get("last_close")},
         "financials": {
             "revenue": fund.get("revenue"),
             "revenue_growth": fund.get("revenue_growth"),
@@ -364,7 +379,8 @@ def api_run_enrichment():
                          ("votes", pipeline.refresh_votes),
                          ("activist", lambda: pipeline.refresh_activist(full=False)),
                          ("earnings", pipeline.refresh_earnings),
-                         ("sentiment", pipeline.refresh_sentiment)):
+                         ("sentiment", pipeline.refresh_sentiment),
+                         ("contacts", pipeline.refresh_contacts)):
             try:
                 fn()
             except Exception:
