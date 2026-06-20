@@ -44,6 +44,8 @@ _SUB_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 _AV_URL = "https://www.alphavantage.co/query"
 _FINNHUB_METRIC_URL = "https://finnhub.io/api/v1/stock/metric"
 _FINNHUB_PROFILE_URL = "https://finnhub.io/api/v1/stock/profile2"
+_FINNHUB_INSIDER_SENT_URL = "https://finnhub.io/api/v1/stock/insider-sentiment"
+_FINNHUB_RECO_URL = "https://finnhub.io/api/v1/stock/recommendation"
 _sec = requests.Session(); _sec.headers.update(_HEADERS)
 _web = requests.Session(); _web.headers.update({"User-Agent": "Mozilla/5.0 (compatible; ActivistDashboard/1.0)"})
 
@@ -599,6 +601,64 @@ def refresh_votes():
     return n
 
 
+def _finnhub_sentiment(symbol, key):
+    """Most recent monthly insider-sentiment (MSPR, -100..100) from Finnhub (free)."""
+    frm = (datetime.utcnow() - timedelta(days=180)).date().isoformat()
+    to = datetime.utcnow().date().isoformat()
+    try:
+        r = requests.get(_FINNHUB_INSIDER_SENT_URL,
+                         params={"symbol": symbol, "from": frm, "to": to, "token": key}, timeout=20)
+        d = r.json() if r.status_code == 200 else {}
+    except (requests.RequestException, ValueError):
+        return None
+    rows = (d or {}).get("data") or []
+    if not rows:
+        return None
+    rows.sort(key=lambda x: (x.get("year", 0), x.get("month", 0)))
+    last = rows[-1]
+    return {"mspr": _ff(last.get("mspr")),
+            "month": f"{last.get('year')}-{str(last.get('month')).zfill(2)}"}
+
+
+def _finnhub_recommendation(symbol, key):
+    """Latest analyst recommendation counts from Finnhub (free, display-only)."""
+    try:
+        r = requests.get(_FINNHUB_RECO_URL, params={"symbol": symbol, "token": key}, timeout=20)
+        d = r.json() if r.status_code == 200 else []
+    except (requests.RequestException, ValueError):
+        return None
+    if not d:
+        return None
+    a = d[0]
+    return {"strongBuy": a.get("strongBuy"), "buy": a.get("buy"), "hold": a.get("hold"),
+            "sell": a.get("sell"), "strongSell": a.get("strongSell"), "period": a.get("period")}
+
+
+def refresh_sentiment():
+    """Insider sentiment (MSPR) + analyst recommendation trends for tracked names via
+    Finnhub (free; existing key). Display-only context for the profile -- does NOT feed
+    the rating (insider behavior is already scored from Form 4; analyst posture isn't an
+    activist signal)."""
+    key = os.getenv("FINNHUB_API_KEY", "")
+    if not key:
+        print("[sentiment] no FINNHUB_API_KEY set; skipping")
+        return 0
+    pairs = _tracked_pairs()
+    done = 0
+    for cik, tk in pairs.items():
+        s = _finnhub_sentiment(tk, key); time.sleep(0.2)
+        rec = _finnhub_recommendation(tk, key); time.sleep(0.2)
+        if s or rec:
+            database.upsert_finnhub_extra(cik, {
+                "mspr": (s or {}).get("mspr"), "mspr_month": (s or {}).get("month"),
+                "rec_strongbuy": (rec or {}).get("strongBuy"), "rec_buy": (rec or {}).get("buy"),
+                "rec_hold": (rec or {}).get("hold"), "rec_sell": (rec or {}).get("sell"),
+                "rec_strongsell": (rec or {}).get("strongSell"), "rec_period": (rec or {}).get("period")})
+            done += 1
+    print(f"[sentiment] updated {done}/{len(pairs)} names")
+    return done
+
+
 def daily_rescore_and_digest():
     refresh_data()
     refresh_fundamentals()
@@ -607,12 +667,13 @@ def daily_rescore_and_digest():
     refresh_votes()
     refresh_activist(full=True)
     refresh_earnings()
+    refresh_sentiment()
     refresh_enrichment()
     return emailer.send_digest()
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=finnhub-valuation-insider-activist-votes-earnings  starting refresh")
+    print("[boot] VERSION=finnhub-valuation-insider-activist-votes-earnings-sentiment  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
@@ -620,6 +681,7 @@ def startup_full_refresh():
     refresh_votes()
     refresh_activist(full=False)
     refresh_earnings()
+    refresh_sentiment()
     refresh_enrichment()
 
 
