@@ -380,7 +380,8 @@ def api_run_enrichment():
                          ("activist", lambda: pipeline.refresh_activist(full=False)),
                          ("earnings", pipeline.refresh_earnings),
                          ("sentiment", pipeline.refresh_sentiment),
-                         ("contacts", pipeline.refresh_contacts)):
+                         ("contacts", pipeline.refresh_contacts),
+                         ("prices", pipeline.refresh_prices)):
             try:
                 fn()
             except Exception:
