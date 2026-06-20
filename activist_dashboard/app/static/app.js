@@ -409,6 +409,7 @@ const PILLAR_OF={
   cash_hoard:"capital", underlevered:"capital",
   gov_classified:"gov", gov_poison:"gov", gov_dual:"gov",
   insider_selling:"insider", insider_buying:"insider",
+  weak_vote_support:"vote",
   ceo_departure:"event", earnings_miss:"event", impairment:"event",
   layoffs:"event", leadership_change:"event", results_update:"event", news_negative:"event"
 };
@@ -418,10 +419,11 @@ const PILLAR_META={
   ops:{t:"Operating performance", d:"Margins, returns or growth below peers"},
   capital:{t:"Capital allocation", d:"Balance sheet an activist could push to optimize"},
   gov:{t:"Governance red flags", d:"Entrenchment provisions in the proxy"},
+  vote:{t:"Shareholder support", d:"How shareholders voted at the last annual meeting"},
   insider:{t:"Insider activity", d:"What management is doing with their own money (Form 4)"},
   event:{t:"Recent catalysts", d:"Events that tend to draw activist attention"}
 };
-const PILLAR_ORDER=["value","perf","ops","capital","gov","insider","event"];
+const PILLAR_ORDER=["value","perf","ops","capital","gov","vote","insider","event"];
 function exportCsv(){ window.open("/api/shortlist.csv","_blank"); }
 
 function withinDays(dateStr, n){
