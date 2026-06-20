@@ -30,6 +30,7 @@ _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
 _SUB_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 _AV_URL = "https://www.alphavantage.co/query"
 _FINNHUB_METRIC_URL = "https://finnhub.io/api/v1/stock/metric"
+_FINNHUB_PROFILE_URL = "https://finnhub.io/api/v1/stock/profile2"
 _sec = requests.Session(); _sec.headers.update(_HEADERS)
 _web = requests.Session(); _web.headers.update({"User-Agent": "Mozilla/5.0 (compatible; ActivistDashboard/1.0)"})
 
@@ -323,20 +324,60 @@ def _refresh_company_news():
     return news.refresh_company_news(sorted(tickers), key)
 
 
-def _finnhub_metric_1y(symbol, key):
-    """52-week price return (as a fraction) from Finnhub's free metric endpoint."""
+def _ff(v):
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _finnhub_metrics(symbol, key):
+    """Valuation + return metrics from Finnhub's free /stock/metric endpoint:
+    1-yr price return, price-to-book, P/E, dividend yield, 52-wk high/low."""
     try:
         r = requests.get(_FINNHUB_METRIC_URL,
                          params={"symbol": symbol, "metric": "all", "token": key}, timeout=20)
         d = r.json() if r.status_code == 200 else {}
     except (requests.RequestException, ValueError):
-        return None
+        return {}
     m = (d or {}).get("metric") or {}
-    v = m.get("52WeekPriceReturnDaily")
+    series = ((d or {}).get("series") or {}).get("quarterly") or {}
+
+    def latest(name):
+        best = None
+        for e in series.get(name, []) or []:
+            v = _ff(e.get("v"))
+            p = e.get("period")
+            if v is not None and (best is None or (p and p > best[0])):
+                best = (p, v)
+        return best[1] if best else None
+
+    tsr = m.get("52WeekPriceReturnDaily")
+    return {
+        "tsr_1y": (_ff(tsr) / 100.0 if tsr is not None else None),
+        "pb": latest("pb") or _ff(m.get("pbAnnual")) or _ff(m.get("pbQuarterly")),
+        "pe": _ff(m.get("peTTM")) or _ff(m.get("peExclExtraTTM")),
+        "dividend_yield": (_ff(m.get("dividendYieldIndicatedAnnual")) or 0) / 100.0
+                          if m.get("dividendYieldIndicatedAnnual") is not None else None,
+        "wk_hi": _ff(m.get("52WeekHigh")),
+        "wk_lo": _ff(m.get("52WeekLow")),
+    }
+
+
+def _finnhub_metric_1y(symbol, key):
+    """1-yr price return only (thin wrapper kept for refresh_tsr)."""
+    return _finnhub_metrics(symbol, key).get("tsr_1y")
+
+
+def _finnhub_profile(symbol, key):
+    """Company profile from Finnhub's free /stock/profile2: market cap (reported in
+    millions), shares outstanding, website, industry, exchange."""
     try:
-        return float(v) / 100.0 if v is not None else None
-    except (ValueError, TypeError):
-        return None
+        r = requests.get(_FINNHUB_PROFILE_URL,
+                         params={"symbol": symbol, "token": key}, timeout=20)
+        return (r.json() or {}) if r.status_code == 200 else {}
+    except (requests.RequestException, ValueError):
+        return {}
 
 
 def refresh_tsr():
@@ -390,10 +431,16 @@ def refresh_data(max_companies=None):
         flagged = scoring.recompute_all()
     except Exception:
         traceback.print_exc(); flagged = []
+    # Refresh market cap + P/B every cycle now that it's on Finnhub (not Alpha Vantage's
+    # daily cap). Skip the one-time description fetch here to keep the 30-min cycle fast.
+    try:
+        n_enrich = refresh_enrichment(fetch_desc=False)
+    except Exception:
+        traceback.print_exc(); n_enrich = 0
     print(f"[refresh] news={n_news} company_news={n_cnews} tsr={n_tsr} "
-          f"filings={n_filings} flagged={len(flagged)}")
+          f"filings={n_filings} flagged={len(flagged)} enriched={n_enrich}")
     return {"news": n_news, "company_news": n_cnews, "tsr": n_tsr,
-            "filings": n_filings, "flagged": len(flagged)}
+            "filings": n_filings, "flagged": len(flagged), "enriched": n_enrich}
 
 
 def refresh_fundamentals(max_companies=None):
@@ -552,7 +599,7 @@ def daily_rescore_and_digest():
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=quarterly-evidence-finnhub-tsr-governance-insider-activist-votes  starting refresh")
+    print("[boot] VERSION=finnhub-valuation-insider-activist-votes-earnings  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
@@ -563,7 +610,7 @@ def startup_full_refresh():
     refresh_enrichment()
 
 
-# ---- Alpha Vantage enrichment (shortlist only; free tier ~25 calls/day) ------
+# ---- Market enrichment: Finnhub (60/min) for cap + P/B; AV cached for description --
 def _av_key():
     return os.getenv("ALPHAVANTAGE_API_KEY", "")
 
@@ -584,35 +631,69 @@ def _unpad(cik):
         return cik
 
 
-def refresh_enrichment():
-    """Fetch market cap + P/B + full company overview for the current shortlist
-    via Alpha Vantage, store them, and rescore. Paces calls under the free
-    ~5/min limit with one backoff; missing/rate-limited names are skipped."""
-    key = _av_key()
+# Cap on Alpha Vantage description fetches per enrichment run (free tier ~25/day).
+# Descriptions are static, so we fetch each once and cache it forever -- a handful
+# per run quickly covers the whole tracked list without ever hitting the cap.
+_AV_DESC_PER_RUN = 6
+
+
+def refresh_enrichment(fetch_desc=True):
+    """Market cap + P/B + valuation for tracked names via Finnhub (free, 60/min),
+    so valuation can refresh every cycle instead of once daily. The long company
+    description is cached once from Alpha Vantage (static, so its daily cap never
+    bites). P/B is computed as market cap / SEC book equity (most reliable), falling
+    back to Finnhub's reported P/B. Rescores afterward."""
+    key = os.getenv("FINNHUB_API_KEY", "")
     if not key:
-        print("[enrich] no ALPHAVANTAGE_API_KEY set; skipping")
+        print("[enrich] no FINNHUB_API_KEY set; skipping")
         return 0
-    shortlist = database.get_scores(limit=config.SHORTLIST_SIZE)
+    av_key = _av_key()
+    pairs = _tracked_pairs()
     done = 0
-    for s in shortlist:
-        tk = s.get("ticker"); cik = s.get("cik")
-        if not tk or not cik:
-            continue
-        d = _av_overview(tk, key)
-        if d is None:                      # rate-limited -> wait a minute, retry once
-            time.sleep(60)
-            d = _av_overview(tk, key)
-        if d and "Symbol" in d:
-            mcap = _av_float(d.get("MarketCapitalization"))
-            pb = _av_float(d.get("PriceToBookRatio"))
+    av_budget = _AV_DESC_PER_RUN
+    for cik, tk in pairs.items():
+        prof = _finnhub_profile(tk, key); time.sleep(0.2)
+        met = _finnhub_metrics(tk, key); time.sleep(0.2)
+        mcap = _ff(prof.get("marketCapitalization"))
+        mcap = mcap * 1e6 if mcap else None        # Finnhub reports market cap in millions
+        try:
+            raw = json.loads((database.get_fundamentals_one(cik) or {}).get("raw") or "{}")
+        except (ValueError, TypeError):
+            raw = {}
+        book = raw.get("book_equity")
+        pb = (mcap / book) if (mcap and book and book > 0) else met.get("pb")
+        if mcap is not None and met.get("tsr_1y") is not None:
+            database.set_company_market(_unpad(cik), market_cap=mcap, pb_ratio=pb,
+                                        tsr_1y=met.get("tsr_1y"))
+        elif mcap is not None or pb is not None:
             database.set_company_market(_unpad(cik), market_cap=mcap, pb_ratio=pb)
-            database.upsert_av_overview(cik, tk, d)
-            done += 1
-        time.sleep(20)                     # ~3/min, under the free 5/min limit
-    print(f"[enrich] Alpha Vantage enriched {done}/{len(shortlist)} shortlisted")
+
+        prev = database.get_av_overview(cik) or {}
+        desc = prev.get("Description")
+        if not desc and fetch_desc and av_key and av_budget > 0:
+            d = _av_overview(tk, av_key)
+            if d and "Symbol" in d:
+                desc = d.get("Description")
+            av_budget -= 1
+            time.sleep(13)                         # respect AV free pace (only until cached)
+        overview = {
+            "Description": desc or prev.get("Description"),
+            "Sector": raw.get("sector_desc") or prev.get("Sector"),
+            "Industry": prof.get("finnhubIndustry") or prev.get("Industry"),
+            "Exchange": prof.get("exchange") or prev.get("Exchange"),
+            "OfficialSite": prof.get("weburl") or prev.get("OfficialSite"),
+            "MarketCapitalization": mcap,
+            "PriceToBookRatio": pb,
+            "PERatio": met.get("pe"),
+            "DividendYield": met.get("dividend_yield"),
+            "52WeekHigh": met.get("wk_hi"),
+            "52WeekLow": met.get("wk_lo"),
+        }
+        database.upsert_av_overview(cik, tk, overview)
+        done += 1
+    print(f"[enrich] Finnhub market data for {done}/{len(pairs)} names")
     try:
-        flagged = scoring.recompute_all()
-        print(f"[enrich] rescore complete; flagged={len(flagged)}")
+        scoring.recompute_all()
     except Exception:
         traceback.print_exc()
     return done
