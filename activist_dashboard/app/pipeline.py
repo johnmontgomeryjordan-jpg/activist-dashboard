@@ -1,16 +1,29 @@
 """
-Orchestration + SEC XBRL fundamentals + Alpha Vantage enrichment.
+Orchestration. Market valuation now comes from Finnhub (free, 60/min), so it refreshes
+EVERY cycle rather than once a day -- Alpha Vantage is kept only for the (static, cached)
+company description.
 
-Jobs:
-  refresh_data()             -- EDGAR filings + news + rescore (fast, every 30m).
-  refresh_fundamentals()     -- SEC XBRL fundamentals + sector + shares + equity.
-  refresh_enrichment()       -- Alpha Vantage: market cap + P/B + overview (shortlist).
-  daily_rescore_and_digest() -- 4pm ET: data + fundamentals + enrich, rescore, email.
-  startup_full_refresh()     -- once after boot: data, fundamentals, enrich, score.
+Fast jobs -- every 30 minutes (refresh_data):
+  news + per-company news + 1-yr TSR (Finnhub) + EDGAR filings + rescore, then
+  refresh_enrichment(fetch_desc=False): Finnhub market cap + P/B + P/E + 52-wk for the
+  shortlist/watchlist/active names. So valuation is continuously updated, not daily.
 
-Fundamentals now also capture the RAW XBRL line items (operating income, revenue,
-net income, assets, equity, cash, debt) plus the source 10-K (fiscal year + period
-end + accession), so the detail view can show the exact math + a link to the filing.
+Heavier jobs -- on boot and in the 4pm ET daily run:
+  refresh_fundamentals()  -- SEC XBRL fundamentals + sector + shares + equity (universe).
+  refresh_governance()    -- DEF 14A entrenchment flags (tracked names).
+  refresh_insider()       -- Form 4 open-market buys/sells (tracked names).
+  refresh_votes()         -- say-on-pay support from 8-K Item 5.07 (tracked names).
+  refresh_activist()      -- 13D / contested-proxy sweep -> Active Situations
+                             (full universe daily; tracked-only on boot).
+  refresh_earnings()      -- next/last earnings dates (Finnhub).
+  refresh_enrichment()    -- also fills any missing descriptions from Alpha Vantage (cached).
+  daily_rescore_and_digest() -- runs all of the above, then emails the 4pm ET digest.
+  startup_full_refresh()  -- runs all of the above once after boot.
+
+P/B is computed as market cap / SEC book equity (most reliable), falling back to
+Finnhub's reported P/B. Fundamentals also capture the RAW XBRL line items (operating
+income, revenue, net income, assets, equity, cash, debt) plus the source 10-K (fiscal
+year + period end + accession), so the detail view can show the exact math + a filing link.
 """
 import os
 import time
