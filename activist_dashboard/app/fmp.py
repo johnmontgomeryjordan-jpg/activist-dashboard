@@ -151,8 +151,12 @@ def refresh_fmp(pairs, db, only_missing_profile=True):
         p = fetch_profile(tk, k); time.sleep(0.25)
         if p:
             db.upsert_company_profile(cik, p); prof_done += 1
-    msg = f"[fmp] profiles fetched {prof_done} · cached {cached} (of {len(pairs)} names)"
+    # "fetched 0 · cached N" is HEALTHY: profiles are static contact info, cached for
+    # ~30 days, so 0 fetched just means none were stale this cycle (not a failure).
+    note = "" if prof_done else "  (all profiles current — they refresh monthly)"
+    msg = f"[fmp] profiles fetched {prof_done} · cached {cached} (of {len(pairs)} names){note}"
     if prof_done == 0 and cached == 0 and LAST_ERROR:
-        msg += f"  — FMP said: {LAST_ERROR}"
+        msg = (f"[fmp] profiles fetched 0 · cached 0 (of {len(pairs)} names)  "
+               f"— FMP error: {LAST_ERROR}")
     print(msg)
     return prof_done
