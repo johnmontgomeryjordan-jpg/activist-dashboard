@@ -64,9 +64,9 @@ def api_feed():
 
 @app.get("/api/shortlist")
 def api_shortlist():
-    # Return a deeper list (not just the top 15) so the dashboard table is explorable
-    # and the rotating "spotlight" has a pool to draw from.
-    rows = database.get_scores(limit=40)
+    # Return a deep, ranked list so the dashboard table is explorable (searchable/sortable)
+    # and the rotating "spotlight" + "new & rising" have a real pool to draw from.
+    rows = database.get_scores(limit=75)
     notes = database.get_notes_set()
     for c in rows:
         prior = database.prior_score(c["cik"])
