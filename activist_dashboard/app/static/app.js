@@ -282,19 +282,114 @@ function openFilingCat(key){ const items=FILING_GROUPS[key]||[]; const label=(FI
   openListModal(`${label} — ${items.length} filing${items.length===1?"":"s"}`, items.map(modalFilingRow).join("")); }
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeOverlay(); });
 
-/* ===== Active situations ===== */
+/* ===== Active situations (tiered: confirmed / reported / manual) ===== */
+const TIER_ORDER=["confirmed","reported","manual"];
+function tierMeta(t){
+  if(t==="confirmed") return {label:"Confirmed", col:"var(--hot)", desc:"An activist filing is on record with the SEC (13D or contested proxy) — authoritative."};
+  if(t==="reported")  return {label:"Reported",  col:"var(--warn)", desc:"Named in the press alongside a known activist — confirm before you rely on it."};
+  return {label:"Manual", col:"var(--accent)", desc:"Tagged by your team."};
+}
+function daysSince(d){ if(!d) return null; const t=Date.parse(d); if(isNaN(t)) return null; return Math.floor((Date.now()-t)/86400000); }
+function freshBadge(m){ const ds=daysSince(m&&m.date);
+  if(ds!=null && ds<=45 && (m.kind==="13d"||m.source==="SEC EDGAR")) return `<span class="as-fresh">⚡ fresh · ${ds}d — urgent defense lead</span>`;
+  return ""; }
+function asRow(c){
+  const m=c.meta||{};
+  const who=m.who?`<b>${esc(m.who)}</b> · `:"";
+  const headline=c.top_item_url
+    ? `<a href="${esc(c.top_item_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(c.top_item_title||m.label||"details")}</a>`
+    : esc(c.top_item_title||m.label||"—");
+  const dt=m.date?`<span class="as-date">${esc(m.date)}</span>`:"";
+  const pin=(c.manual&&c.tier!=="manual")?`<span class="as-pin" title="manually pinned">📌</span>`:"";
+  return `<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
+    <div><span class="co-link">${esc(c.company)}</span>${pin}<div class="co-meta">${esc(c.ticker||"")}</div></div>
+    <div class="as-head">${who}${headline}${dt}${freshBadge(m)}</div>
+    <div>${vulnChip(c.vuln)}</div>
+    <div><button class="ghost as-mng" onclick="event.stopPropagation();openSituationModal('${esc(c.cik)}')">Manage</button></div>
+  </div>`;
+}
 async function loadActiveSituations(){
   try{ const d=await (await fetch("/api/active-situations")).json();
     ACTIVE=d.companies||[]; ACTIVE.forEach(regInfo);
     const nav=document.getElementById("navActive"); if(nav) nav.textContent=ACTIVE.length?`(${ACTIVE.length})`:"";
     renderSummary();
     const el=document.getElementById("activeSit"); if(!el) return;
-    el.innerHTML = ACTIVE.length ? ACTIVE.map(c=>`<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
-        <div><span class="co-link">${esc(c.company)}</span><div class="co-meta">${esc(c.ticker)}</div></div>
-        <div class="as-head">${c.top_item_url?`<a href="${esc(c.top_item_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(c.top_item_title)||"activist filing"}</a>`:(esc(c.top_item_title)||"—")}</div>
-        <div>${vulnChip(c.vuln)}</div></div>`).join("")
-      : `<div class="empty">No active situations detected. The 13D / contested-proxy sweep runs in the daily job.</div>`;
+    const groups={confirmed:[],reported:[],manual:[]};
+    ACTIVE.forEach(c=>{ (groups[c.tier]||groups.manual).push(c); });
+    Object.values(groups).forEach(g=>g.sort((a,b)=>
+      (((b.meta&&b.meta.date)||"").localeCompare((a.meta&&a.meta.date)||"")) || ((b.vuln||0)-(a.vuln||0))));
+    let html="";
+    TIER_ORDER.forEach(t=>{ const g=groups[t]; if(!g.length) return; const tm=tierMeta(t);
+      html+=`<div class="as-section">
+        <div class="as-section-h">
+          <span class="as-tier-badge" style="background:color-mix(in srgb, ${tm.col} 14%, transparent);color:${tm.col};border-color:color-mix(in srgb, ${tm.col} 45%, transparent)">${tm.label}</span>
+          <span class="as-section-d">${tm.desc}</span><span class="as-section-n">${g.length}</span></div>
+        <div class="panel"><div class="as-list">${g.map(asRow).join("")}</div></div></div>`; });
+    el.innerHTML = html || `<div class="empty">No active situations right now. The SEC 13D / contested-proxy sweep runs daily; named-activist news is matched continuously; or add one manually above.</div>`;
   }catch(e){}
+}
+
+/* ----- Manual override modal + audit ----- */
+function openModalRaw(title, html){
+  document.getElementById("mTitle").textContent=title;
+  document.getElementById("mSub").textContent=""; document.getElementById("mScore").textContent="";
+  document.getElementById("mBody").innerHTML=html;
+  document.getElementById("overlay").classList.add("open");
+}
+async function openSituationModal(cik){
+  const info=COMPANY_INFO[cik]||{};
+  let cur="", audit=[], company=info.company||cik, tier="";
+  try{ const d=await (await fetch("/api/company?cik="+encodeURIComponent(cik))).json();
+    if(d.ok){ cur=d.manual_situation||""; audit=d.situation_audit||[]; company=d.company||company; tier=d.situation_tier||""; }
+  }catch(e){}
+  const opt=(val,checked,disabled,t,desc)=>`<label class="sit-opt${disabled?" disabled":""}">
+    <input type="radio" name="sitact" value="${val}" ${checked?"checked":""} ${disabled?"disabled":""}>
+    <span><span class="ot">${t}</span><span class="od">${desc}</span></span></label>`;
+  const def=cur||"active";
+  const autoNote = tier&&!cur ? `<div class="hint" style="margin:0 0 10px">Currently auto-detected as <b>${esc(tierMeta(tier).label)}</b>. You can override that below.</div>` : "";
+  const auditHtml = audit.length ? `<div class="sit-audit"><h4>Audit trail</h4>`+audit.map(a=>
+    `<div class="sit-audit-row"><span>${esc((a.ts||"").replace("T"," ").slice(0,16))}</span><span class="aa">${esc(a.action)}</span>${a.actor?`<span>by ${esc(a.actor)}</span>`:""}${a.note?`<span>— ${esc(a.note)}</span>`:""}</div>`).join("")+`</div>` : "";
+  openModalRaw(`Active situation — ${company}`, `
+    ${autoNote}
+    <div class="sit-opts">
+      ${opt("active", def==="active", false, "Mark as an active situation", "Forces it into Active Situations as a Manual tag (wins over automated detection).")}
+      ${opt("exclude", def==="exclude", false, "Not an active situation — hide it", "Suppresses a false positive. Removes it from Active Situations.")}
+      ${opt("clear", false, !cur, "Use automatic detection", cur?"Clears your manual override and reverts to what the system detects.":"No manual override set — nothing to clear.")}
+    </div>
+    <div class="sit-field"><label>Your initials (for the audit trail)</label><input id="sitActor" placeholder="e.g. JJ"></div>
+    <div class="sit-field"><label>Note (optional)</label><textarea id="sitNote" placeholder="Why? e.g. 'Elliott 13D filed 9/9' or 'headline was about a different company'"></textarea></div>
+    <div class="sit-actions"><button class="ghost" onclick="closeOverlay()">Cancel</button><button id="sitSave" onclick="submitSituation('${esc(cik)}')">Save</button></div>
+    ${auditHtml}`);
+}
+async function submitSituation(cik){
+  const sel=document.querySelector('input[name="sitact"]:checked'); if(!sel) return;
+  const action=sel.value;
+  const actor=(document.getElementById("sitActor")||{}).value||"";
+  const note=(document.getElementById("sitNote")||{}).value||"";
+  const company=(COMPANY_INFO[cik]||{}).company||"";
+  const btn=document.getElementById("sitSave"); if(btn){ btn.disabled=true; btn.textContent="Saving…"; }
+  try{ await fetch("/api/situation",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({cik,action,actor:actor.trim(),note:note.trim(),company})}); }catch(e){}
+  closeOverlay();
+  await loadActiveSituations(); await loadShortlist();
+  if(CURRENT_CIK===cik && CURRENT_VIEW==="company") openCompany(cik);
+}
+function openSituationAdd(){
+  const pool={}; [...SHORTLIST, ...ACTIVE].forEach(c=>{ if(c&&c.cik) pool[c.cik]={cik:c.cik,company:c.company,ticker:c.ticker}; });
+  const list=Object.values(pool).sort((a,b)=>(a.company||"").localeCompare(b.company||""));
+  window._SITPOOL=list;
+  openModalRaw("Add a company to active situations", `
+    <div class="hint" style="margin:0 0 10px">Pick a tracked company, then choose how to tag it. (To add a name that isn't tracked yet, open it from the dashboard table first.)</div>
+    <div class="sit-field"><input id="sitSearch" placeholder="Search company or ticker…" oninput="renderSitPool(this.value)" autofocus></div>
+    <div id="sitPool"></div>`);
+  renderSitPool("");
+}
+function renderSitPool(q){
+  q=(q||"").toLowerCase().trim();
+  const list=(window._SITPOOL||[]).filter(c=>!q || (c.company||"").toLowerCase().includes(q) || (c.ticker||"").toLowerCase().includes(q)).slice(0,40);
+  const el=document.getElementById("sitPool"); if(!el) return;
+  el.innerHTML = list.length ? list.map(c=>`<button class="sit-pick" onclick="openSituationModal('${esc(c.cik)}')">${esc(c.company)} <span style="color:var(--muted)">· ${esc(c.ticker||"")}</span></button>`).join("")
+    : `<div class="empty">No matches.</div>`;
 }
 
 /* ===== Watchlist (no inline notes — notes live on the profile) ===== */
@@ -355,7 +450,20 @@ function renderCompany(){
   const trend = (d.history&&d.history.length>=2)
     ? `<div class="cv-trend"><span class="lab">Rating trend</span>${sparkline(d.history,vi.col)}<span style="color:${vi.col}; font-size:12px; font-weight:600;">${d.week_change>0?"▲ rising":d.week_change<0?"▼ easing":"steady"}</span></div>`
     : "";
-  const warn = d.active_situation ? `<div class="cv-warn">⚠ Activist already engaged${(d.activist&&d.activist.label)?` — ${esc(d.activist.label)}`:""}${(d.activist&&d.activist.url)?` <a href="${esc(d.activist.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">view filing ↗</a>`:""}.</div>` : "";
+  const sm=d.situation_meta||{}; const stier=d.situation_tier||"";
+  let warn="";
+  if(d.active_situation){
+    const tm=tierMeta(stier);
+    const url=sm.url||(d.activist&&d.activist.url);
+    const lab=sm.label||(d.activist&&d.activist.label)||"Activist engaged";
+    const dt=sm.date?` (${esc(sm.date)})`:"";
+    warn=`<div class="cv-warn" style="border-color:color-mix(in srgb, ${tm.col} 50%, transparent)">
+      <span class="as-tier-badge cv-tierbadge" style="background:color-mix(in srgb, ${tm.col} 16%, transparent);color:${tm.col};border-color:color-mix(in srgb, ${tm.col} 45%, transparent)">${tm.label}</span>
+      ⚠ Activist already engaged — ${esc(lab)}${dt}${url?` <a href="${esc(url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">view source ↗</a>`:""}
+      ${freshBadge(sm)}</div>`;
+  } else if(d.manual_situation==="exclude"){
+    warn=`<div class="cv-warn" style="border-color:var(--line2);color:var(--muted)">Manually marked as <b>not</b> an active situation. <span style="cursor:pointer;text-decoration:underline" onclick="openSituationModal('${esc(d.cik)}')">change</span></div>`;
+  }
   const star=WATCHLIST_SET.has(d.cik)?'★ On watchlist':'☆ Add to watchlist';
   const tabs=[["overview","Overview"],["evidence","Evidence",(d.evidence||[]).length],["financials","Financials"],["ownership","Ownership & insiders"],["filings","Filings & news"],["notes","Notes"]];
   const tabbar=tabs.map(t=>`<div class="cv-tab ${CURRENT_TAB===t[0]?"active":""}" onclick="switchTab('${t[0]}')">${t[1]}${t[2]?` <span class="cv-tabcount">${t[2]}</span>`:""}</div>`).join("");
@@ -366,6 +474,7 @@ function renderCompany(){
         <div class="cv-meta">${[d.ticker,o.sector||o.industry,o.exchange].filter(Boolean).map(esc).join(" · ")}${d.first_flagged?` · first flagged ${esc(d.first_flagged)}`:""}</div></div>
       <div class="cv-actions">
         <button class="ghost" id="cvStar" onclick="toggleStar('${esc(d.cik)}',this)">${star}</button>
+        <button class="ghost" onclick="openSituationModal('${esc(d.cik)}')">⚑ Active situation</button>
         <button class="ghost" onclick="switchTab('notes')">✎ Notes</button>
       </div>
     </div>
