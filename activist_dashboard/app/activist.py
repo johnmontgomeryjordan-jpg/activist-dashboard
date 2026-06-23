@@ -32,18 +32,12 @@ HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflat
 _session = requests.Session()
 _session.headers.update(HEADERS)
 
-# Form types we sweep for. We list amendments explicitly (SC 13D/A) and the full family of
-# dissident / contested-proxy variants -- once a campaign opens, follow-on activity comes as
-# amendments and these variant forms, so matching only the base forms would miss live
-# campaigns that have moved past their opening filing.
-ROOT_FORMS = [
-    "SC 13D", "SC 13D/A",                                  # >5% stake + its amendments
-    "DFAN14A",                                             # dissident soliciting materials
-    "PREC14A", "DEFC14A",                                  # contested proxy (prelim / definitive)
-    "PRRN14A", "DEFN14A", "DFRN14A",                       # non-management (dissident) proxy variants
-    "PX14A6G", "PX14A6N",                                  # exempt solicitations by a shareholder
-    "SC 14N", "SC 14N/A",                                  # shareholder director nominations
-]
+# root_forms we sweep for. EDGAR full-text search groups a form's amendments under its
+# base type, so "SC 13D" also surfaces SC 13D/A, and the contested-proxy forms cover their
+# revised/definitive variants. (Proven list -- a speculative expansion that listed the
+# slash-amendment codes explicitly coincided with confirmed situations vanishing, so we
+# keep the base forms that reliably match.)
+ROOT_FORMS = ["SC 13D", "DFAN14A", "PREC14A", "DEFC14A", "PX14A6G", "SC 14N"]
 FORMS_PARAM = ",".join(ROOT_FORMS)
 
 # Map a specific form to (kind, human label). 13D = >5% stake; others = proxy campaign.
@@ -51,13 +45,13 @@ def _kind_label(form):
     f = (form or "").upper()
     if f.startswith("SC 13D"):
         return "13d", "Activist filed a Schedule 13D (>5% stake, intent to influence)"
-    if f in ("PREC14A", "DEFC14A", "PRRN14A", "DEFN14A", "DFRN14A"):
+    if f in ("PREC14A", "DEFC14A"):
         return "proxy", "Contested proxy statement filed (proxy fight under way)"
     if f == "DFAN14A":
         return "proxy", "Dissident soliciting materials filed (activist campaign)"
-    if f in ("PX14A6G", "PX14A6N"):
+    if f == "PX14A6G":
         return "proxy", "Exempt solicitation filed by a shareholder (activist pressure)"
-    if f.startswith("SC 14N"):
+    if f == "SC 14N":
         return "proxy", "Shareholder nominated directors (board challenge)"
     return "proxy", "Activist / dissident filing"
 
@@ -119,10 +113,13 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
             "filed": src.get("file_date"), "url": _doc_url(best, cik10)}
 
 
-def refresh_activist(ciks, window_days=WINDOW_DAYS):
-    """Sweep the given CIKs for recent activist filings. Sets an activist flag for
-    companies that have one and clears it for those that don't. Returns the count
-    of companies currently flagged."""
+def refresh_activist(ciks, window_days=WINDOW_DAYS, clear_missing=True):
+    """Sweep the given CIKs for recent activist filings, setting an activist flag for
+    any that have one. `clear_missing` controls whether names WITHOUT a hit get their
+    flag cleared -- only the FULL universe sweep should clear (it authoritatively checks
+    everyone). A PARTIAL sweep (just the tracked names, e.g. the Run-enrichment button)
+    must NOT clear, or it would erase Confirmed situations that live outside the small
+    tracked subset. Returns the count of companies flagged in THIS sweep."""
     flagged = 0
     for cik in ciks:
         try:
@@ -134,7 +131,8 @@ def refresh_activist(ciks, window_days=WINDOW_DAYS):
             database.set_activist_flag(cik, hit["kind"], hit["form"], hit["label"],
                                        hit["filed"], hit["url"])
             flagged += 1
-        else:
+        elif clear_missing:
             database.clear_activist_flag(cik)
-    print(f"[activist] swept {len(ciks)} names; {flagged} have an active activist filing")
+    scope = "full" if clear_missing else "partial (non-destructive)"
+    print(f"[activist] swept {len(ciks)} names ({scope}); {flagged} have an active activist filing")
     return flagged
