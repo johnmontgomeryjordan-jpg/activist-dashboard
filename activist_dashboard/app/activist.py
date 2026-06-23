@@ -22,7 +22,10 @@ from . import config, database
 
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
-WINDOW_DAYS = 120
+# Activist campaigns persist for a long time -- a 13D filed last fall is still very much
+# an active situation today. We look back a full year so ongoing campaigns aren't missed
+# (a 120-day window silently dropped names like a Sept stake-build by the following spring).
+WINDOW_DAYS = 365
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _session = requests.Session()
 _session.headers.update(HEADERS)
