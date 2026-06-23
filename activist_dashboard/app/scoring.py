@@ -155,10 +155,12 @@ KNOWN_FUNDS = [
     "cruiser capital", "irenic", "barington", "d.e. shaw", "blue harbour", "marcato",
     "glenview", "hestia", "bluebell", "soroban", "kimmeridge", "impactive", "scopia",
 ]
-# Explicit campaign cues (no fund named, but unambiguous activist language).
+# Explicit campaign cues (no fund named, but unambiguous activist language). We keep
+# these tight: weak phrases like "director nominees" appear in routine *defensive* proxy
+# news (e.g. "ISS supports ALL of management's director nominees"), so they're excluded.
 PROXY_CUES = [
     "proxy fight", "proxy contest", "proxy battle", "contested proxy",
-    "dissident", "board nominees", "director nominees", "nominate directors",
+    "dissident", "nominate directors",
     "activist investor", "activist stake", "activist campaign", "activist",
 ]
 # Pretty labels for funds (whatever matched first wins).
@@ -175,15 +177,42 @@ _FUND_DISPLAY = {
 _NAME_SUFFIX = {"inc", "incorporated", "corp", "corporation", "co", "company",
                 "companies", "holdings", "holding", "group", "plc", "ltd", "limited",
                 "lp", "llc", "sa", "ag", "nv", "class"}
-# Tokens too generic to identify a company on their own (sector / filler words). A
-# single one of these never confirms a headline; the full multi-word core still can.
+# Tokens too generic to identify a company on their own. These are ordinary English
+# words (directions, sectors, filler adjectives) that routinely appear in UNRELATED
+# headlines -- so a single one of them must NEVER confirm a match (that's what let
+# "northern" match a Northern Star story, or "independent" match an ISS press release).
+# A distinctive proper noun like "Ashland" or "Tripadvisor" is not on this list, so it
+# still confirms; and the full multi-word company core always confirms regardless.
 _NAME_STOP = _NAME_SUFFIX | {
-    "the", "international", "intl", "financial", "services", "service", "systems",
-    "technologies", "technology", "global", "american", "national", "general",
-    "partners", "resources", "solutions", "enterprises", "capital", "pacific",
-    "atlantic", "united", "states", "bancorp", "bancshares", "energy", "health",
-    "healthcare", "pharmaceutical", "pharmaceuticals", "communications",
-    "entertainment", "properties", "trust", "industries",
+    "the", "and", "for", "of",
+    # directional / geographic
+    "north", "northern", "south", "southern", "east", "eastern", "west", "western",
+    "central", "pacific", "atlantic", "gulf", "midwest", "american", "america",
+    "national", "international", "intl", "global", "worldwide", "continental",
+    "united", "states", "canadian", "european", "western", "midwestern",
+    # generic descriptors
+    "independent", "standard", "general", "premier", "premiere", "allied", "alliance",
+    "consolidated", "integrated", "advanced", "dynamic", "unified", "prime", "select",
+    "public", "private", "federal", "mutual", "community", "first", "new", "modern",
+    "next", "true", "core", "peak", "apex", "popular", "citizens", "peoples",
+    "sovereign", "liberty", "freedom", "heritage", "pioneer", "frontier", "summit",
+    "keystone", "cornerstone", "gateway", "horizon", "interstate", "regional",
+    # sector / industry words
+    "financial", "finance", "capital", "bancorp", "bancshares", "bank", "banks",
+    "banking", "energy", "power", "electric", "gas", "oil", "petroleum", "water",
+    "utilities", "utility", "health", "healthcare", "medical", "pharma",
+    "pharmaceutical", "pharmaceuticals", "therapeutics", "biosciences",
+    "technology", "technologies", "tech", "digital", "data", "cloud", "cyber",
+    "software", "systems", "networks", "network", "communications", "telecom",
+    "media", "entertainment", "properties", "property", "realty", "estate", "homes",
+    "residential", "hotels", "resorts", "retail", "stores", "foods", "food",
+    "beverage", "brands", "products", "goods", "materials", "chemical", "chemicals",
+    "steel", "metals", "mining", "minerals", "motors", "auto", "automotive",
+    "airlines", "airways", "transport", "transportation", "logistics", "express",
+    "freight", "shipping", "marine", "defense", "aerospace", "industrial",
+    "industries", "manufacturing", "services", "service", "solutions", "holdings",
+    "group", "partners", "resources", "enterprises", "ventures", "insurance",
+    "securities", "investments", "investment", "management", "trust", "corp",
 }
 
 
