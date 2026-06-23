@@ -21,7 +21,6 @@ import requests
 from . import config, database
 
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
-SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
 
 # Sentinel: the EDGAR query FAILED (network/transient), which is different from a clean
@@ -96,32 +95,15 @@ def _doc_url(hit, subject_cik10):
     return f"{ARCHIVE}/{int(filer)}/{nod}/{adsh}-index.htm"
 
 
-def _own_accessions(cik10):
-    """The set of accession numbers the company itself FILED (its own submissions feed).
-    A 13D about the company is filed by the activist and won't appear here; a 13D the
-    company filed AS an activist (e.g. IAC reporting its stake in ANGI) WILL appear here.
-    That's how we tell the target from the aggressor. Returns None if the lookup failed."""
-    try:
-        r = _session.get(SUBMISSIONS_URL.format(cik10=cik10), timeout=20)
-        if r.status_code != 200:
-            return None
-        j = r.json()
-    except (requests.RequestException, ValueError):
-        return None
-    recent = (j.get("filings", {}) or {}).get("recent", {}) or {}
-    return set(recent.get("accessionNumber", []) or [])
-
-
-def _hit_adsh(hit):
-    src = hit.get("_source", {})
-    return src.get("adsh") or (hit.get("_id", "").split(":", 1)[0])
-
-
 def latest_activist_filing(cik, window_days=WINDOW_DAYS):
     """Most recent activist filing where THIS company is the SUBJECT (target). Returns a
-    dict on a hit, None on a clean 'no such filing', or ERROR if the EDGAR query failed
-    (so the caller knows not to clear an existing flag). Filings the company FILED itself
-    (i.e. it's the activist, not the target) are skipped."""
+    dict on a hit, None on a clean 'not a subject', or ERROR if the EDGAR query failed
+    (so the caller knows not to clear an existing flag).
+
+    EDGAR full-text search lists the SUBJECT/issuer first in each hit's `ciks` array and
+    the activist filer(s) after it. So a company is the TARGET only when its CIK is
+    ciks[0]; a 13D the company FILED against someone else (it's the activist, e.g. IAC ->
+    ANGI) puts the company in ciks[1:], and is correctly skipped -- no extra lookup needed."""
     from datetime import datetime, timedelta
     cik10 = _pad(cik)
     start = (datetime.utcnow() - timedelta(days=window_days)).date().isoformat()
@@ -133,21 +115,16 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
     hits = (j.get("hits", {}) or {}).get("hits", []) or []
     if not hits:
         return None
-    own = None                             # the company's own filings (fetched lazily, once)
     for best in hits:                      # newest-first when a ciks filter is used
-        if own is None:
-            own = _own_accessions(cik10)
-            if own is None:                # couldn't verify -> assume it's a genuine target
-                own = set()
-        adsh = _hit_adsh(best)
-        if adsh and adsh in own:
-            continue                       # the company FILED this -> it's the activist, skip
         src = best.get("_source", {})
+        ciks = src.get("ciks") or []
+        if not ciks or ciks[0] != cik10:   # ciks[0] is the SUBJECT; if not us, we're the filer
+            continue
         form = src.get("form") or (src.get("root_forms") or [""])[0]
         kind, label = _kind_label(form)
         return {"kind": kind, "form": form, "label": label,
                 "filed": src.get("file_date"), "url": _doc_url(best, cik10)}
-    return None                            # every hit was self-filed -> not a target
+    return None                            # company only appears as a filer -> not a target
 
 
 def refresh_activist(ciks, window_days=WINDOW_DAYS, clear_missing=True):
