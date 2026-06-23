@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS news (
 CREATE TABLE IF NOT EXISTS scores (
     cik TEXT PRIMARY KEY, ticker TEXT, company TEXT, market_cap REAL,
     score INTEGER, signals TEXT, top_item_title TEXT, top_item_url TEXT,
-    first_flagged TEXT, evidence TEXT, active_situation INTEGER, vuln INTEGER, updated_at TEXT
+    first_flagged TEXT, evidence TEXT, active_situation INTEGER, vuln INTEGER,
+    situation_tier TEXT, situation_meta TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS subscribers (
     email TEXT PRIMARY KEY, created_at TEXT
@@ -91,6 +92,13 @@ CREATE TABLE IF NOT EXISTS company_profile (
 CREATE TABLE IF NOT EXISTS prices (
     cik TEXT PRIMARY KEY, series TEXT, last_close REAL, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS manual_situations (
+    cik TEXT PRIMARY KEY, status TEXT, actor TEXT, note TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS situation_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, cik TEXT, company TEXT, action TEXT,
+    actor TEXT, note TEXT, ts TEXT
+);
 """
 
 
@@ -116,6 +124,10 @@ def init_db():
             conn.execute("ALTER TABLE scores ADD COLUMN active_situation INTEGER")
         if "vuln" not in scols:
             conn.execute("ALTER TABLE scores ADD COLUMN vuln INTEGER")
+        if "situation_tier" not in scols:
+            conn.execute("ALTER TABLE scores ADD COLUMN situation_tier TEXT")
+        if "situation_meta" not in scols:
+            conn.execute("ALTER TABLE scores ADD COLUMN situation_meta TEXT")
         fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
         if "raw" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
@@ -324,12 +336,14 @@ def replace_scores(rows):
             conn.execute(
                 """INSERT INTO scores
                    (cik,ticker,company,market_cap,score,signals,top_item_title,
-                    top_item_url,first_flagged,evidence,active_situation,vuln,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    top_item_url,first_flagged,evidence,active_situation,vuln,
+                    situation_tier,situation_meta,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (r["cik"], r["ticker"], r["company"], r["market_cap"], r["score"],
                  r["signals"], r["top_item_title"], r["top_item_url"], first,
                  json.dumps(r.get("evidence") or []), r.get("active_situation") or 0,
-                 r.get("vuln") or 0, now_iso()),
+                 r.get("vuln") or 0, r.get("situation_tier") or "",
+                 json.dumps(r.get("situation_meta") or {}), now_iso()),
             )
         today = datetime.utcnow().date().isoformat()
         for r in rows:
@@ -553,6 +567,54 @@ def get_activist_flag(cik):
 def get_all_activist_flags():
     with get_conn() as conn:
         return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM activist_flag")}
+
+
+# --- Manual active-situation overrides + audit trail -------------------------
+# A partner can force a company INTO active situations ("active") or suppress a
+# false-positive auto-detection ("exclude"). Overrides always win over automated
+# detection, and every change is logged for an audit trail.
+def get_manual_situations():
+    with get_conn() as conn:
+        return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM manual_situations")}
+
+
+def get_manual_situation(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM manual_situations WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def set_manual_situation(cik, status, actor="", note="", company=""):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO manual_situations (cik,status,actor,note,updated_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET status=excluded.status,
+                 actor=excluded.actor, note=excluded.note, updated_at=excluded.updated_at""",
+            (cik, status, actor or "", note or "", now_iso()))
+        conn.execute(
+            "INSERT INTO situation_audit (cik,company,action,actor,note,ts) VALUES (?,?,?,?,?,?)",
+            (cik, company or "", "set " + status, actor or "", note or "", now_iso()))
+
+
+def clear_manual_situation(cik, actor="", note="", company=""):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM manual_situations WHERE cik=?", (cik,))
+        conn.execute(
+            "INSERT INTO situation_audit (cik,company,action,actor,note,ts) VALUES (?,?,?,?,?,?)",
+            (cik, company or "", "cleared override", actor or "", note or "", now_iso()))
+
+
+def get_situation_audit(cik=None, limit=200):
+    with get_conn() as conn:
+        if cik:
+            rows = conn.execute(
+                "SELECT * FROM situation_audit WHERE cik=? ORDER BY ts DESC LIMIT ?",
+                (cik, limit))
+        else:
+            rows = conn.execute(
+                "SELECT * FROM situation_audit ORDER BY ts DESC LIMIT ?", (limit,))
+        return [dict(r) for r in rows]
 
 
 # --- Shareholder votes (8-K Item 5.07) ---------------------------------------
