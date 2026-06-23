@@ -39,6 +39,12 @@ from . import (config, database, universe, edgar, news, scoring, emailer,
 
 _UNIVERSE = None
 
+# How many of the top-ranked leads to enrich (contacts, prices, sentiment, news, etc.).
+# Covers the visible shortlist + the spotlight pool so their profiles are complete, while
+# staying within the free API tiers. Active situations + the watchlist are always added on
+# top of this.
+ENRICH_TOP = 60
+
 _HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
 _SUB_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
@@ -328,7 +334,7 @@ def _refresh_company_news():
     if not key:
         return 0
     tickers = set()
-    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+    for s in database.get_scores(limit=ENRICH_TOP):
         if s.get("ticker"):
             tickers.add(s["ticker"])
     for s in database.get_active_situations(limit=40):
@@ -406,7 +412,7 @@ def refresh_tsr():
     if spy is not None:
         database.set_meta("spy_1y", spy)
     pairs = {}
-    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+    for s in database.get_scores(limit=ENRICH_TOP):
         if s.get("ticker"):
             pairs[s["cik"]] = s["ticker"]
     for s in database.get_active_situations(limit=40):
@@ -505,7 +511,7 @@ def refresh_governance():
     """Parse DEF 14A governance red flags for shortlist / active / watchlist names
     (cached by filing accession), then rescore. Free SEC data."""
     ciks = set()
-    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+    for s in database.get_scores(limit=ENRICH_TOP):
         if s.get("cik"):
             ciks.add(s["cik"])
     for s in database.get_active_situations(limit=40):
@@ -526,7 +532,7 @@ def refresh_insider():
     """Parse Form 4 insider buys/sells for shortlist / active / watchlist names
     (cached by accession), then rescore. Free SEC data."""
     ciks = set()
-    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+    for s in database.get_scores(limit=ENRICH_TOP):
         if s.get("cik"):
             ciks.add(s["cik"])
     for s in database.get_active_situations(limit=40):
@@ -545,7 +551,7 @@ def refresh_insider():
 
 def _tracked_ciks():
     ciks = set()
-    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+    for s in database.get_scores(limit=ENRICH_TOP):
         if s.get("cik"):
             ciks.add(s["cik"])
     for s in database.get_active_situations(limit=40):
@@ -559,7 +565,7 @@ def _tracked_ciks():
 
 def _tracked_pairs():
     pairs = {}
-    for s in database.get_scores(limit=config.SHORTLIST_SIZE):
+    for s in database.get_scores(limit=ENRICH_TOP):
         if s.get("ticker"):
             pairs[s["cik"]] = s["ticker"]
     for s in database.get_active_situations(limit=40):
