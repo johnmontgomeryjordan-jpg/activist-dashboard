@@ -136,11 +136,48 @@
   .ticker-dot { color:var(--brand); font-size:8px; vertical-align:middle; margin-right:5px; }
   @keyframes tick { from{transform:translateX(0);} to{transform:translateX(-50%);} }
   /* Active situations rows */
-  .as-list .as-row { display:grid; grid-template-columns:1.1fr 2fr auto; gap:14px; align-items:center; padding:13px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .as-list .as-row { display:grid; grid-template-columns:1.2fr 2.2fr auto auto; gap:14px; align-items:center; padding:13px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
   .as-list .as-row:last-child { border-bottom:none; }
   .as-list .as-row:hover { background:var(--panel2); }
   .as-head a { color:#cdd8e2; text-decoration:none; font-weight:500; }
   .as-head a:hover { color:var(--accent); text-decoration:underline; }
+  .as-head .as-date { color:var(--muted); font-size:11.5px; margin-left:6px; }
+  /* Tiered sections */
+  .as-section { margin-bottom:22px; }
+  .as-section-h { display:flex; align-items:center; gap:11px; margin:0 2px 9px; flex-wrap:wrap; }
+  .as-section-d { color:var(--muted); font-size:12.5px; flex:1 1 220px; }
+  .as-section-n { color:var(--dim); font-size:12px; font-weight:700; }
+  .as-tier-badge { font-size:10.5px; font-weight:700; padding:3px 10px; border-radius:20px;
+    text-transform:uppercase; letter-spacing:.4px; border:1px solid transparent; white-space:nowrap; }
+  .as-fresh { display:inline-block; margin-left:8px; font-size:10.5px; font-weight:700; color:var(--hot);
+    background:rgba(255,107,107,.14); border:1px solid rgba(255,107,107,.4); border-radius:20px; padding:1px 8px; }
+  .as-pin { margin-left:6px; font-size:11px; }
+  .as-mng { font-size:11.5px !important; padding:5px 11px !important; white-space:nowrap; }
+  .as-toolbar { display:flex; align-items:center; gap:14px; margin:0 2px 16px; flex-wrap:wrap; }
+  .as-toolbar .hint2 { color:var(--muted); font-size:12.5px; }
+  /* Situation modal (manual override + audit) */
+  .sit-opts { display:flex; flex-direction:column; gap:9px; margin:4px 0 14px; }
+  .sit-opt { display:flex; gap:10px; align-items:flex-start; padding:11px 13px; border:1px solid var(--line);
+    border-radius:10px; cursor:pointer; background:var(--panel); }
+  .sit-opt:hover { border-color:var(--accent); }
+  .sit-opt input { margin-top:3px; }
+  .sit-opt .ot { font-weight:600; font-size:13.5px; }
+  .sit-opt .od { color:var(--muted); font-size:12px; margin-top:2px; }
+  .sit-opt.disabled { opacity:.45; cursor:not-allowed; }
+  .sit-field { margin-bottom:11px; }
+  .sit-field label { display:block; font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; margin-bottom:5px; }
+  .sit-field input, .sit-field textarea { width:100%; box-sizing:border-box; background:var(--bg); color:var(--text);
+    border:1px solid var(--line); border-radius:8px; padding:9px 11px; font-size:13px; font-family:inherit; }
+  .sit-field textarea { resize:vertical; min-height:54px; }
+  .sit-actions { display:flex; gap:10px; justify-content:flex-end; margin-top:6px; }
+  .sit-audit { margin-top:16px; border-top:1px solid var(--line); padding-top:12px; }
+  .sit-audit h4 { margin:0 0 8px; font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; }
+  .sit-audit-row { font-size:12px; color:var(--dim); padding:4px 0; display:flex; gap:8px; }
+  .sit-audit-row .aa { color:var(--text); font-weight:600; }
+  .sit-pick { display:block; width:100%; text-align:left; background:var(--panel); border:1px solid var(--line);
+    border-radius:8px; padding:9px 12px; margin-bottom:7px; cursor:pointer; color:var(--text); font-size:13px; }
+  .sit-pick:hover { border-color:var(--accent); background:var(--panel2); }
+  .cv-tierbadge { margin-right:8px; }
   /* Watchlist */
   .wl-row { background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:13px 16px; margin-bottom:11px; display:flex; align-items:center; justify-content:space-between; gap:12px; cursor:pointer; }
   .wl-row:hover { border-color:var(--accent); }
@@ -344,8 +381,12 @@
 <!-- ACTIVE SITUATIONS -->
 <div class="wrap page" id="page-active" style="display:none;">
   <h2 class="sec" style="color:var(--warn);">⚠ Active situations — activist already engaged</h2>
-  <p class="hint">An activist has already shown up at these (a 13D, contested proxy, or named campaign). Likely too late to pitch proactively — but worth knowing, and a fresh 13D can be an urgent defense lead.</p>
-  <div class="panel"><div class="as-list" id="activeSit"><div class="empty">Loading…</div></div></div>
+  <p class="hint">An activist has already shown up at these. Grouped by how sure we are: <b style="color:var(--hot)">Confirmed</b> (an SEC filing is on record), <b style="color:var(--warn)">Reported</b> (named in the press — confirm before relying on it), and <b style="color:var(--accent)">Manual</b> (tagged by your team). Likely too late to pitch proactively — but a fresh 13D can be an urgent defense lead.</p>
+  <div class="as-toolbar">
+    <button class="primary" onclick="openSituationAdd()">+ Add a company</button>
+    <span class="hint2">Pull in a situation we didn't auto-detect, or remove a false positive with the <b>Manage</b> button on any row.</span>
+  </div>
+  <div id="activeSit"><div class="empty">Loading…</div></div>
 </div>
 
 <!-- WATCHLIST -->
