@@ -22,16 +22,28 @@ from . import config, database
 
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
-# Activist campaigns persist for a long time -- a 13D filed last fall is still very much
-# an active situation today. We look back a full year so ongoing campaigns aren't missed
-# (a 120-day window silently dropped names like a Sept stake-build by the following spring).
-WINDOW_DAYS = 365
+# Activist campaigns persist for years -- a 13D filed two summers ago can still be a live
+# situation today (the activist holds a board seat, the stake is unchanged so there's no
+# new amendment to "refresh" the date). We look back two years so long-running campaigns
+# aren't silently dropped. (Anything older than that, with no recent SEC activity at all,
+# is best handled with a Manual tag.)
+WINDOW_DAYS = 730
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _session = requests.Session()
 _session.headers.update(HEADERS)
 
-# root_forms we sweep for. "SC 13D" also covers its amendments (SC 13D/A).
-ROOT_FORMS = ["SC 13D", "DFAN14A", "PREC14A", "DEFC14A", "PX14A6G", "SC 14N"]
+# Form types we sweep for. We list amendments explicitly (SC 13D/A) and the full family of
+# dissident / contested-proxy variants -- once a campaign opens, follow-on activity comes as
+# amendments and these variant forms, so matching only the base forms would miss live
+# campaigns that have moved past their opening filing.
+ROOT_FORMS = [
+    "SC 13D", "SC 13D/A",                                  # >5% stake + its amendments
+    "DFAN14A",                                             # dissident soliciting materials
+    "PREC14A", "DEFC14A",                                  # contested proxy (prelim / definitive)
+    "PRRN14A", "DEFN14A", "DFRN14A",                       # non-management (dissident) proxy variants
+    "PX14A6G", "PX14A6N",                                  # exempt solicitations by a shareholder
+    "SC 14N", "SC 14N/A",                                  # shareholder director nominations
+]
 FORMS_PARAM = ",".join(ROOT_FORMS)
 
 # Map a specific form to (kind, human label). 13D = >5% stake; others = proxy campaign.
@@ -39,13 +51,13 @@ def _kind_label(form):
     f = (form or "").upper()
     if f.startswith("SC 13D"):
         return "13d", "Activist filed a Schedule 13D (>5% stake, intent to influence)"
-    if f in ("PREC14A", "DEFC14A"):
+    if f in ("PREC14A", "DEFC14A", "PRRN14A", "DEFN14A", "DFRN14A"):
         return "proxy", "Contested proxy statement filed (proxy fight under way)"
     if f == "DFAN14A":
         return "proxy", "Dissident soliciting materials filed (activist campaign)"
-    if f == "PX14A6G":
+    if f in ("PX14A6G", "PX14A6N"):
         return "proxy", "Exempt solicitation filed by a shareholder (activist pressure)"
-    if f == "SC 14N":
+    if f.startswith("SC 14N"):
         return "proxy", "Shareholder nominated directors (board challenge)"
     return "proxy", "Activist / dissident filing"
 
