@@ -688,13 +688,15 @@ def daily_rescore_and_digest():
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=finnhub-insider-votes-earnings-sentiment-fmp-twelvedata  starting refresh")
+    print("[boot] VERSION=phaseC-tiered-situations-strict-news-fullboot-sweep  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
     refresh_insider()
     refresh_votes()
-    refresh_activist(full=False)
+    # Full universe sweep on boot (not just tracked names) so the Confirmed tier is
+    # comprehensive right after a deploy, instead of waiting for the 4pm ET daily job.
+    refresh_activist(full=True)
     refresh_earnings()
     refresh_sentiment()
     refresh_contacts()
