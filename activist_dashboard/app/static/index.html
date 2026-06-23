@@ -384,7 +384,8 @@
   <p class="hint">An activist has already shown up at these. Grouped by how sure we are: <b style="color:var(--hot)">Confirmed</b> (an SEC filing is on record), <b style="color:var(--warn)">Reported</b> (named in the press — confirm before relying on it), and <b style="color:var(--accent)">Manual</b> (tagged by your team). Likely too late to pitch proactively — but a fresh 13D can be an urgent defense lead.</p>
   <div class="as-toolbar">
     <button class="primary" onclick="openSituationAdd()">+ Add a company</button>
-    <span class="hint2">Pull in a situation we didn't auto-detect, or remove a false positive with the <b>Manage</b> button on any row.</span>
+    <button class="ghost" id="sweepBtn" onclick="fullSweep()" title="Re-scan all ~1,489 companies' SEC filings now (~10 min). Adds new situations and clears stale ones.">↻ Re-sweep SEC filings</button>
+    <span class="hint2">Pull in a situation we didn't auto-detect, remove a false positive with <b>Manage</b>, or force a fresh full SEC sweep.</span>
   </div>
   <div id="activeSit"><div class="empty">Loading…</div></div>
 </div>
