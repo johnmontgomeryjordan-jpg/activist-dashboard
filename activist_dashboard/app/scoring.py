@@ -21,6 +21,7 @@ fiscal period, peer context with sample size, source, and a link to the exact
 filing), stored as JSON on the score so the detail view can prove why each tag fired.
 """
 import json
+import re
 
 from . import config, database
 
@@ -133,23 +134,122 @@ EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
                 "leadership_change": "SEC 8-K", "results_update": "SEC 8-K",
                 "news_negative": "News"}
 
-# A headline matched to a company that names an activist / campaign means an activist
-# has ALREADY shown up -- too late to pitch proactively, so we pull these names off the
-# main shortlist into a separate "active situations" bucket instead of ranking them.
-ACTIVIST_NEWS = [
-    "activist", "proxy fight", "proxy battle", "proxy contest", "13d",
-    "board seat", "board seats", "nominat", "director nominee",
-    "builds stake", "raises stake", "takes stake", "boosts stake",
-    "elliott management", "starboard", "trian", "jana partners", "third point",
-    "carl icahn", "icahn", "nelson peltz", "valueact", "value act", "engine no",
-    "ancora", "politan", "sachem head", "legion partners",
-    "short seller", "short-seller",
+# A news headline only counts as an "active situation" when it BOTH (a) names an activist
+# -- a known fund, or an explicit proxy-fight / "activist" cue -- AND (b) names the company
+# itself. Requiring the company NAME (not just a loose ticker/keyword match) kills the
+# misattribution that produced most false positives: a short-seller story landing on the
+# wrong company, a generic "activist concerns" headline matching three names at once, or a
+# two-letter ticker ("ON") matching the word "on" in an unrelated headline.
+#
+# How many days of news to scan for a named-activist headline (longer than the general
+# scoring window, since a campaign stays "active" for months).
+ACTIVIST_NEWS_WINDOW = 220
+
+# Known activist funds. Substring match on the lowercased headline.
+KNOWN_FUNDS = [
+    "elliott", "starboard value", "starboard", "trian", "jana partners", "jana",
+    "third point", "carl icahn", "icahn", "nelson peltz", "valueact", "value act",
+    "engine no", "ancora", "politan", "sachem head", "legion partners",
+    "pershing square", "ackman", "corvex", "land & buildings", "land and buildings",
+    "mantle ridge", "inclusive capital", "saba capital", "h partners",
+    "cruiser capital", "irenic", "barington", "d.e. shaw", "blue harbour", "marcato",
+    "glenview", "hestia", "bluebell", "soroban", "kimmeridge", "impactive", "scopia",
 ]
+# Explicit campaign cues (no fund named, but unambiguous activist language).
+PROXY_CUES = [
+    "proxy fight", "proxy contest", "proxy battle", "contested proxy",
+    "dissident", "board nominees", "director nominees", "nominate directors",
+    "activist investor", "activist stake", "activist campaign", "activist",
+]
+# Pretty labels for funds (whatever matched first wins).
+_FUND_DISPLAY = {
+    "icahn": "Icahn", "carl icahn": "Carl Icahn", "valueact": "ValueAct",
+    "value act": "ValueAct", "jana": "JANA Partners", "jana partners": "JANA Partners",
+    "h partners": "H Partners", "d.e. shaw": "D.E. Shaw", "engine no": "Engine No. 1",
+    "land & buildings": "Land & Buildings", "land and buildings": "Land & Buildings",
+    "pershing square": "Pershing Square", "ackman": "Pershing Square (Ackman)",
+    "nelson peltz": "Trian (Peltz)", "trian": "Trian", "starboard": "Starboard",
+    "starboard value": "Starboard",
+}
+# Corporate suffixes stripped from a company name to find its distinctive core.
+_NAME_SUFFIX = {"inc", "incorporated", "corp", "corporation", "co", "company",
+                "companies", "holdings", "holding", "group", "plc", "ltd", "limited",
+                "lp", "llc", "sa", "ag", "nv", "class"}
+# Tokens too generic to identify a company on their own (sector / filler words). A
+# single one of these never confirms a headline; the full multi-word core still can.
+_NAME_STOP = _NAME_SUFFIX | {
+    "the", "international", "intl", "financial", "services", "service", "systems",
+    "technologies", "technology", "global", "american", "national", "general",
+    "partners", "resources", "solutions", "enterprises", "capital", "pacific",
+    "atlantic", "united", "states", "bancorp", "bancshares", "energy", "health",
+    "healthcare", "pharmaceutical", "pharmaceuticals", "communications",
+    "entertainment", "properties", "trust", "industries",
+}
 
 
-def _activist_headline(headline):
+def _name_core_tokens(name):
+    toks = re.findall(r"[a-z0-9&.-]+", (name or "").lower())
+    while toks and toks[-1] in _NAME_SUFFIX:
+        toks.pop()
+    return toks
+
+
+def _company_keys(name):
+    """(core_phrase, {keys}) used to confirm a headline really names this company.
+    Keys are the full multi-word core (high precision) plus distinctive single tokens."""
+    toks = _name_core_tokens(name)
+    if not toks:
+        return "", set()
+    core = " ".join(toks)
+    keys = set()
+    if len(toks) >= 2:
+        keys.add(core)
+    for t in toks:
+        tt = t.strip(".-")
+        if tt in _NAME_STOP:
+            continue
+        if len(tt) >= 6 or (len(toks) == 1 and len(tt) >= 4):
+            keys.add(tt)
+    return core, keys
+
+
+def _headline_about_company(headline, keys):
+    if not keys:
+        return False
+    h = " " + re.sub(r"[^a-z0-9&.-]+", " ", (headline or "").lower()) + " "
+    for k in keys:
+        if " " in k:                       # multi-word core: plain substring is safe
+            if k in h:
+                return True
+        elif re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", h):
+            return True
+    return False
+
+
+def _activist_cue(headline):
+    """Return a display label if the headline carries an activist cue, else None."""
     t = " " + (headline or "").lower() + " "
-    return any(k in t for k in ACTIVIST_NEWS)
+    for f in KNOWN_FUNDS:
+        if f in t:
+            return _FUND_DISPLAY.get(f, f.title())
+    for c in PROXY_CUES:
+        if c in t:
+            return "Proxy contest" if "proxy" in c or "nominee" in c or "dissident" in c \
+                or "nominate" in c else "Activist campaign"
+    return None
+
+
+def _activist_news_hit(ticker, name):
+    """Most recent news headline that names BOTH an activist and this company, or None."""
+    _, keys = _company_keys(name)
+    if not keys:
+        return None
+    for n in database.news_for_ticker_in_window(ticker, ACTIVIST_NEWS_WINDOW):
+        who = _activist_cue(n.get("headline"))
+        if who and _headline_about_company(n.get("headline"), keys):
+            return {"title": n["headline"], "url": n["url"], "who": who,
+                    "date": (n.get("published_at") or "")[:10]}
+    return None
 
 
 def _pad_cik(cik):
@@ -425,7 +525,7 @@ def _event_evidence(key, ev):
             "url": (item["url"] if item else None)}
 
 
-def _event_signals(cik, ticker):
+def _event_signals(cik, ticker, name):
     triggered = set()
     top = None
     ev = {}
@@ -445,10 +545,8 @@ def _event_signals(cik, ticker):
             ev.setdefault("news_negative", {"title": nws[0]["headline"], "url": nws[0]["url"]})
             if top is None:
                 top = {"title": nws[0]["headline"], "url": nws[0]["url"]}
-            for n in nws:
-                if _activist_headline(n.get("headline")):
-                    activist = {"title": n["headline"], "url": n["url"]}
-                    break
+        # Strict: a headline that names a known activist AND this specific company.
+        activist = _activist_news_hit(ticker, name)
     return triggered, top, ev, activist
 
 
@@ -487,6 +585,7 @@ def recompute_all():
     ins_all = database.get_all_insider()
     votes_all = database.get_all_votes()
     aflags = database.get_all_activist_flags()
+    manual = database.get_manual_situations()   # partner overrides (always win)
 
     metrics = ["pb_ratio", "operating_margin", "tsr_1y", "tsr_3y", "roa",
                "revenue_growth", "sga_pct", "cash_to_assets", "debt_to_assets"]
@@ -565,16 +664,36 @@ def recompute_all():
             trig.append("weak_vote_support")
 
         struct = sum(STRUCT_POINTS[s] for s in trig)
-        events, top, ev, activist = _event_signals(r["cik"], r["ticker"])
+        events, top, ev, activist = _event_signals(r["cik"], r["ticker"], r["name"])
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
 
-        # An activist SEC filing (13D / contested-proxy) is an authoritative marker that
-        # an activist has ALREADY engaged -- always surface it as an active situation,
-        # even if the company's own vulnerability score is below the flag threshold.
         aflag = aflags.get(r["cik"])
-        if total < config.SCORE_THRESHOLD and not aflag:
-            continue
+        man = manual.get(r["cik"]) or {}
+        man_status = man.get("status")
+
+        # Decide whether this name is an ACTIVE SITUATION and at what confidence tier:
+        #   confirmed -> authoritative SEC activist filing (13D / contested proxy)
+        #   reported  -> a news headline naming a known activist AND this company
+        #   manual    -> a partner tagged it by hand
+        # A manual override ALWAYS wins: "active" forces it on (even with no auto signal),
+        # "exclude" suppresses a false-positive auto-detection.
+        if man_status == "exclude":
+            if total < config.SCORE_THRESHOLD:
+                continue                         # not a proactive lead either -> drop it
+            is_active, tier = False, ""
+        elif man_status == "active":
+            is_active = True
+            tier = "confirmed" if aflag else ("reported" if activist else "manual")
+        else:
+            if total < config.SCORE_THRESHOLD and not aflag and not activist:
+                continue
+            if aflag:
+                is_active, tier = True, "confirmed"
+            elif activist:
+                is_active, tier = True, "reported"
+            else:
+                is_active, tier = False, ""
 
         # 0-100 absolute vulnerability, weighted by how severe each signal is.
         vuln = _vuln_score(trig, r, t, e)
@@ -597,13 +716,30 @@ def recompute_all():
             elif key in EVENT_POINTS:
                 evidence.append(_event_evidence(key, ev))
 
-        # Active situation if an activist filing exists OR a news headline named one.
-        # The SEC filing is authoritative, so it wins as the headline item.
-        is_active = bool(aflag) or bool(activist)
+        # Headline item + situation metadata for the Active Situations card.
         if aflag:
             item = {"title": f"{r['name']} — {aflag.get('label')}", "url": aflag.get("url")}
+            smeta = {"who": "", "kind": aflag.get("kind") or "13d", "form": aflag.get("form"),
+                     "label": aflag.get("label") or "Activist filing on record",
+                     "date": aflag.get("filed"), "source": "SEC EDGAR", "url": aflag.get("url")}
+        elif activist:
+            item = {"title": activist["title"], "url": activist["url"]}
+            smeta = {"who": activist.get("who"), "kind": "news", "form": "",
+                     "label": (activist.get("who") or "Activist") + " — reported in the press",
+                     "date": activist.get("date"), "source": "News", "url": activist.get("url")}
+        elif tier == "manual":
+            item = top
+            smeta = {"who": man.get("actor") or "", "kind": "manual", "form": "",
+                     "label": "Manually tagged as an active situation",
+                     "date": (man.get("updated_at") or "")[:10], "source": "Manual",
+                     "url": (top or {}).get("url")}
         else:
-            item = activist or top
+            item = top
+            smeta = {}
+        if man_status == "active":
+            smeta["manual"] = True
+            smeta["manual_note"] = man.get("note") or ""
+
         rows.append({
             "cik": r["cik"], "ticker": r["ticker"], "company": r["name"],
             "market_cap": r.get("market_cap"), "score": total, "vuln": vuln,
@@ -611,6 +747,8 @@ def recompute_all():
             "top_item_title": item["title"] if item else "",
             "top_item_url": item["url"] if item else "",
             "active_situation": 1 if is_active else 0,
+            "situation_tier": tier,
+            "situation_meta": smeta,
             "evidence": evidence,
             "first_flagged": database.now_iso()[:10],
         })
