@@ -579,7 +579,10 @@ def refresh_activist(full=False):
         ciks = [c["cik"] for c in get_universe() if c.get("cik")]
     else:
         ciks = sorted(_tracked_ciks())
-    n = activist.refresh_activist(ciks)
+    # Only the full universe sweep is allowed to CLEAR flags (it checks everyone). The
+    # tracked-only sweep just adds/refreshes, so it can never erase a Confirmed situation
+    # that lives outside the small tracked subset.
+    n = activist.refresh_activist(ciks, clear_missing=full)
     try:
         scoring.recompute_all()
     except Exception:
