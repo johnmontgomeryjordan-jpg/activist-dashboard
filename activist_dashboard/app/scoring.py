@@ -29,6 +29,14 @@ MIN_PEERS = 5
 # 1-yr stock return must lag the S&P 500 by at least this much (in return terms) to flag.
 TSR_LAG_1Y = -0.15
 
+# We STORE any company that shows at least this many signal points (plus all active
+# situations), then RANK them by the 0-92 vulnerability index and surface the top of the
+# list on the dashboard. This is deliberately low so the leads table, spotlight, and
+# "new & rising" always have real depth -- the absolute count isn't a quality bar, the
+# ranking is. (Previously the much higher config.SCORE_THRESHOLD let only a handful
+# through, which made the dashboard look empty even though the data was there.)
+LEAD_FLOOR = 2
+
 STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1,
                  "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1, "high_sga": 1,
                  "cash_hoard": 1, "underlevered": 1,
@@ -708,14 +716,14 @@ def recompute_all():
         # A manual override ALWAYS wins: "active" forces it on (even with no auto signal),
         # "exclude" suppresses a false-positive auto-detection.
         if man_status == "exclude":
-            if total < config.SCORE_THRESHOLD:
+            if total < LEAD_FLOOR:
                 continue                         # not a proactive lead either -> drop it
             is_active, tier = False, ""
         elif man_status == "active":
             is_active = True
             tier = "confirmed" if aflag else ("reported" if activist else "manual")
         else:
-            if total < config.SCORE_THRESHOLD and not aflag and not activist:
+            if total < LEAD_FLOOR and not aflag and not activist:
                 continue
             if aflag:
                 is_active, tier = True, "confirmed"
