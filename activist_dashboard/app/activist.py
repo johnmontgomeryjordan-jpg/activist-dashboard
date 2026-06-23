@@ -21,7 +21,12 @@ import requests
 from . import config, database
 
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
+SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
+
+# Sentinel: the EDGAR query FAILED (network/transient), which is different from a clean
+# "no activist filing." A failed query must never cause us to clear an existing flag.
+ERROR = object()
 # Activist campaigns persist for years -- a 13D filed two summers ago can still be a live
 # situation today (the activist holds a board seat, the stake is unchanged so there's no
 # new amendment to "refresh" the date). We look back two years so long-running campaigns
@@ -91,26 +96,58 @@ def _doc_url(hit, subject_cik10):
     return f"{ARCHIVE}/{int(filer)}/{nod}/{adsh}-index.htm"
 
 
+def _own_accessions(cik10):
+    """The set of accession numbers the company itself FILED (its own submissions feed).
+    A 13D about the company is filed by the activist and won't appear here; a 13D the
+    company filed AS an activist (e.g. IAC reporting its stake in ANGI) WILL appear here.
+    That's how we tell the target from the aggressor. Returns None if the lookup failed."""
+    try:
+        r = _session.get(SUBMISSIONS_URL.format(cik10=cik10), timeout=20)
+        if r.status_code != 200:
+            return None
+        j = r.json()
+    except (requests.RequestException, ValueError):
+        return None
+    recent = (j.get("filings", {}) or {}).get("recent", {}) or {}
+    return set(recent.get("accessionNumber", []) or [])
+
+
+def _hit_adsh(hit):
+    src = hit.get("_source", {})
+    return src.get("adsh") or (hit.get("_id", "").split(":", 1)[0])
+
+
 def latest_activist_filing(cik, window_days=WINDOW_DAYS):
-    """Return the most recent activist filing for one company, or None."""
+    """Most recent activist filing where THIS company is the SUBJECT (target). Returns a
+    dict on a hit, None on a clean 'no such filing', or ERROR if the EDGAR query failed
+    (so the caller knows not to clear an existing flag). Filings the company FILED itself
+    (i.e. it's the activist, not the target) are skipped."""
     from datetime import datetime, timedelta
     cik10 = _pad(cik)
     start = (datetime.utcnow() - timedelta(days=window_days)).date().isoformat()
     end = datetime.utcnow().date().isoformat()
     j = _get({"q": "", "forms": FORMS_PARAM, "ciks": cik10,
               "startdt": start, "enddt": end})
-    if not j:
-        return None
+    if j is None:
+        return ERROR                       # query failed -- do NOT treat as "no filing"
     hits = (j.get("hits", {}) or {}).get("hits", []) or []
     if not hits:
         return None
-    # results come back newest-first when a ciks filter is used
-    best = hits[0]
-    src = best.get("_source", {})
-    form = src.get("form") or (src.get("root_forms") or [""])[0]
-    kind, label = _kind_label(form)
-    return {"kind": kind, "form": form, "label": label,
-            "filed": src.get("file_date"), "url": _doc_url(best, cik10)}
+    own = None                             # the company's own filings (fetched lazily, once)
+    for best in hits:                      # newest-first when a ciks filter is used
+        if own is None:
+            own = _own_accessions(cik10)
+            if own is None:                # couldn't verify -> assume it's a genuine target
+                own = set()
+        adsh = _hit_adsh(best)
+        if adsh and adsh in own:
+            continue                       # the company FILED this -> it's the activist, skip
+        src = best.get("_source", {})
+        form = src.get("form") or (src.get("root_forms") or [""])[0]
+        kind, label = _kind_label(form)
+        return {"kind": kind, "form": form, "label": label,
+                "filed": src.get("file_date"), "url": _doc_url(best, cik10)}
+    return None                            # every hit was self-filed -> not a target
 
 
 def refresh_activist(ciks, window_days=WINDOW_DAYS, clear_missing=True):
@@ -120,19 +157,22 @@ def refresh_activist(ciks, window_days=WINDOW_DAYS, clear_missing=True):
     everyone). A PARTIAL sweep (just the tracked names, e.g. the Run-enrichment button)
     must NOT clear, or it would erase Confirmed situations that live outside the small
     tracked subset. Returns the count of companies flagged in THIS sweep."""
-    flagged = 0
+    flagged = errors = 0
     for cik in ciks:
         try:
             hit = latest_activist_filing(cik, window_days)
         except Exception:
-            hit = None
+            hit = ERROR
         time.sleep(0.15)  # stay well under SEC's 10 req/s
-        if hit:
+        if isinstance(hit, dict):
             database.set_activist_flag(cik, hit["kind"], hit["form"], hit["label"],
                                        hit["filed"], hit["url"])
             flagged += 1
-        elif clear_missing:
+        elif hit is ERROR:
+            errors += 1                    # query failed -> leave any existing flag intact
+        elif clear_missing:                # clean "no filing" -> only the full sweep clears
             database.clear_activist_flag(cik)
     scope = "full" if clear_missing else "partial (non-destructive)"
-    print(f"[activist] swept {len(ciks)} names ({scope}); {flagged} have an active activist filing")
+    print(f"[activist] swept {len(ciks)} names ({scope}); {flagged} have an active "
+          f"activist filing{f'; {errors} query errors (flags kept)' if errors else ''}")
     return flagged
