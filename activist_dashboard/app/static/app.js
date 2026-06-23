@@ -374,6 +374,13 @@ async function submitSituation(cik){
   await loadActiveSituations(); await loadShortlist();
   if(CURRENT_CIK===cik && CURRENT_VIEW==="company") openCompany(cik);
 }
+async function fullSweep(){
+  if(!confirm("Run a full SEC activist sweep across all ~1,489 companies?\n\nThis is the authoritative pass — it adds newly-found situations and clears stale ones (like a mis-attributed filer). It takes ~10 minutes in the background; leave the app deployed and don't redeploy while it runs.")) return;
+  const btn=document.getElementById("sweepBtn"); if(btn){ btn.disabled=true; btn.textContent="↻ Sweeping… (~10 min)"; }
+  try{ const r=await (await fetch("/api/sweep-activists",{method:"POST"})).json();
+    alert(r.message||"Full sweep started.");
+  }catch(e){ alert("Could not start the sweep — try again in a moment."); }
+}
 function openSituationAdd(){
   const pool={}; [...SHORTLIST, ...ACTIVE].forEach(c=>{ if(c&&c.cik) pool[c.cik]={cik:c.cik,company:c.company,ticker:c.ticker}; });
   const list=Object.values(pool).sort((a,b)=>(a.company||"").localeCompare(b.company||""));
