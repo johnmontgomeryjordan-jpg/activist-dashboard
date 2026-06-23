@@ -445,6 +445,28 @@ def api_run_enrichment():
             "Reload the page shortly to see updates."}
 
 
+@app.post("/api/sweep-activists")
+def api_sweep_activists():
+    """Run the FULL universe activist sweep on demand. This is the AUTHORITATIVE pass:
+    it checks all ~1,489 names, ADDS newly-found Confirmed situations, and CLEARS stale
+    ones (e.g. a mis-attributed filer like IAC, or a campaign that has ended). It normally
+    runs only on boot and at 4 PM ET; this lets a partner force it without a redeploy.
+    Runs in the background (~10 minutes) so the request returns immediately."""
+    def _job():
+        import traceback
+        try:
+            pipeline.refresh_activist(full=True)
+        except Exception:
+            print("[sweep-activists] failed")
+            traceback.print_exc()
+        print("[sweep-activists] done")
+    threading.Thread(target=_job, daemon=True).start()
+    return {"ok": True, "message": "Full SEC activist sweep started across all ~1,489 "
+            "companies. This takes about 10 minutes and runs in the background — watch the "
+            "logs for '[activist] swept 1489 names (full)', then reload this page. Stale "
+            "flags (like a mis-attributed filer) clear and any newly-found situations appear."}
+
+
 @app.api_route("/api/send-test-digest", methods=["GET", "POST"])
 def api_send_test_digest():
     subs = database.get_subscribers()
