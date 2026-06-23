@@ -15,7 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from . import config, database, pipeline, emailer
+from . import config, database, pipeline, emailer, scoring
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -77,14 +77,54 @@ def api_shortlist():
 
 @app.get("/api/active-situations")
 def api_active_situations():
-    """Flagged companies where an activist is already engaged (too late to pitch)."""
-    rows = database.get_active_situations(limit=40)
+    """Companies where an activist is already engaged, tagged by confidence tier:
+    confirmed (SEC filing), reported (named in the press), or manual (partner-tagged)."""
+    rows = database.get_active_situations(limit=60)
     notes = database.get_notes_set()
+    manual = database.get_manual_situations()
     for c in rows:
         prior = database.prior_score(c["cik"])
         c["week_change"] = (c["score"] - prior) if prior is not None else None
         c["has_note"] = c["cik"] in notes
+        c["tier"] = c.get("situation_tier") or ""
+        try:
+            c["meta"] = json.loads(c.get("situation_meta") or "{}")
+        except (ValueError, TypeError):
+            c["meta"] = {}
+        c["manual"] = c["cik"] in manual
     return {"companies": rows}
+
+
+@app.post("/api/situation")
+async def api_situation(request: Request):
+    """Manually add a company to (action=active) or remove it from (action=exclude)
+    Active Situations, or drop the override (action=clear). Overrides always win over
+    automated detection; every change is recorded in the audit trail."""
+    data = await request.json()
+    cik = (data.get("cik") or "").strip()
+    action = (data.get("action") or "").strip()
+    actor = (data.get("actor") or "").strip()
+    note = (data.get("note") or "").strip()
+    company = (data.get("company") or "").strip()
+    if not cik or action not in ("active", "exclude", "clear"):
+        return JSONResponse({"ok": False, "error": "need cik and action in active|exclude|clear"},
+                            status_code=400)
+    if action == "clear":
+        database.clear_manual_situation(cik, actor, note, company)
+    else:
+        database.set_manual_situation(cik, action, actor, note, company)
+    try:
+        scoring.recompute_all()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+    return {"ok": True, "status": "" if action == "clear" else action}
+
+
+@app.get("/api/situation-audit")
+def api_situation_audit(cik: str = None):
+    """The manual-override audit trail (all, or for one company)."""
+    return {"audit": database.get_situation_audit(cik, limit=200)}
 
 
 @app.get("/api/watchlist")
@@ -210,6 +250,12 @@ def api_company(cik: str):
         evidence = []
 
     try:
+        situation_meta = json.loads(score.get("situation_meta") or "{}")
+    except (ValueError, TypeError):
+        situation_meta = {}
+    manual_sit = database.get_manual_situation(cik)
+
+    try:
         fraw = json.loads(fund.get("raw") or "{}")
     except (ValueError, TypeError):
         fraw = {}
@@ -229,11 +275,16 @@ def api_company(cik: str):
 
     return {
         "ok": True,
+        "cik": cik,
         "ticker": ticker,
         "company": score.get("company"),
         "score": score.get("score"),
         "vuln": score.get("vuln"),
         "active_situation": score.get("active_situation"),
+        "situation_tier": score.get("situation_tier") or "",
+        "situation_meta": situation_meta,
+        "manual_situation": manual_sit.get("status") or "",
+        "situation_audit": database.get_situation_audit(cik, limit=20),
         "signals": score.get("signals"),
         "evidence": evidence,
         "first_flagged": score.get("first_flagged"),
