@@ -624,6 +624,7 @@ async function renderPitchKit(){
 function fmtMetricVal(key,v){
   if(v==null) return "—";
   if(key==="pb_ratio") return fmtNum(v)+"x";
+  if(key==="ev_ebitda") return v.toFixed(1)+"x";
   return (v*100).toFixed(1)+"%";
 }
 function finCard(m){
