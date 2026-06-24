@@ -28,6 +28,9 @@ from . import config, database, pitch
 MIN_PEERS = 5
 # 1-yr stock return must lag the S&P 500 by at least this much (in return terms) to flag.
 TSR_LAG_1Y = -0.15
+# 3-yr CUMULATIVE return must lag the S&P by at least this much (30 pts) to flag a
+# structural, multi-year underperformer (a bigger bar than the 1-yr gate, by design).
+TSR_LAG_3Y = -0.30
 
 # We STORE any company that shows at least this many signal points (plus all active
 # situations), then RANK them by the 0-92 vulnerability index and surface the top of the
@@ -372,13 +375,18 @@ def _severity(key, r, t, e):
         return _depth_low("ev_ebitda", r, t, e)
     if key == "high_goodwill":
         return _depth_high("goodwill_to_assets", r, t, e)
-    if key in ("weak_tsr_1y", "weak_tsr_3y"):
-        ret = r.get("tsr_1y" if key == "weak_tsr_1y" else "tsr_3y")
-        bench = r.get("_spy_1y")
+    if key == "weak_tsr_1y":
+        ret, bench = r.get("tsr_1y"), r.get("_spy_1y")
         if ret is None or bench is None:
             return 0.5
         gap = bench - ret  # positive = underperformance vs the index
         return _clamp((gap - 0.15) / 0.50)  # 15pts behind -> 0, 65pts behind -> 1
+    if key == "weak_tsr_3y":
+        ret, bench = r.get("tsr_3y"), r.get("_spy_3y")
+        if ret is None or bench is None:
+            return 0.5
+        gap = bench - ret
+        return _clamp((gap - 0.30) / 1.20)  # 30pts behind -> 0, 150pts behind -> 1
     if key == "low_margin":
         return _depth_low("operating_margin", r, t, e)
     if key == "low_roa":
@@ -527,18 +535,24 @@ def _period_label(raw):
 
 
 def _tsr_evidence(key, r):
-    metric = "tsr_1y" if key == "weak_tsr_1y" else "tsr_3y"
+    if key == "weak_tsr_1y":
+        metric, bench, span, src = "tsr_1y", r.get("_spy_1y"), "past year", "Finnhub (price return)"
+        period = "trailing 1 yr"
+    else:
+        metric, bench, span, src = "tsr_3y", r.get("_spy_3y"), "past 3 years", "Twelve Data (monthly closes)"
+        period = "trailing 3 yr"
     ret = r.get(metric)
-    bench = r.get("_spy_1y")
     if bench is not None and ret is not None:
         excess = (ret - bench) * 100
-        ctx = (f"underperformed the S&P 500 by {abs(excess):.0f} pts over the past year "
+        ctx = (f"underperformed the S&P 500 by {abs(excess):.0f} pts over the {span} "
                f"(stock {ret * 100:+.0f}% vs index {bench * 100:+.0f}%)")
+        # add the 5-yr figure as extra color when this is the 3-yr card
+        if key == "weak_tsr_3y" and r.get("tsr_5y") is not None:
+            ctx += f"; {r['tsr_5y'] * 100:+.0f}% over 5 years"
     else:
-        ctx = "lagged the broader market over the past year"
-    return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric("tsr_1y", ret),
-            "context": ctx, "inputs": "", "period": "trailing 1 yr",
-            "source": "Finnhub (price return)", "url": None}
+        ctx = f"lagged the broader market over the {span}"
+    return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric(metric, ret),
+            "context": ctx, "inputs": "", "period": period, "source": src, "url": None}
 
 
 def _gov_evidence(key, r):
@@ -750,7 +764,8 @@ def recompute_all():
             "revenue_growth": f.get("revenue_growth"), "sga_pct": f.get("sga_pct"),
             "cash_to_assets": f.get("cash_to_assets"), "debt_to_assets": f.get("debt_to_assets"),
             "pb_ratio": comp.get("pb_ratio"), "tsr_1y": comp.get("tsr_1y"),
-            "tsr_3y": comp.get("tsr_3y"), "market_cap": comp.get("market_cap"),
+            "tsr_3y": comp.get("tsr_3y"), "tsr_5y": comp.get("tsr_5y"),
+            "market_cap": comp.get("market_cap"),
             "ev_ebitda": ev_ebitda, "goodwill_to_assets": goodwill_to_assets,
             "name": comp.get("name") or f.get("ticker"), "raw": raw,
         })
@@ -763,6 +778,14 @@ def recompute_all():
         spy_1y = float(database.get_meta("spy_1y"))
     except (TypeError, ValueError):
         spy_1y = None
+    try:
+        spy_3y = float(database.get_meta("spy_3y"))
+    except (TypeError, ValueError):
+        spy_3y = None
+    try:
+        spy_5y = float(database.get_meta("spy_5y"))
+    except (TypeError, ValueError):
+        spy_5y = None
     gov = database.get_all_governance()
     ins_all = database.get_all_insider()
     votes_all = database.get_all_votes()
@@ -787,6 +810,8 @@ def recompute_all():
         t = th.get(r["sector"], {})
         e = ext.get(r["sector"], {})
         r["_spy_1y"] = spy_1y
+        r["_spy_3y"] = spy_3y
+        r["_spy_5y"] = spy_5y
         trig = []
 
         def low(metric):
@@ -812,6 +837,9 @@ def recompute_all():
         if (r.get("tsr_1y") is not None and spy_1y is not None
                 and (r["tsr_1y"] - spy_1y) <= TSR_LAG_1Y):
             trig.append("weak_tsr_1y")
+        if (r.get("tsr_3y") is not None and spy_3y is not None
+                and (r["tsr_3y"] - spy_3y) <= TSR_LAG_3Y):
+            trig.append("weak_tsr_3y")
         if low("roa"):
             trig.append("low_roa")
         if r.get("revenue_growth") is not None and (r["revenue_growth"] < 0 or low("revenue_growth")):
