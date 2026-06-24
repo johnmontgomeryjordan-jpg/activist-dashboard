@@ -446,11 +446,13 @@ def api_run_enrichment():
         import traceback
         for name, fn in (("insider", pipeline.refresh_insider),
                          ("votes", pipeline.refresh_votes),
+                         ("governance", pipeline.refresh_governance),
                          ("activist", lambda: pipeline.refresh_activist(full=False)),
                          ("earnings", pipeline.refresh_earnings),
                          ("sentiment", pipeline.refresh_sentiment),
                          ("contacts", pipeline.refresh_contacts),
                          ("ir-contacts", pipeline.refresh_ir_contacts),
+                         ("exec-reactions", pipeline.refresh_exec_reactions),
                          ("prices", pipeline.refresh_prices)):
             try:
                 fn()
