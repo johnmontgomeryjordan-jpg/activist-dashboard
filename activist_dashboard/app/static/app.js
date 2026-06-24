@@ -5,6 +5,9 @@ const fmtCap = n => { if(n==null) return "—";
 const fmtPct = n => n==null? "—" : (n*100).toFixed(1)+"%";
 const fmtNum = n => n==null? "—" : (typeof n==="number"? n.toLocaleString(undefined,{maximumFractionDigits:2}) : n);
 const fmtDate = s => { if(!s) return ""; try{return new Date(s).toLocaleDateString(undefined,{month:"short",day:"numeric"});}catch(e){return s;} };
+const _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtDateY = s => { if(!s) return ""; const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s)); return m? _MON[+m[2]-1]+" "+(+m[3])+", "+m[1] : String(s); };
+const fmtDateMD = s => { if(!s) return ""; const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s)); return m? _MON[+m[2]-1]+" "+(+m[3]) : fmtDate(s); };
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const secUrl = cik => `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(cik)}&type=&dateb=&owner=include&count=40`;
 
@@ -300,7 +303,7 @@ function asRow(c){
   const headline=c.top_item_url
     ? `<a href="${esc(c.top_item_url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(c.top_item_title||m.label||"details")}</a>`
     : esc(c.top_item_title||m.label||"—");
-  const dt=m.date?`<span class="as-date">${esc(m.date)}</span>`:"";
+  const dt=m.date?`<span class="as-date">${esc(fmtDateMD(m.date))}</span>`:"";
   const pin=(c.manual&&c.tier!=="manual")?`<span class="as-pin" title="manually pinned">📌</span>`:"";
   return `<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
     <div><span class="co-link">${esc(c.company)}</span>${pin}<div class="co-meta">${esc(c.ticker||"")}</div></div>
@@ -453,8 +456,8 @@ function renderCompany(){
   const facts=`<div class="cv-facts">
     ${kvMini("Market cap", fmtCap(d.market_cap))}
     ${kvMini("Price / book", fmtNum((d.financials||{}).pb_ratio))}
-    ${kvMini("vs S&amp;P 1-yr", (d.tsr&&d.tsr.gap!=null)?((d.tsr.gap>0?"+":"")+(d.tsr.gap*100).toFixed(0)+" pts"):"—")}
-    ${kvMini("Next earnings", (d.earnings&&d.earnings.next_date)?esc(d.earnings.next_date):"—")}</div>`;
+    ${kvMini("vs S&amp;P 1-yr", (d.tsr&&d.tsr.gap!=null)?`<span style="color:${d.tsr.gap<0?'var(--hot)':'var(--ok)'}">${(d.tsr.gap>0?"+":"")+(d.tsr.gap*100).toFixed(0)+" pts"}</span>`:"—")}
+    ${kvMini("Next earnings", (d.earnings&&d.earnings.next_date)?fmtDateY(d.earnings.next_date):"—")}</div>`;
   const trend = (d.history&&d.history.length>=2)
     ? `<div class="cv-trend"><span class="lab">Rating trend</span>${sparkline(d.history,vi.col)}<span style="color:${vi.col}; font-size:12px; font-weight:600;">${d.week_change>0?"▲ rising":d.week_change<0?"▼ easing":"steady"}</span></div>`
     : "";
@@ -464,7 +467,7 @@ function renderCompany(){
     const tm=tierMeta(stier);
     const url=sm.url||(d.activist&&d.activist.url);
     const lab=sm.label||(d.activist&&d.activist.label)||"Activist engaged";
-    const dt=sm.date?` (${esc(sm.date)})`:"";
+    const dt=sm.date?` (${esc(fmtDateMD(sm.date))})`:"";
     warn=`<div class="cv-warn" style="border-color:color-mix(in srgb, ${tm.col} 50%, transparent)">
       <span class="as-tier-badge cv-tierbadge" style="background:color-mix(in srgb, ${tm.col} 16%, transparent);color:${tm.col};border-color:color-mix(in srgb, ${tm.col} 45%, transparent)">${tm.label}</span>
       ⚠ Activist already engaged — ${esc(lab)}${dt}${url?` <a href="${esc(url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">view source ↗</a>`:""}
@@ -479,7 +482,7 @@ function renderCompany(){
     <div class="cv-back" onclick="showView(CURRENT_VIEW)"><i class="ti ti-arrow-left"></i> Back</div>
     <div class="cv-head">
       <div><div class="cv-title">${esc(d.company)}</div>
-        <div class="cv-meta">${[d.ticker,o.sector||o.industry,o.exchange].filter(Boolean).map(esc).join(" · ")}${d.first_flagged?` · first flagged ${esc(d.first_flagged)}`:""}</div></div>
+        <div class="cv-meta">${[d.ticker,o.sector||o.industry,o.exchange].filter(Boolean).map(esc).join(" · ")}${d.first_flagged?` · first flagged ${esc(fmtDateY(d.first_flagged))}`:""}</div></div>
       <div class="cv-actions">
         <button class="ghost" id="cvStar" onclick="toggleStar('${esc(d.cik)}',this)">${star}</button>
         <button class="ghost" onclick="openSituationModal('${esc(d.cik)}')">⚑ Active situation</button>
@@ -516,9 +519,9 @@ function pitchStrip(d){
   if(/earnings miss|guidance cut/i.test(sig)) cat.push("Earnings miss");
   if(/impairment/i.test(sig)) cat.push("Impairment");
   const ernDate=(d.earnings&&d.earnings.next_date)?d.earnings.next_date:null;
-  const tpills=[...(ernDate?["Earnings "+ernDate]:[]),...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
+  const tpills=[...(ernDate?["Earnings "+fmtDateMD(ernDate)]:[]),...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
   const timingBody=(ernDate||cat.length)
-    ? `${tpills}${ernDate?`<br>Next print <b>${esc(ernDate)}</b> — often the most receptive window to reach out.`:""}`
+    ? `${tpills}${ernDate?`<br>Next print <b>${esc(fmtDateY(ernDate))}</b> — often the most receptive window to reach out.`:""}`
     : `<span class="gov-note">No near-term catalyst on the calendar.</span>`;
   const ct=d.contacts||{};
   const ctRow=(label,name,email,phone)=>{
@@ -539,6 +542,36 @@ function pitchStrip(d){
 
 /* ===== Pitch kit (home) ===== */
 let PK_LEAD_CIK=null;
+/* The "publish day" flips at 4 PM ET (when the daily rebuild + digest run), so the lead
+   of the day is stable through the trading day and changes with the fresh data. */
+function publishDayIndex(){
+  try{
+    const p=Object.fromEntries(new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",
+      year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",hour12:false})
+      .formatToParts(new Date()).map(x=>[x.type,x.value]));
+    let ms=Date.UTC(+p.year,+p.month-1,+p.day);
+    if(+p.hour<16) ms-=86400000;                 // before 4 PM ET -> still on yesterday's kit
+    return Math.floor(ms/86400000);
+  }catch(e){ const n=new Date(); return Math.floor((n-new Date(n.getFullYear(),0,0))/86400000); }
+}
+/* A short, DISTINCTIVE descriptor so target cards don't all read the same generic signals. */
+const ARCH_LABEL={cash_laggard:"Cash-rich laggard",turnaround:"Operational turnaround",
+  value:"Cheap / break-up candidate",governance:"Entrenched · governance",default:"Multi-signal profile"};
+const _DISTINCT=["cash-heavy","staggered","poison pill","dual-class","insider selling","say-on-pay",
+  "ceo/exec departure","impairment","under-levered","1-yr stock return","shrinking","bloated sg&a",
+  "low return on assets","low operating margin","cheap"];
+function distinctiveSignal(sig){
+  const parts=(sig||"").split(" + ").map(s=>s.trim()).filter(Boolean);
+  if(!parts.length) return "";
+  for(const key of _DISTINCT){ const hit=parts.find(p=>p.toLowerCase().includes(key)); if(hit) return hit; }
+  return parts[0];
+}
+function leadHook(c){
+  let arch="";
+  try{ const p=typeof c.pitch==="string"?JSON.parse(c.pitch||"{}"):(c.pitch||{}); arch=ARCH_LABEL[p.archetype]||""; }catch(e){}
+  return [arch,distinctiveSignal(c.signals)].filter(Boolean).join(" · ");
+}
+const NEWS_RANK={activist:0,exec:1,distress:2,proxy:3,movers:4,market:5};
 function pkPickLead(){
   const pool=(SHORTLIST||[]).filter(c=>!c.active_situation);
   if(!pool.length) return null;
@@ -546,8 +579,8 @@ function pkPickLead(){
   let cands=pool.filter(hasCatalyst).sort((a,b)=>(b.vuln||0)-(a.vuln||0));
   if(!cands.length) cands=pool.slice().sort((a,b)=>(b.vuln||0)-(a.vuln||0));
   const top=cands.slice(0,8);
-  const now=new Date(); const doy=Math.floor((now-new Date(now.getFullYear(),0,0))/86400000);
-  return top[doy%top.length];
+  const idx=((publishDayIndex()%top.length)+top.length)%top.length;
+  return top[idx];
 }
 function pkHero(d){
   const vi=vulnInfo(d.vuln); const pitch=d.pitch||{}; const points=pitch.points||[]; const o=d.overview||{};
@@ -577,12 +610,14 @@ async function renderPitchKit(){
   }
   const tg=document.getElementById("pkTargets");
   if(tg){ const targets=(SHORTLIST||[]).filter(c=>c.cik!==PK_LEAD_CIK).slice(0,4);
-    tg.innerHTML=targets.map(c=>{ const i=vulnInfo(c.vuln); const hook=(c.signals||"").split(" + ").slice(0,2).join(" · ");
+    tg.innerHTML=targets.map(c=>{ const i=vulnInfo(c.vuln); const hook=leadHook(c);
       return `<div class="nr-card" style="flex:1 1 260px; align-items:flex-start;" onclick="openCompany('${esc(c.cik)}')">
         <span class="vchip ${i.cls}">${c.vuln==null?"—":c.vuln}</span>
         <div class="nr-co">${esc(c.company)}<div class="meta">${esc(c.ticker||"")}${hook?" · "+esc(hook):""}</div></div></div>`; }).join("")||`<div class="empty">—</div>`; }
   const nEl=document.getElementById("pkNews");
-  if(nEl){ const news=(FEED.news||[]).slice(0,5); nEl.innerHTML=news.length?news.map(newsItemRow).join(""):`<div class="empty">No headlines yet.</div>`; }
+  if(nEl){ const news=(FEED.news||[]).slice()
+      .sort((a,b)=>(NEWS_RANK[newsCategory(a.headline)]??9)-(NEWS_RANK[newsCategory(b.headline)]??9)).slice(0,5);
+    nEl.innerHTML=news.length?news.map(newsItemRow).join(""):`<div class="empty">No headlines yet.</div>`; }
   const fEl=document.getElementById("pkFilings");
   if(fEl){ const fil=(FEED.filings||[]).slice(0,5); fEl.innerHTML=fil.length?fil.map(filingItemRow).join(""):`<div class="empty">No filings yet.</div>`; }
 }
