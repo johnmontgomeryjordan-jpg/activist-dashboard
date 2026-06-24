@@ -93,6 +93,10 @@ CREATE TABLE IF NOT EXISTS company_profile (
 CREATE TABLE IF NOT EXISTS prices (
     cik TEXT PRIMARY KEY, series TEXT, last_close REAL, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS exec_reactions (
+    cik TEXT PRIMARY KEY, ticker TEXT, filed_at TEXT, event_date TEXT,
+    move REAL, bench_move REAL, abnormal REAL, title TEXT, url TEXT, updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS company_contacts (
     cik TEXT PRIMARY KEY, ir_name TEXT, ir_email TEXT, ir_phone TEXT,
     comms_name TEXT, comms_email TEXT, comms_phone TEXT, source_url TEXT, updated_at TEXT
@@ -796,6 +800,33 @@ def get_prices(cik):
         except (ValueError, TypeError):
             d["series"] = []
         return d
+
+
+def upsert_exec_reaction(cik, ticker, filed_at, event_date, move, bench_move,
+                         abnormal, title, url):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO exec_reactions
+               (cik,ticker,filed_at,event_date,move,bench_move,abnormal,title,url,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 ticker=excluded.ticker, filed_at=excluded.filed_at,
+                 event_date=excluded.event_date, move=excluded.move,
+                 bench_move=excluded.bench_move, abnormal=excluded.abnormal,
+                 title=excluded.title, url=excluded.url, updated_at=excluded.updated_at""",
+            (cik, ticker, filed_at, event_date, move, bench_move, abnormal,
+             title, url, now_iso()))
+
+
+def get_exec_reaction(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM exec_reactions WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def get_all_exec_reactions():
+    with get_conn() as conn:
+        return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM exec_reactions")}
 
 
 def _cutoff(days):
