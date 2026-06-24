@@ -190,6 +190,14 @@ def _point(key, r):
     if key in ("cheap_abs", "cheap_pb"):
         pb = r.get("pb_ratio")
         return f"Trades at {pb:.1f}x book — a cheap entry point below its peer cutoff." if pb else "Trades cheap to book value — a cheap entry point."
+    if key == "cheap_ev_ebitda":
+        ev = r.get("ev_ebitda")
+        return (f"Values at just {ev:.1f}x EV/EBITDA, bottom-quartile for its sector — a textbook undervaluation argument."
+                if ev else "Trades at a bottom-quartile EV/EBITDA multiple — a textbook undervaluation argument.")
+    if key == "high_goodwill":
+        pct = _pct(r.get("goodwill_to_assets"))
+        return (f"Goodwill is {pct} of assets — a stretched acquisition history an activist can attack as value-destructive M&A."
+                if pct else "Goodwill dominates the balance sheet — a stretched acquisition history an activist can attack as value-destructive M&A.")
     if key == "weak_growth":
         return f"Revenue growth of {_pct(r.get('revenue_growth'),1) or 'near zero'} lags the sector — a stalling top line."
     if key == "underlevered":
@@ -213,10 +221,10 @@ def _point(key, r):
 
 # Order points by how compelling they are in a pitch (not raw score weight).
 _POINT_PRIORITY = [
-    "cash_hoard", "weak_tsr_1y", "low_margin", "high_sga", "low_roa",
-    "cheap_pb", "cheap_abs", "weak_growth", "gov_classified", "gov_poison",
-    "gov_dual", "ceo_departure", "weak_vote_support", "insider_selling",
-    "earnings_miss", "underlevered",
+    "cash_hoard", "weak_tsr_1y", "cheap_ev_ebitda", "low_margin", "high_sga",
+    "low_roa", "cheap_pb", "cheap_abs", "high_goodwill", "weak_growth",
+    "gov_classified", "gov_poison", "gov_dual", "ceo_departure",
+    "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",
 ]
 
 
