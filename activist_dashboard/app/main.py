@@ -253,6 +253,10 @@ def api_company(cik: str):
         situation_meta = json.loads(score.get("situation_meta") or "{}")
     except (ValueError, TypeError):
         situation_meta = {}
+    try:
+        pitch_obj = json.loads(score.get("pitch") or "{}")
+    except (ValueError, TypeError):
+        pitch_obj = {}
     manual_sit = database.get_manual_situation(cik)
 
     try:
@@ -287,6 +291,7 @@ def api_company(cik: str):
         "situation_audit": database.get_situation_audit(cik, limit=20),
         "signals": score.get("signals"),
         "evidence": evidence,
+        "pitch": pitch_obj,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
         "note": database.get_note(cik),
