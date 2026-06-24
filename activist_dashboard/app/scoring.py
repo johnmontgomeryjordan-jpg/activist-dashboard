@@ -45,7 +45,8 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "high_sga": 1, "cash_hoard": 1, "underlevered": 1, "high_goodwill": 1,
                  "gov_classified": 1, "gov_poison": 1, "gov_dual": 1,
                  "insider_selling": 1, "insider_buying": 0,
-                 "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2}
+                 "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2,
+                 "lags_own_peers": 2}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
@@ -103,6 +104,7 @@ LABELS = {
     "weak_vote_support": "weak say-on-pay support",
     "overpaid_ceo": "CEO pay rising while the stock lags",
     "exec_reaction_drop": "stock dropped on a leadership-change 8-K",
+    "lags_own_peers": "trails its self-selected proxy peer group",
 }
 
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
@@ -124,6 +126,12 @@ COMP_RISE_FLOOR = 0.05
 REACTION_KEYS = ("exec_reaction_drop",)
 # Fire when the stock fell at least this much MORE than the market on the announcement day.
 REACTION_DROP_FLOOR = -0.03
+
+# Self-selected proxy peer group (from the DEF 14A). lags_own_peers fires when the
+# company's 1-yr TSR trails the MEDIAN of the peers it named itself, by PEER_LAG.
+PEER_KEYS = ("lags_own_peers",)
+PEER_MIN = 5            # need at least this many matched peers (with TSR) to judge
+PEER_LAG = 0.05         # company must trail the peer-median 1-yr return by >= 5 pts
 
 # Governance red flags (from DEF 14A). Boolean signals -> their own evidence cards.
 GOV_KEYS = ("gov_classified", "gov_poison", "gov_dual")
@@ -424,6 +432,13 @@ def _severity(key, r, t, e):
         if abn is None:
             return 0.5
         return _clamp((-abn - 0.03) / 0.12)          # -3% -> 0, -15% -> 1
+    if key == "lags_own_peers":
+        pa = r.get("_peers") or {}
+        med = (pa.get("median") or {}).get("tsr_1y")
+        st = (pa.get("self") or {}).get("tsr_1y")
+        if med is None or st is None:
+            return 0.5
+        return _clamp((med - st - 0.05) / 0.40)       # 5pts behind -> 0, 45pts behind -> 1
     return 1.0  # governance flags + insider_buying + event accelerants
 
 
@@ -632,6 +647,63 @@ def _reaction_evidence(key, r):
             "source": "SEC 8-K + Twelve Data", "url": rc.get("url")}
 
 
+def _median(xs):
+    xs = sorted(x for x in xs if x is not None)
+    n = len(xs)
+    if n == 0:
+        return None
+    m = n // 2
+    return xs[m] if n % 2 else (xs[m - 1] + xs[m]) / 2.0
+
+
+def _peer_analysis(r, peer_ciks, rec_by_cik):
+    """Build the company-vs-self-selected-peers comparison (for the Peer Analysis tab and
+    the lags_own_peers signal). Only peers we also cover (have a rec for) are included."""
+    peers = []
+    for pc in peer_ciks:
+        pr = rec_by_cik.get(pc)
+        if not pr or pr.get("cik") == r.get("cik"):
+            continue
+        peers.append({"ticker": pr.get("ticker"), "name": pr.get("name"),
+                      "tsr_1y": pr.get("tsr_1y"), "operating_margin": pr.get("operating_margin"),
+                      "pb_ratio": pr.get("pb_ratio"), "ev_ebitda": pr.get("ev_ebitda")})
+    if not peers:
+        return None
+    med = {m: _median([p[m] for p in peers])
+           for m in ("tsr_1y", "operating_margin", "pb_ratio", "ev_ebitda")}
+    self_obj = {"ticker": r.get("ticker"), "name": r.get("name"), "tsr_1y": r.get("tsr_1y"),
+                "operating_margin": r.get("operating_margin"), "pb_ratio": r.get("pb_ratio"),
+                "ev_ebitda": r.get("ev_ebitda")}
+    # rank the company by 1-yr TSR within {self + peers} (1 = best return)
+    rated = [(self_obj["ticker"], self_obj["tsr_1y"])] + [(p["ticker"], p["tsr_1y"]) for p in peers]
+    rated = [(tk, v) for tk, v in rated if v is not None]
+    rated.sort(key=lambda x: x[1], reverse=True)
+    rank = next((i + 1 for i, (tk, _v) in enumerate(rated) if tk == self_obj["ticker"]), None)
+    n_tsr = len([p for p in peers if p["tsr_1y"] is not None])
+    return {"self": self_obj, "peers": peers, "median": med, "n": len(peers),
+            "n_tsr": n_tsr, "rank": rank, "rank_of": len(rated)}
+
+
+def _peer_evidence(key, r):
+    pa = r.get("_peers") or {}
+    med = (pa.get("median") or {}).get("tsr_1y")
+    st = (pa.get("self") or {}).get("tsr_1y")
+    rank, rof, n = pa.get("rank"), pa.get("rank_of"), pa.get("n")
+    parts = []
+    if st is not None and med is not None:
+        parts.append(f"1-yr return of {st * 100:+.0f}% vs the {med * 100:+.0f}% median of the "
+                     f"{n} peers it named in its own proxy")
+    if rank and rof:
+        parts.append(f"ranks {rank} of {rof} in that group")
+    ctx = " — ".join(parts) if parts else f"trails the {n}-company peer group it selected itself"
+    return {"key": key, "label": LABELS.get(key, key),
+            "value": (f"#{rank}/{rof}" if rank and rof else ""),
+            "context": ctx,
+            "inputs": "self-selected compensation peer group (DEF 14A) vs 1-yr total return",
+            "period": "trailing 1 yr", "source": "SEC DEF 14A + Finnhub",
+            "url": r.get("_gov_url")}
+
+
 def _struct_evidence(key, r, t):
     if key in ("weak_tsr_1y", "weak_tsr_3y"):
         return _tsr_evidence(key, r)
@@ -773,6 +845,8 @@ def recompute_all():
     # Drop delisted / deregistered / long-dormant names so they can't be pitched,
     # and keep them out of the peer benchmarks too.
     recs = [r for r in recs if not r.get("raw", {}).get("inactive")]
+    # Index by (padded) CIK so a company can be compared against its self-selected peers.
+    rec_by_cik = {r["cik"]: r for r in recs}
 
     try:
         spy_1y = float(database.get_meta("spy_1y"))
@@ -877,6 +951,20 @@ def recompute_all():
             if pc is not None and pc >= COMP_RISE_FLOOR and lags:
                 trig.append("overpaid_ceo")
 
+        # Self-selected proxy peer group: does the company trail the peers it chose itself?
+        peers_list = []
+        if g.get("peers_json"):
+            try:
+                peers_list = json.loads(g["peers_json"]) or []
+            except (ValueError, TypeError):
+                peers_list = []
+        pa = _peer_analysis(r, peers_list, rec_by_cik) if peers_list else None
+        r["_peers"] = pa or {}
+        if pa and pa.get("n_tsr", 0) >= PEER_MIN:
+            pmed = (pa.get("median") or {}).get("tsr_1y")
+            if pmed is not None and r.get("tsr_1y") is not None and r["tsr_1y"] <= pmed - PEER_LAG:
+                trig.append("lags_own_peers")
+
         # Exec-change stock reaction: the stock dropped (vs the S&P) on a leadership 8-K.
         rxn = reactions.get(r["cik"]) or {}
         r["_reaction"] = rxn
@@ -953,6 +1041,8 @@ def recompute_all():
                 evidence.append(_comp_evidence(key, r))
             elif key in REACTION_KEYS:
                 evidence.append(_reaction_evidence(key, r))
+            elif key in PEER_KEYS:
+                evidence.append(_peer_evidence(key, r))
             elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
@@ -994,6 +1084,7 @@ def recompute_all():
             "evidence": evidence,
             "pitch": pitch.build_pitch(r, trig),
             "fin_context": _fin_context(r, t, e),
+            "peer_analysis": r.get("_peers") or {},
             "first_flagged": database.now_iso()[:10],
         })
 
