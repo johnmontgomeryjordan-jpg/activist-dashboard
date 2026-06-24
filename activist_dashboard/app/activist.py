@@ -65,16 +65,16 @@ def _pad(cik):
 
 
 def _get(params):
-    for i in range(3):
+    for i in range(4):
         try:
             r = _session.get(EFTS_URL, params=params, timeout=25)
             if r.status_code == 200:
                 return r.json()
-            if r.status_code == 429:
-                time.sleep(1.5 * (i + 1)); continue
+            if r.status_code == 429:               # rate-limited -- back off and retry
+                time.sleep(2.0 * (i + 1)); continue
             return None
         except (requests.RequestException, ValueError):
-            time.sleep(1.0 * (i + 1))
+            time.sleep(1.5 * (i + 1))
     return None
 
 
@@ -127,29 +127,66 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
     return None                            # company only appears as a filer -> not a target
 
 
+def _sweep_one(cik, window_days, clear_missing):
+    """Check one CIK and apply the result. Returns 'flagged', 'cleared', 'noop', or
+    'error' (the query failed -- leave any existing flag untouched)."""
+    try:
+        hit = latest_activist_filing(cik, window_days)
+    except Exception:
+        hit = ERROR
+    if isinstance(hit, dict):
+        database.set_activist_flag(cik, hit["kind"], hit["form"], hit["label"],
+                                   hit["filed"], hit["url"])
+        return "flagged"
+    if hit is ERROR:
+        return "error"
+    if clear_missing:                          # clean "not a subject" -> only full sweep clears
+        database.clear_activist_flag(cik)
+        return "cleared"
+    return "noop"
+
+
 def refresh_activist(ciks, window_days=WINDOW_DAYS, clear_missing=True):
-    """Sweep the given CIKs for recent activist filings, setting an activist flag for
-    any that have one. `clear_missing` controls whether names WITHOUT a hit get their
-    flag cleared -- only the FULL universe sweep should clear (it authoritatively checks
-    everyone). A PARTIAL sweep (just the tracked names, e.g. the Run-enrichment button)
-    must NOT clear, or it would erase Confirmed situations that live outside the small
-    tracked subset. Returns the count of companies flagged in THIS sweep."""
-    flagged = errors = 0
+    """Sweep the given CIKs for recent activist filings where the company is the SUBJECT.
+    `clear_missing` controls whether names WITHOUT a hit get their flag cleared -- only the
+    FULL universe sweep should clear (it authoritatively checks everyone); a PARTIAL sweep
+    (tracked names only, e.g. the Run-enrichment button) must NOT clear, or it would erase
+    Confirmed situations outside the small tracked subset.
+
+    SEC rate-limits aggressively, so a sweep this size always sheds a few transient errors.
+    Those names keep their existing flag (never wrongly cleared), and -- on a full sweep --
+    get a SECOND, slower pass so a stale or mis-attributed flag (e.g. a filer like IAC)
+    reliably clears within a single run instead of lingering until the error happens to
+    clear on its own. Returns the count flagged in this sweep."""
+    flagged = 0
+    errored = []
     for cik in ciks:
-        try:
-            hit = latest_activist_filing(cik, window_days)
-        except Exception:
-            hit = ERROR
-        time.sleep(0.15)  # stay well under SEC's 10 req/s
-        if isinstance(hit, dict):
-            database.set_activist_flag(cik, hit["kind"], hit["form"], hit["label"],
-                                       hit["filed"], hit["url"])
+        res = _sweep_one(cik, window_days, clear_missing)
+        time.sleep(0.2)                        # stay comfortably under SEC's 10 req/s
+        if res == "flagged":
             flagged += 1
-        elif hit is ERROR:
-            errors += 1                    # query failed -> leave any existing flag intact
-        elif clear_missing:                # clean "no filing" -> only the full sweep clears
-            database.clear_activist_flag(cik)
+        elif res == "error":
+            errored.append(cik)
+
+    retried_ok = 0
+    if errored:
+        time.sleep(2.0)                        # let any rate-limit window cool off
+        still = []
+        for cik in errored:
+            res = _sweep_one(cik, window_days, clear_missing)
+            time.sleep(0.5)                    # slower pace on the recovery pass
+            if res == "error":
+                still.append(cik)
+            else:
+                retried_ok += 1
+                if res == "flagged":
+                    flagged += 1
+        errored = still
+
     scope = "full" if clear_missing else "partial (non-destructive)"
-    print(f"[activist] swept {len(ciks)} names ({scope}); {flagged} have an active "
-          f"activist filing{f'; {errors} query errors (flags kept)' if errors else ''}")
+    tail = f"; {len(errored)} still erroring after retry (flags kept)" if errored else ""
+    if retried_ok:
+        tail = f"; recovered {retried_ok} on retry" + tail
+    print(f"[activist] swept {len(ciks)} names ({scope}); "
+          f"{flagged} have an active activist filing{tail}")
     return flagged
