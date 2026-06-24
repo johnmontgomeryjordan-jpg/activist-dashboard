@@ -205,6 +205,16 @@ def _point(key, r):
         if d and g:
             return f"Down {d} over the year and {g} points behind the market — a cheap, frustrated shareholder base."
         return "Has badly lagged the market over the past year — a frustrated shareholder base."
+    if key == "lags_own_peers":
+        pa = r.get("_peers") or {}
+        rank, rof = pa.get("rank"), pa.get("rank_of")
+        med = (pa.get("median") or {}).get("tsr_1y")
+        st = (pa.get("self") or {}).get("tsr_1y")
+        if rank and rof and st is not None and med is not None:
+            return (f"Ranks {rank} of {rof} on 1-yr return against the peer group it chose itself "
+                    f"({st * 100:+.0f}% vs the {med * 100:+.0f}% peer median) — underperformance by "
+                    f"its own yardstick.")
+        return "Trails the compensation peer group it selected itself — underperformance by its own yardstick."
     if key == "weak_tsr_3y":
         t3 = r.get("tsr_3y"); sp = r.get("_spy_3y")
         if t3 is not None and sp is not None:
@@ -260,9 +270,9 @@ def _point(key, r):
 
 # Order points by how compelling they are in a pitch (not raw score weight).
 _POINT_PRIORITY = [
-    "cash_hoard", "overpaid_ceo", "exec_reaction_drop", "weak_tsr_1y", "weak_tsr_3y",
-    "cheap_ev_ebitda", "low_margin", "high_sga", "low_roa", "cheap_pb", "cheap_abs",
-    "high_goodwill", "weak_growth", "gov_classified", "gov_poison", "gov_dual",
+    "cash_hoard", "overpaid_ceo", "exec_reaction_drop", "lags_own_peers", "weak_tsr_1y",
+    "weak_tsr_3y", "cheap_ev_ebitda", "low_margin", "high_sga", "low_roa", "cheap_pb",
+    "cheap_abs", "high_goodwill", "weak_growth", "gov_classified", "gov_poison", "gov_dual",
     "ceo_departure", "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",
 ]
 
