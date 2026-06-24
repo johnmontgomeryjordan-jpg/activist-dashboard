@@ -693,10 +693,28 @@ def refresh_contacts():
     return fmp.refresh_fmp(_tracked_pairs(), database)
 
 
-def refresh_prices():
+# Charts only need a daily refresh; skip if we already pulled successfully within this window
+# so repeated deploys / manual enrichment runs in one day don't re-burn Twelve Data credits.
+PRICES_MAX_AGE_HOURS = 18
+
+
+def refresh_prices(force=False):
     """Daily price history (for the profile chart) for tracked names via Twelve Data
-    (free; gated by TWELVEDATA_API_KEY). Display-only. Capped to TD_TOP to stay in budget."""
-    return twelvedata.refresh_prices(_tracked_pairs(top=TD_TOP), database)
+    (free; gated by TWELVEDATA_API_KEY). Display-only. Capped to TD_TOP, and skipped if a
+    successful pull happened within PRICES_MAX_AGE_HOURS (credit-budget protection)."""
+    if not force:
+        last = database.get_meta("prices_at")
+        if last:
+            try:
+                if (datetime.utcnow() - datetime.fromisoformat(last)).total_seconds() < PRICES_MAX_AGE_HOURS * 3600:
+                    print("[prices] skipped (refreshed recently)")
+                    return 0
+            except (ValueError, TypeError):
+                pass
+    n = twelvedata.refresh_prices(_tracked_pairs(top=TD_TOP), database)
+    if n:                                  # only stamp on success so a 429 still retries next run
+        database.set_meta("prices_at", datetime.utcnow().isoformat())
+    return n
 
 
 # Multi-year (3/5-yr) TSR moves slowly, so refresh at most this often to conserve the
