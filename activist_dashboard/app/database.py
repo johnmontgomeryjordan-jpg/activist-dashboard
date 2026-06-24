@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS scores (
     cik TEXT PRIMARY KEY, ticker TEXT, company TEXT, market_cap REAL,
     score INTEGER, signals TEXT, top_item_title TEXT, top_item_url TEXT,
     first_flagged TEXT, evidence TEXT, active_situation INTEGER, vuln INTEGER,
-    situation_tier TEXT, situation_meta TEXT, updated_at TEXT
+    situation_tier TEXT, situation_meta TEXT, pitch TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS subscribers (
     email TEXT PRIMARY KEY, created_at TEXT
@@ -128,6 +128,8 @@ def init_db():
             conn.execute("ALTER TABLE scores ADD COLUMN situation_tier TEXT")
         if "situation_meta" not in scols:
             conn.execute("ALTER TABLE scores ADD COLUMN situation_meta TEXT")
+        if "pitch" not in scols:
+            conn.execute("ALTER TABLE scores ADD COLUMN pitch TEXT")
         fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
         if "raw" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
@@ -337,13 +339,14 @@ def replace_scores(rows):
                 """INSERT INTO scores
                    (cik,ticker,company,market_cap,score,signals,top_item_title,
                     top_item_url,first_flagged,evidence,active_situation,vuln,
-                    situation_tier,situation_meta,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    situation_tier,situation_meta,pitch,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (r["cik"], r["ticker"], r["company"], r["market_cap"], r["score"],
                  r["signals"], r["top_item_title"], r["top_item_url"], first,
                  json.dumps(r.get("evidence") or []), r.get("active_situation") or 0,
                  r.get("vuln") or 0, r.get("situation_tier") or "",
-                 json.dumps(r.get("situation_meta") or {}), now_iso()),
+                 json.dumps(r.get("situation_meta") or {}),
+                 json.dumps(r.get("pitch") or {}), now_iso()),
             )
         today = datetime.utcnow().date().isoformat()
         for r in rows:
