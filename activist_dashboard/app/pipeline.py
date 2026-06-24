@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 import requests
 
 from . import (config, database, universe, edgar, news, scoring, emailer,
-               governance, insider, activist, earnings, votes, fmp, twelvedata)
+               governance, insider, activist, earnings, votes, fmp, twelvedata, contacts)
 
 _UNIVERSE = None
 
@@ -681,6 +681,39 @@ def refresh_prices():
     return twelvedata.refresh_prices(_tracked_pairs(), database)
 
 
+# IR / Comms contacts are static, so cache each company for ~45 days, and only fetch a
+# handful of stale ones per run (each fetch is several SEC calls). Free SEC data.
+CONTACTS_MAX_AGE_DAYS = 45
+CONTACTS_PER_RUN = 10
+
+
+def refresh_ir_contacts():
+    """Parse IR + Media contacts from recent 8-K press-release exhibits for tracked names,
+    cached. Feeds the pitch kit's 'who to reach'. Free SEC data."""
+    stale_before = (datetime.utcnow() - timedelta(days=CONTACTS_MAX_AGE_DAYS)).isoformat()
+    pairs = _tracked_pairs()
+    budget = CONTACTS_PER_RUN
+    done = cached = 0
+    for cik in pairs:
+        ex = database.get_company_contacts(cik)
+        if ex and (ex.get("updated_at") or "") >= stale_before:
+            cached += 1
+            continue
+        if budget <= 0:
+            continue
+        budget -= 1
+        try:
+            res = contacts.fetch_contacts(cik, _sec)
+        except Exception:
+            res = None
+        time.sleep(0.2)
+        if res:
+            database.upsert_company_contacts(cik, res)
+            done += 1
+    print(f"[ir-contacts] fetched {done} · cached {cached} (of {len(pairs)} tracked)")
+    return done
+
+
 def daily_rescore_and_digest():
     refresh_data()
     refresh_fundamentals()
@@ -691,6 +724,7 @@ def daily_rescore_and_digest():
     refresh_earnings()
     refresh_sentiment()
     refresh_contacts()
+    refresh_ir_contacts()
     refresh_prices()
     refresh_enrichment()
     return emailer.send_digest()
@@ -709,6 +743,7 @@ def startup_full_refresh():
     refresh_earnings()
     refresh_sentiment()
     refresh_contacts()
+    refresh_ir_contacts()
     refresh_prices()
     refresh_enrichment()
 
