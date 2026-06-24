@@ -34,9 +34,11 @@ from datetime import datetime, timedelta
 
 import requests
 
+from datetime import datetime
+
 from . import (config, database, universe, edgar, news, scoring, emailer,
                governance, insider, activist, earnings, votes, fmp, twelvedata,
-               contacts, reaction)
+               contacts, reaction, longtsr)
 
 _UNIVERSE = None
 
@@ -45,6 +47,12 @@ _UNIVERSE = None
 # staying within the free API tiers. Active situations + the watchlist are always added on
 # top of this.
 ENRICH_TOP = 60
+
+# Twelve Data is the one hard daily cap (800 credits/day free; 1 credit per symbol per
+# pull). So the Twelve-Data-backed passes (price charts, multi-year TSR, exec reactions)
+# cover only the TOP-RANKED leads (plus active situations + watchlist, always included) —
+# a much smaller set than the full ENRICH_TOP enrichment, which uses uncapped/free sources.
+TD_TOP = 30
 
 _HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
@@ -573,9 +581,9 @@ def _tracked_ciks():
     return ciks
 
 
-def _tracked_pairs():
+def _tracked_pairs(top=ENRICH_TOP):
     pairs = {}
-    for s in database.get_scores(limit=ENRICH_TOP):
+    for s in database.get_scores(limit=top):
         if s.get("ticker"):
             pairs[s["cik"]] = s["ticker"]
     for s in database.get_active_situations(limit=40):
@@ -687,8 +695,61 @@ def refresh_contacts():
 
 def refresh_prices():
     """Daily price history (for the profile chart) for tracked names via Twelve Data
-    (free; gated by TWELVEDATA_API_KEY). Display-only."""
-    return twelvedata.refresh_prices(_tracked_pairs(), database)
+    (free; gated by TWELVEDATA_API_KEY). Display-only. Capped to TD_TOP to stay in budget."""
+    return twelvedata.refresh_prices(_tracked_pairs(top=TD_TOP), database)
+
+
+# Multi-year (3/5-yr) TSR moves slowly, so refresh at most this often to conserve the
+# free Twelve Data credit budget even if the daily job / manual runs fire more frequently.
+LONG_TSR_MAX_AGE_DAYS = 6
+
+
+def refresh_long_tsr(force=False):
+    """3-yr / 5-yr total return vs the S&P for tracked names via monthly Twelve Data closes
+    (1 credit/symbol). Cached: skipped if refreshed within LONG_TSR_MAX_AGE_DAYS. Then rescore."""
+    key = twelvedata.key()
+    if not key:
+        print("[long-tsr] no TWELVEDATA_API_KEY set; skipping")
+        return 0
+    if not force:
+        last = database.get_meta("long_tsr_at")
+        if last:
+            try:
+                age = (datetime.utcnow() - datetime.fromisoformat(last)).days
+                if age < LONG_TSR_MAX_AGE_DAYS:
+                    print(f"[long-tsr] skipped (refreshed {age}d ago)")
+                    return 0
+            except (ValueError, TypeError):
+                pass
+    bench = longtsr.fetch([longtsr.BENCH], key).get(longtsr.BENCH) or {}
+    if bench.get("3y") is not None:
+        database.set_meta("spy_3y", bench["3y"])
+    if bench.get("5y") is not None:
+        database.set_meta("spy_5y", bench["5y"])
+    pairs = _tracked_pairs(top=TD_TOP)
+    sym_to_cik = {}
+    for cik, tk in pairs.items():
+        if tk:
+            sym_to_cik.setdefault(tk, cik)
+    syms = list(sym_to_cik)
+    done = 0
+    for i in range(0, len(syms), 25):
+        chunk = syms[i:i + 25]
+        res = longtsr.fetch(chunk, key)
+        for sym, rr in res.items():
+            if rr.get("3y") is None and rr.get("5y") is None:
+                continue
+            database.set_company_market(_unpad(sym_to_cik[sym]),
+                                        tsr_3y=rr.get("3y"), tsr_5y=rr.get("5y"))
+            done += 1
+        time.sleep(1.0)
+    database.set_meta("long_tsr_at", datetime.utcnow().isoformat())
+    print(f"[long-tsr] {done}/{len(syms)} names (S&P 3y={bench.get('3y')} 5y={bench.get('5y')})")
+    try:
+        scoring.recompute_all()
+    except Exception:
+        traceback.print_exc()
+    return done
 
 
 # Exec-change 8-K signals we measure a market reaction for (from edgar classification).
@@ -703,7 +764,7 @@ def refresh_exec_reactions():
     if not key:
         print("[exec-reaction] no TWELVEDATA_API_KEY set; skipping")
         return 0
-    pairs = _tracked_pairs()
+    pairs = _tracked_pairs(top=TD_TOP)
     computed = cached = 0
     for cik, ticker in pairs.items():
         # most-recent exec-change filing in the scoring window
@@ -806,9 +867,10 @@ def daily_rescore_and_digest():
     refresh_sentiment()
     refresh_contacts()
     refresh_ir_contacts()
-    # Exec-reactions before the bulk chart pull so the rarer, higher-value event signal
-    # isn't starved of Twelve Data credits on a tight-budget day (free tier = 800/day).
+    # Exec-reactions + multi-year TSR before the bulk chart pull so these rarer/cached event
+    # & valuation signals aren't starved of Twelve Data credits on a tight day (free=800/day).
     refresh_exec_reactions()
+    refresh_long_tsr()
     refresh_prices()
     refresh_enrichment()
     return emailer.send_digest()
@@ -829,6 +891,7 @@ def startup_full_refresh():
     refresh_contacts()
     refresh_ir_contacts()
     refresh_exec_reactions()       # before refresh_prices: protect event-signal credits
+    refresh_long_tsr()
     refresh_prices()
     refresh_enrichment()
 
