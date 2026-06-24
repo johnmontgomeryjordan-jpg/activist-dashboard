@@ -683,22 +683,33 @@ def refresh_prices():
 
 # IR / Comms contacts are static, so cache each company for ~45 days, and only fetch a
 # handful of stale ones per run (each fetch is several SEC calls). Free SEC data.
-CONTACTS_MAX_AGE_DAYS = 45
-CONTACTS_PER_RUN = 10
+CONTACTS_MAX_AGE_DAYS = 45        # re-check a company at most this often
+CONTACTS_RETRY_DAYS = 20          # but re-try a "found nothing" company sooner (new 8-Ks)
+CONTACTS_PER_RUN = 12
 
 
 def refresh_ir_contacts():
     """Parse IR + Media contacts from recent 8-K press-release exhibits for tracked names,
-    cached. Feeds the pitch kit's 'who to reach'. Free SEC data."""
-    stale_before = (datetime.utcnow() - timedelta(days=CONTACTS_MAX_AGE_DAYS)).isoformat()
+    cached. Feeds the pitch kit's 'who to reach'. Free SEC data.
+
+    On a MISS we still write a timestamped 'tombstone' (empty contacts) so the per-run
+    budget moves on to fresh names next time -- otherwise it spins on the same handful of
+    no-press-release companies forever and never covers the rest of the universe. Misses
+    are retried sooner than hits (a company may file an earnings 8-K with contacts soon)."""
+    now = datetime.utcnow()
+    fresh_hit = (now - timedelta(days=CONTACTS_MAX_AGE_DAYS)).isoformat()
+    fresh_miss = (now - timedelta(days=CONTACTS_RETRY_DAYS)).isoformat()
     pairs = _tracked_pairs()
     budget = CONTACTS_PER_RUN
-    done = cached = 0
+    done = tombstoned = cached = 0
     for cik in pairs:
         ex = database.get_company_contacts(cik)
-        if ex and (ex.get("updated_at") or "") >= stale_before:
-            cached += 1
-            continue
+        if ex:
+            has_contact = ex.get("ir_email") or ex.get("comms_email") or ex.get("ir_name")
+            cutoff = fresh_hit if has_contact else fresh_miss
+            if (ex.get("updated_at") or "") >= cutoff:
+                cached += 1
+                continue
         if budget <= 0:
             continue
         budget -= 1
@@ -710,7 +721,19 @@ def refresh_ir_contacts():
         if res:
             database.upsert_company_contacts(cik, res)
             done += 1
-    print(f"[ir-contacts] fetched {done} · cached {cached} (of {len(pairs)} tracked)")
+        elif ex and (ex.get("ir_email") or ex.get("comms_email") or ex.get("ir_name")):
+            # no fresh press release this time -> KEEP the known-good contact, just reset
+            # its clock so we don't re-fetch it next run.
+            database.upsert_company_contacts(cik, {
+                "ir": {"name": ex.get("ir_name"), "email": ex.get("ir_email"), "phone": ex.get("ir_phone")},
+                "comms": {"name": ex.get("comms_name"), "email": ex.get("comms_email"), "phone": ex.get("comms_phone")},
+                "source_url": ex.get("source_url")})
+            cached += 1
+        else:
+            database.upsert_company_contacts(cik, {})   # tombstone: tried, none found
+            tombstoned += 1
+    print(f"[ir-contacts] fetched {done} · none-found {tombstoned} · cached {cached} "
+          f"(of {len(pairs)} tracked)")
     return done
 
 
