@@ -262,6 +262,10 @@ def api_company(cik: str):
         fin_context = json.loads(score.get("fin_context") or "[]")
     except (ValueError, TypeError):
         fin_context = []
+    try:
+        peer_analysis = json.loads(score.get("peer_analysis") or "{}")
+    except (ValueError, TypeError):
+        peer_analysis = {}
     manual_sit = database.get_manual_situation(cik)
 
     try:
@@ -298,6 +302,7 @@ def api_company(cik: str):
         "evidence": evidence,
         "pitch": pitch_obj,
         "fin_context": fin_context,
+        "peer_analysis": peer_analysis,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
         "note": database.get_note(cik),
