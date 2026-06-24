@@ -37,9 +37,9 @@ TSR_LAG_1Y = -0.15
 # through, which made the dashboard look empty even though the data was there.)
 LEAD_FLOOR = 2
 
-STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "low_margin": 2, "weak_tsr_1y": 1,
-                 "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1, "high_sga": 1,
-                 "cash_hoard": 1, "underlevered": 1,
+STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margin": 2,
+                 "weak_tsr_1y": 1, "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1,
+                 "high_sga": 1, "cash_hoard": 1, "underlevered": 1, "high_goodwill": 1,
                  "gov_classified": 1, "gov_poison": 1, "gov_dual": 1,
                  "insider_selling": 1, "insider_buying": 0,
                  "weak_vote_support": 1}
@@ -75,6 +75,8 @@ def vuln_band(v):
 LABELS = {
     "cheap_abs": "cheap (low price-to-book < 1.5x)",
     "cheap_pb": "cheap vs peers (low price-to-book)",
+    "cheap_ev_ebitda": "cheap on EV/EBITDA vs peers",
+    "high_goodwill": "goodwill-heavy balance sheet (acquisition risk)",
     "low_margin": "low operating margin vs peers",
     "weak_tsr_1y": "1-yr stock return lagging the market",
     "weak_tsr_3y": "weak 3-yr stock return vs market",
@@ -117,10 +119,12 @@ GOV_META = {
 
 # Structural signal -> (metric, direction, source label).
 PCT_METRICS = {"operating_margin", "tsr_1y", "tsr_3y", "roa", "revenue_growth",
-               "sga_pct", "cash_to_assets", "debt_to_assets"}
+               "sga_pct", "cash_to_assets", "debt_to_assets", "goodwill_to_assets"}
 STRUCT_META = {
     "cheap_abs": ("pb_ratio", "abs", "Alpha Vantage"),
     "cheap_pb": ("pb_ratio", "low", "Alpha Vantage"),
+    "cheap_ev_ebitda": ("ev_ebitda", "low", "SEC XBRL"),
+    "high_goodwill": ("goodwill_to_assets", "high", "SEC XBRL"),
     "low_margin": ("operating_margin", "low", "SEC XBRL"),
     "weak_tsr_1y": ("tsr_1y", "low", "Alpha Vantage"),
     "weak_tsr_3y": ("tsr_3y", "low", "Alpha Vantage"),
@@ -136,6 +140,7 @@ INPUTS_META = {
     "high_sga": ("sga", "revenue", "SG&A {a} ÷ revenue {b}"),
     "cash_hoard": ("cash", "total_assets", "cash & ST investments {a} ÷ total assets {b}"),
     "underlevered": ("debt", "total_assets", "total debt {a} ÷ total assets {b}"),
+    "high_goodwill": ("goodwill", "total_assets", "goodwill {a} ÷ total assets {b}"),
 }
 EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
                 "impairment": "SEC 8-K", "layoffs": "SEC 8-K",
@@ -350,6 +355,10 @@ def _severity(key, r, t, e):
         return _clamp((1.5 - pb) / 1.5) if pb is not None else 0.5
     if key == "cheap_pb":
         return _depth_low("pb_ratio", r, t, e)
+    if key == "cheap_ev_ebitda":
+        return _depth_low("ev_ebitda", r, t, e)
+    if key == "high_goodwill":
+        return _depth_high("goodwill_to_assets", r, t, e)
     if key in ("weak_tsr_1y", "weak_tsr_3y"):
         ret = r.get("tsr_1y" if key == "weak_tsr_1y" else "tsr_3y")
         bench = r.get("_spy_1y")
@@ -391,6 +400,8 @@ def _severity(key, r, t, e):
 # entry an activist could exploit ("opp"), or in line ("mid"). Drives the meaning bars.
 _FIN_METRICS = [
     ("pb_ratio", "Price / book", "opp_low"),
+    ("ev_ebitda", "EV / EBITDA", "opp_low"),
+    ("goodwill_to_assets", "Goodwill / assets", "bad_high"),
     ("operating_margin", "Operating margin", "bad_low"),
     ("roa", "Return on assets", "bad_low"),
     ("revenue_growth", "Revenue growth", "bad_low"),
@@ -445,6 +456,8 @@ def _fmt_metric(metric, v):
         return "n/a"
     if metric == "pb_ratio":
         return f"{v:.2f}x"
+    if metric == "ev_ebitda":
+        return f"{v:.1f}x"
     if metric in PCT_METRICS:
         return f"{v * 100:.1f}%"
     return f"{v:.2f}"
@@ -594,6 +607,16 @@ def _struct_evidence(key, r, t):
                   " — price from Alpha Vantage, book value from SEC 10-K"
                   if be is not None
                   else "price ÷ book value — price from Alpha Vantage, book value from SEC")
+    elif key == "cheap_ev_ebitda":
+        mc = r.get("market_cap")
+        debt = raw.get("debt")
+        cash = raw.get("cash")
+        ebitda = raw.get("ebitda")
+        if mc is not None and ebitda:
+            ev = mc + (debt or 0) - (cash or 0)
+            inputs = (f"EV {_money(ev)} (mkt cap {_money(mc)} + debt {_money(debt or 0)} "
+                      f"− cash {_money(cash or 0)}) ÷ EBITDA {_money(ebitda)} "
+                      f"— EBITDA = operating income + D&A (SEC XBRL)")
 
     url = _source_url(r.get("cik"), raw.get("source_accn")) if source == "SEC XBRL" else None
     return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric(metric, v),
@@ -646,6 +669,19 @@ def recompute_all():
             raw = json.loads(f.get("raw") or "{}")
         except (ValueError, TypeError):
             raw = {}
+        # EV/EBITDA (valuation) and goodwill/assets (M&A overpayment) from XBRL + price.
+        mcap = comp.get("market_cap")
+        ebitda = raw.get("ebitda")
+        ev_ebitda = None
+        if mcap is not None and ebitda is not None and ebitda > 0:
+            ev = mcap + (raw.get("debt") or 0) - (raw.get("cash") or 0)
+            if ev > 0:
+                ev_ebitda = ev / ebitda
+        goodwill_to_assets = None
+        gw, ta = raw.get("goodwill"), raw.get("total_assets")
+        if gw is not None and ta:
+            goodwill_to_assets = gw / ta
+
         recs.append({
             "cik": cik, "ticker": f.get("ticker"),
             "sector": f.get("sector") or "??",
@@ -654,6 +690,7 @@ def recompute_all():
             "cash_to_assets": f.get("cash_to_assets"), "debt_to_assets": f.get("debt_to_assets"),
             "pb_ratio": comp.get("pb_ratio"), "tsr_1y": comp.get("tsr_1y"),
             "tsr_3y": comp.get("tsr_3y"), "market_cap": comp.get("market_cap"),
+            "ev_ebitda": ev_ebitda, "goodwill_to_assets": goodwill_to_assets,
             "name": comp.get("name") or f.get("ticker"), "raw": raw,
         })
 
@@ -671,8 +708,9 @@ def recompute_all():
     aflags = database.get_all_activist_flags()
     manual = database.get_manual_situations()   # partner overrides (always win)
 
-    metrics = ["pb_ratio", "operating_margin", "tsr_1y", "tsr_3y", "roa",
-               "revenue_growth", "sga_pct", "cash_to_assets", "debt_to_assets"]
+    metrics = ["pb_ratio", "ev_ebitda", "goodwill_to_assets", "operating_margin",
+               "tsr_1y", "tsr_3y", "roa", "revenue_growth", "sga_pct",
+               "cash_to_assets", "debt_to_assets"]
     by_sector = {}
     for r in recs:
         by_sector.setdefault(r["sector"], []).append(r)
@@ -703,6 +741,10 @@ def recompute_all():
             trig.append("cheap_abs")
         elif r.get("pb_ratio") is not None and r["pb_ratio"] > 0 and low("pb_ratio"):
             trig.append("cheap_pb")
+        if r.get("ev_ebitda") is not None and r["ev_ebitda"] > 0 and low("ev_ebitda"):
+            trig.append("cheap_ev_ebitda")
+        if r.get("goodwill_to_assets") is not None and high("goodwill_to_assets"):
+            trig.append("high_goodwill")
         if low("operating_margin"):
             trig.append("low_margin")
         if (r.get("tsr_1y") is not None and spy_1y is not None
