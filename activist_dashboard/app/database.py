@@ -98,6 +98,9 @@ CREATE TABLE IF NOT EXISTS exec_reactions (
     cik TEXT PRIMARY KEY, ticker TEXT, filed_at TEXT, event_date TEXT,
     move REAL, bench_move REAL, abnormal REAL, title TEXT, url TEXT, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS ai_pitch (
+    cik TEXT PRIMARY KEY, hash TEXT, pitch TEXT, updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS company_contacts (
     cik TEXT PRIMARY KEY, ir_name TEXT, ir_email TEXT, ir_phone TEXT,
     comms_name TEXT, comms_email TEXT, comms_phone TEXT, source_url TEXT, updated_at TEXT
@@ -840,6 +843,21 @@ def get_exec_reaction(cik):
 def get_all_exec_reactions():
     with get_conn() as conn:
         return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM exec_reactions")}
+
+
+def get_ai_pitch(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM ai_pitch WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def upsert_ai_pitch(cik, hash_, pitch):
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO ai_pitch (cik,hash,pitch,updated_at) VALUES (?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET hash=excluded.hash,
+                 pitch=excluded.pitch, updated_at=excluded.updated_at""",
+            (cik, hash_, json.dumps(pitch or {}), now_iso()))
 
 
 def _cutoff(days):
