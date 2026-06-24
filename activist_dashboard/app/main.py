@@ -266,6 +266,10 @@ def api_company(cik: str):
         peer_analysis = json.loads(score.get("peer_analysis") or "{}")
     except (ValueError, TypeError):
         peer_analysis = {}
+    try:
+        ai_pitch = json.loads((database.get_ai_pitch(cik) or {}).get("pitch") or "{}")
+    except (ValueError, TypeError):
+        ai_pitch = {}
     manual_sit = database.get_manual_situation(cik)
 
     try:
@@ -301,6 +305,7 @@ def api_company(cik: str):
         "signals": score.get("signals"),
         "evidence": evidence,
         "pitch": pitch_obj,
+        "ai_pitch": ai_pitch,
         "fin_context": fin_context,
         "peer_analysis": peer_analysis,
         "first_flagged": score.get("first_flagged"),
@@ -459,7 +464,8 @@ def api_run_enrichment():
                          ("ir-contacts", pipeline.refresh_ir_contacts),
                          ("exec-reactions", pipeline.refresh_exec_reactions),
                          ("long-tsr", pipeline.refresh_long_tsr),
-                         ("prices", pipeline.refresh_prices)):
+                         ("prices", pipeline.refresh_prices),
+                         ("ai-thesis", pipeline.refresh_ai_thesis)):
             try:
                 fn()
             except Exception:
