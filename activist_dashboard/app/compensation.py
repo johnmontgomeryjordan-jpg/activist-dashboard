@@ -152,6 +152,65 @@ def _parse_sct(table_html):
     }
 
 
+# ---- self-selected compensation peer group ----------------------------------
+# Activists love "you trail even the peer group you picked yourself." We locate the
+# proxy's compensation peer-group section and match the named companies against OUR
+# universe (high precision: we only keep peers we actually have fundamentals for, by
+# matching known company names — no fragile free-text name extraction).
+_PEER_ANCHORS = (
+    "compensation peer group", "compensation peer companies", "compensation comparator",
+    "comparator group", "peer group used", "peer group consist", "peer group for",
+    "benchmarking peer", "our peer group", "the peer group", "peer group",
+)
+_PEER_NAME_SUFFIX = {
+    "inc", "incorporated", "corp", "corporation", "co", "company", "companies",
+    "plc", "ltd", "limited", "lp", "llc", "holdings", "holding", "group", "the",
+    "&", "and", "international", "intl", "industries", "enterprises",
+}
+
+
+def _peer_section(detagged_lower):
+    for anc in _PEER_ANCHORS:
+        i = detagged_lower.find(anc)
+        if i != -1:
+            return detagged_lower[i:i + 8000]
+    return ""
+
+
+def _name_core(name):
+    toks = re.findall(r"[a-z0-9&]+", (name or "").lower())
+    while toks and toks[-1] in _PEER_NAME_SUFFIX:
+        toks.pop()
+    return toks
+
+
+def find_peers(detagged_text, universe, self_cik=None, min_peers=5):
+    """detagged_text: proxy text with tags stripped (lowercased internally).
+    universe: list of (cik, name). Returns [cik, ...] of named peers we also cover, or []
+    if we can't confidently find at least `min_peers` (precision over recall)."""
+    if not detagged_text or not universe:
+        return []
+    seg = " " + re.sub(r"[^a-z0-9&]+", " ", _peer_section(detagged_text.lower())) + " "
+    if seg.strip() == "":
+        return []
+    out = []
+    for cik, name in universe:
+        if self_cik is not None and str(cik) == str(self_cik):
+            continue
+        toks = _name_core(name)
+        if not toks:
+            continue
+        if len(toks) >= 2:                      # multiword core: require the full phrase
+            if (" " + " ".join(toks) + " ") in seg:
+                out.append(cik)
+        else:                                   # single token: must be distinctive (>=6)
+            t = toks[0]
+            if len(t) >= 6 and re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", seg):
+                out.append(cik)
+    out = list(dict.fromkeys(out))              # dedupe, preserve order
+    return out if len(out) >= min_peers else []
+
+
 def parse_ceo_comp(html_text):
     """Return CEO comp trajectory dict, or None if not confidently parseable."""
     if not html_text:
