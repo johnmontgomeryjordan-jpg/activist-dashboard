@@ -35,7 +35,8 @@ from datetime import datetime, timedelta
 import requests
 
 from . import (config, database, universe, edgar, news, scoring, emailer,
-               governance, insider, activist, earnings, votes, fmp, twelvedata, contacts)
+               governance, insider, activist, earnings, votes, fmp, twelvedata,
+               contacts, reaction)
 
 _UNIVERSE = None
 
@@ -690,6 +691,54 @@ def refresh_prices():
     return twelvedata.refresh_prices(_tracked_pairs(), database)
 
 
+# Exec-change 8-K signals we measure a market reaction for (from edgar classification).
+_EXEC_SIGNALS = ("ceo_departure", "leadership_change")
+
+
+def refresh_exec_reactions():
+    """For tracked names with a recent CEO/leadership-change 8-K, compute the 1-day stock
+    move vs the S&P on the announcement date and cache it (computed once per filing).
+    Gated by TWELVEDATA_API_KEY. Free/non-commercial market data."""
+    key = twelvedata.key()
+    if not key:
+        print("[exec-reaction] no TWELVEDATA_API_KEY set; skipping")
+        return 0
+    pairs = _tracked_pairs()
+    computed = cached = 0
+    for cik, ticker in pairs.items():
+        # most-recent exec-change filing in the scoring window
+        latest = None
+        for f in database.filings_in_window(cik, config.SCORE_WINDOW_DAYS):
+            sigs = [s.strip() for s in (f.get("signals") or "").split(",")]
+            if any(s in _EXEC_SIGNALS for s in sigs):
+                latest = f
+                break                                 # filings come newest-first
+        if not latest or not latest.get("filed_at"):
+            continue
+        prev = database.get_exec_reaction(cik)
+        if prev and prev.get("filed_at") == latest["filed_at"]:
+            cached += 1
+            continue                                  # already measured this event
+        try:
+            res = reaction.fetch_reaction(ticker, latest["filed_at"], key)
+        except Exception:
+            traceback.print_exc(); res = None
+        time.sleep(1.0)
+        if not res:
+            continue
+        database.upsert_exec_reaction(
+            cik, ticker, latest["filed_at"], res.get("event_date"),
+            res.get("move"), res.get("bench_move"), res.get("abnormal"),
+            latest.get("title"), latest.get("url"))
+        computed += 1
+    print(f"[exec-reaction] computed {computed} · cached {cached} (of {len(pairs)} tracked)")
+    try:
+        scoring.recompute_all()
+    except Exception:
+        traceback.print_exc()
+    return computed
+
+
 # IR / Comms contacts are static, so cache each company for ~45 days, and only fetch a
 # handful of stale ones per run (each fetch is several SEC calls). Free SEC data.
 CONTACTS_MAX_AGE_DAYS = 45        # re-check a company at most this often
@@ -757,13 +806,16 @@ def daily_rescore_and_digest():
     refresh_sentiment()
     refresh_contacts()
     refresh_ir_contacts()
+    # Exec-reactions before the bulk chart pull so the rarer, higher-value event signal
+    # isn't starved of Twelve Data credits on a tight-budget day (free tier = 800/day).
+    refresh_exec_reactions()
     refresh_prices()
     refresh_enrichment()
     return emailer.send_digest()
 
 
 def startup_full_refresh():
-    print("[boot] VERSION=phaseC-tiered-situations-strict-news-fullboot-sweep  starting refresh")
+    print("[boot] VERSION=F3-exec-reaction+F2-payperf+F1-evebitda-goodwill  starting refresh")
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
@@ -776,6 +828,7 @@ def startup_full_refresh():
     refresh_sentiment()
     refresh_contacts()
     refresh_ir_contacts()
+    refresh_exec_reactions()       # before refresh_prices: protect event-signal credits
     refresh_prices()
     refresh_enrichment()
 
