@@ -42,7 +42,7 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "high_sga": 1, "cash_hoard": 1, "underlevered": 1, "high_goodwill": 1,
                  "gov_classified": 1, "gov_poison": 1, "gov_dual": 1,
                  "insider_selling": 1, "insider_buying": 0,
-                 "weak_vote_support": 1}
+                 "weak_vote_support": 1, "overpaid_ceo": 2}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
@@ -98,6 +98,7 @@ LABELS = {
     "insider_selling": "cluster of insider selling",
     "insider_buying": "insiders buying (confidence signal)",
     "weak_vote_support": "weak say-on-pay support",
+    "overpaid_ceo": "CEO pay rising while the stock lags",
 }
 
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
@@ -108,6 +109,12 @@ INSIDER_KEYS = ("insider_selling", "insider_buying")
 # this fraction -- well under the ~90%+ norm, a recognized pre-activism warning.
 VOTE_KEYS = ("weak_vote_support",)
 SAY_ON_PAY_FLAG = 0.75
+
+# CEO pay-for-performance (from DEF 14A Summary Comp Table). Fires when total CEO comp
+# rose while the stock lagged — its own evidence card with the pay trajectory.
+COMP_KEYS = ("overpaid_ceo",)
+# Fire when comp rose at least this much over the SCT window (cumulative).
+COMP_RISE_FLOOR = 0.05
 
 # Governance red flags (from DEF 14A). Boolean signals -> their own evidence cards.
 GOV_KEYS = ("gov_classified", "gov_poison", "gov_dual")
@@ -392,6 +399,12 @@ def _severity(key, r, t, e):
         if sop is None:
             return 0.5
         return _clamp((0.75 - sop) / 0.25)           # 75% -> 0, 50% or worse -> 1
+    if key == "overpaid_ceo":
+        c = r.get("_comp") or {}
+        pct = c.get("pct_change") or 0.0
+        tsr = r.get("tsr_1y") or 0.0
+        # bigger raise + worse stock = sharper disconnect
+        return _clamp(0.4 + min(0.4, pct) + min(0.2, max(0.0, -tsr)))
     return 1.0  # governance flags + insider_buying + event accelerants
 
 
@@ -555,6 +568,26 @@ def _vote_evidence(key, r):
     return {"key": key, "label": LABELS.get(key, key), "value": pct, "context": ctx,
             "inputs": "", "period": (f"meeting {mtg}" if mtg else "annual meeting"),
             "source": "SEC 8-K Item 5.07", "url": v.get("url")}
+
+
+def _comp_evidence(key, r):
+    c = r.get("_comp") or {}
+    pct = c.get("pct_change")
+    ey, ly = c.get("earliest_year"), c.get("latest_year")
+    et, lt = c.get("earliest_total"), c.get("latest_total")
+    tsr = r.get("tsr_1y")
+    val = (f"+{pct * 100:.0f}%" if pct is not None else "")
+    move = ""
+    if tsr is not None:
+        move = (f", while the stock returned {tsr * 100:.0f}% over the past year"
+                if tsr < 0 else f", while the stock trailed the market")
+    ctx = (f"CEO total pay rose {pct * 100:.0f}% — from {_money(et)} in {ey} to "
+           f"{_money(lt)} in {ly}{move} — a pay-for-performance disconnect activists target"
+           if pct is not None else "CEO pay rose while shareholders lagged")
+    inputs = (f"Summary Compensation Table 'Total' column: {ey} {_money(et)} → {ly} {_money(lt)}")
+    return {"key": key, "label": LABELS.get(key, key), "value": val, "context": ctx,
+            "inputs": inputs, "period": (f"proxy {r.get('_gov_date')}" if r.get("_gov_date") else "DEF 14A"),
+            "source": "SEC DEF 14A", "url": r.get("_gov_url")}
 
 
 def _struct_evidence(key, r, t):
@@ -772,6 +805,21 @@ def recompute_all():
         if g.get("dual_class"):
             trig.append("gov_dual")
 
+        # CEO pay-for-performance: pay rose while the stock lagged the market.
+        comp = None
+        if g.get("comp_json"):
+            try:
+                comp = json.loads(g["comp_json"])
+            except (ValueError, TypeError):
+                comp = None
+        r["_comp"] = comp
+        if comp:
+            pc = comp.get("pct_change")
+            tsr = r.get("tsr_1y")
+            lags = (tsr is not None and (tsr < 0 or (spy_1y is not None and (tsr - spy_1y) <= TSR_LAG_1Y)))
+            if pc is not None and pc >= COMP_RISE_FLOOR and lags:
+                trig.append("overpaid_ceo")
+
         # Insider activity (Form 4; only present for parsed names).
         ins = ins_all.get(r["cik"]) or {}
         r["_insider"] = ins
@@ -837,6 +885,8 @@ def recompute_all():
                 evidence.append(_insider_evidence(key, r))
             elif key in VOTE_KEYS:
                 evidence.append(_vote_evidence(key, r))
+            elif key in COMP_KEYS:
+                evidence.append(_comp_evidence(key, r))
             elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
