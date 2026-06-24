@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 CREATE TABLE IF NOT EXISTS governance (
     cik TEXT PRIMARY KEY, classified_board INTEGER, poison_pill INTEGER,
-    dual_class INTEGER, proxy_accn TEXT, proxy_date TEXT, proxy_url TEXT, updated_at TEXT
+    dual_class INTEGER, proxy_accn TEXT, proxy_date TEXT, proxy_url TEXT,
+    comp_json TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS insider_txn (
     accn TEXT PRIMARY KEY, cik TEXT, filed TEXT, name TEXT, role TEXT,
@@ -136,6 +137,9 @@ def init_db():
             conn.execute("ALTER TABLE scores ADD COLUMN pitch TEXT")
         if "fin_context" not in scols:
             conn.execute("ALTER TABLE scores ADD COLUMN fin_context TEXT")
+        gcols = [r["name"] for r in conn.execute("PRAGMA table_info(governance)")]
+        if "comp_json" not in gcols:
+            conn.execute("ALTER TABLE governance ADD COLUMN comp_json TEXT")
         fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
         if "raw" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
@@ -466,20 +470,23 @@ def get_meta(key, default=None):
 
 
 # --- Governance (from DEF 14A proxies) ---------------------------------------
-def upsert_governance(cik, flags, accn, date, url):
+def upsert_governance(cik, flags, accn, date, url, comp=None):
+    # comp is None when not yet attempted; {} is a "parsed, nothing found" sentinel that
+    # stops us re-fetching the same proxy every run. Both store as non-None once attempted.
+    comp_json = json.dumps(comp) if comp is not None else None
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO governance
-               (cik,classified_board,poison_pill,dual_class,proxy_accn,proxy_date,proxy_url,updated_at)
-               VALUES (?,?,?,?,?,?,?,?)
+               (cik,classified_board,poison_pill,dual_class,proxy_accn,proxy_date,proxy_url,comp_json,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)
                ON CONFLICT(cik) DO UPDATE SET
                  classified_board=excluded.classified_board, poison_pill=excluded.poison_pill,
                  dual_class=excluded.dual_class, proxy_accn=excluded.proxy_accn,
                  proxy_date=excluded.proxy_date, proxy_url=excluded.proxy_url,
-                 updated_at=excluded.updated_at""",
+                 comp_json=excluded.comp_json, updated_at=excluded.updated_at""",
             (cik, 1 if flags.get("classified_board") else 0,
              1 if flags.get("poison_pill") else 0, 1 if flags.get("dual_class") else 0,
-             accn, date, url, now_iso()),
+             accn, date, url, comp_json, now_iso()),
         )
 
 
