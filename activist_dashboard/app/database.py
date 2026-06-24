@@ -14,7 +14,7 @@ from . import config
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companies (
     cik TEXT PRIMARY KEY, ticker TEXT, name TEXT, market_cap REAL,
-    pb_ratio REAL, tsr_1y REAL, tsr_3y REAL, updated_at TEXT
+    pb_ratio REAL, tsr_1y REAL, tsr_3y REAL, tsr_5y REAL, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS filings (
     id TEXT PRIMARY KEY, cik TEXT, ticker TEXT, company TEXT, form TEXT,
@@ -141,6 +141,9 @@ def init_db():
             conn.execute("ALTER TABLE scores ADD COLUMN pitch TEXT")
         if "fin_context" not in scols:
             conn.execute("ALTER TABLE scores ADD COLUMN fin_context TEXT")
+        ccols = [r["name"] for r in conn.execute("PRAGMA table_info(companies)")]
+        if "tsr_5y" not in ccols:
+            conn.execute("ALTER TABLE companies ADD COLUMN tsr_5y REAL")
         gcols = [r["name"] for r in conn.execute("PRAGMA table_info(governance)")]
         if "comp_json" not in gcols:
             conn.execute("ALTER TABLE governance ADD COLUMN comp_json TEXT")
@@ -171,14 +174,16 @@ def upsert_company(cik, ticker, name, market_cap=None, pb_ratio=None,
         )
 
 
-def set_company_market(cik, market_cap=None, pb_ratio=None, tsr_1y=None, tsr_3y=None):
+def set_company_market(cik, market_cap=None, pb_ratio=None, tsr_1y=None, tsr_3y=None,
+                       tsr_5y=None):
     with get_conn() as conn:
         conn.execute(
             """UPDATE companies SET
                  market_cap=COALESCE(?, market_cap), pb_ratio=COALESCE(?, pb_ratio),
                  tsr_1y=COALESCE(?, tsr_1y), tsr_3y=COALESCE(?, tsr_3y),
+                 tsr_5y=COALESCE(?, tsr_5y),
                  updated_at=? WHERE cik=?""",
-            (market_cap, pb_ratio, tsr_1y, tsr_3y, now_iso(), cik),
+            (market_cap, pb_ratio, tsr_1y, tsr_3y, tsr_5y, now_iso(), cik),
         )
 
 
