@@ -38,7 +38,7 @@ from datetime import datetime
 
 from . import (config, database, universe, edgar, news, scoring, emailer,
                governance, insider, activist, earnings, votes, fmp, twelvedata,
-               contacts, reaction, longtsr)
+               contacts, reaction, longtsr, aithesis)
 
 _UNIVERSE = None
 
@@ -856,6 +856,49 @@ def refresh_ir_contacts():
     return done
 
 
+def refresh_ai_thesis():
+    """Re-voice the templated pitch thesis + talking points with Claude Haiku, for the top
+    leads + active situations. Cached by a hash of the underlying facts (only re-calls when
+    the grounded pitch changes). Gated by ANTHROPIC_API_KEY; degrades to the template."""
+    if not aithesis.key():
+        print("[ai-thesis] no ANTHROPIC_API_KEY set; skipping (templated pitch stays in use)")
+        return 0
+    # Same set we pull multi-year TSR for (top TD_TOP leads + active situations + watchlist),
+    # so the polished pitch lines up with where we have the fullest data.
+    allowed = set(_tracked_pairs(top=TD_TOP).keys())
+    cand = list(database.get_scores(limit=ENRICH_TOP)) + list(database.get_active_situations(limit=40))
+    rows = [s for s in cand if s.get("cik") in allowed]
+    seen = set()
+    done = cached = 0
+    for s in rows:
+        cik = s.get("cik")
+        if not cik or cik in seen:
+            continue
+        seen.add(cik)
+        try:
+            pj = json.loads(s.get("pitch") or "{}")
+        except (ValueError, TypeError):
+            pj = {}
+        if not pj.get("thesis"):
+            continue
+        try:
+            ev = json.loads(s.get("evidence") or "[]")
+        except (ValueError, TypeError):
+            ev = []
+        facts = [e.get("context") for e in ev if e.get("context")][:8]
+        h = aithesis.facts_hash(s.get("company"), pj, facts)
+        if (database.get_ai_pitch(cik) or {}).get("hash") == h:
+            cached += 1
+            continue
+        out = aithesis.revoice(s.get("company"), pj, facts)
+        if out:
+            database.upsert_ai_pitch(cik, h, out)
+            done += 1
+        time.sleep(0.3)
+    print(f"[ai-thesis] revoiced {done} · cached {cached}")
+    return done
+
+
 def daily_rescore_and_digest():
     refresh_data()
     refresh_fundamentals()
@@ -873,6 +916,7 @@ def daily_rescore_and_digest():
     refresh_long_tsr()
     refresh_prices()
     refresh_enrichment()
+    refresh_ai_thesis()
     return emailer.send_digest()
 
 
@@ -894,6 +938,7 @@ def startup_full_refresh():
     refresh_long_tsr()
     refresh_prices()
     refresh_enrichment()
+    refresh_ai_thesis()
 
 
 # ---- Market enrichment: Finnhub (60/min) for cap + P/B; AV cached for description --
