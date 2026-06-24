@@ -12,17 +12,18 @@ const secUrl = cik => `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompan
 let SHORTLIST=[], ACTIVE=[], STATUS={}, FEED={news:[],filings:[]};
 let WATCHLIST_SET=new Set(), COMPANY_INFO={};
 let FILTER="all", SORT={key:"vuln", dir:-1};
-let CURRENT_VIEW="dashboard", CURRENT_CIK=null, CURRENT_DATA=null, CURRENT_TAB="overview";
+let CURRENT_VIEW="pitchkit", CURRENT_CIK=null, CURRENT_DATA=null, CURRENT_TAB="overview";
 function regInfo(c){ if(c && c.cik) COMPANY_INFO[c.cik]={ticker:c.ticker, company:c.company}; }
 
 /* ===== View routing ===== */
-const VIEWS=["dashboard","active","watchlist","feed","about","company"];
+const VIEWS=["pitchkit","dashboard","active","watchlist","feed","about","company"];
 function showView(name){
   VIEWS.forEach(v=>{ const p=document.getElementById("page-"+v); if(p) p.style.display = v===name?"block":"none"; });
   document.querySelectorAll(".navtab").forEach(b=>b.classList.remove("active"));
   const nb=document.getElementById("nt-"+name); if(nb) nb.classList.add("active");
   if(name!=="company") CURRENT_VIEW=name;
   if(name==="watchlist") loadWatchlist();
+  if(name==="pitchkit") renderPitchKit();
   window.scrollTo(0,0);
 }
 
@@ -508,6 +509,83 @@ function evCard(e){
   const sl=(e.source||e.url)?`<div class="evsrc">Source: ${src}</div>`:"";
   return `<div class="evrow"><div class="evtop"><span class="evlabel">${esc(e.label)}</span>${val}</div>${ctx}${math}${sl}</div>`;
 }
+/* Shared: timing-&-catalysts + who-to-reach strip (used on profile overview + pitch kit) */
+function pitchStrip(d){
+  const sig=d.signals||""; const cat=[];
+  if(/CEO\/exec departure/i.test(sig)) cat.push("Exec departure");
+  if(/earnings miss|guidance cut/i.test(sig)) cat.push("Earnings miss");
+  if(/impairment/i.test(sig)) cat.push("Impairment");
+  const ernDate=(d.earnings&&d.earnings.next_date)?d.earnings.next_date:null;
+  const tpills=[...(ernDate?["Earnings "+ernDate]:[]),...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
+  const timingBody=(ernDate||cat.length)
+    ? `${tpills}${ernDate?`<br>Next print <b>${esc(ernDate)}</b> — often the most receptive window to reach out.`:""}`
+    : `<span class="gov-note">No near-term catalyst on the calendar.</span>`;
+  const ct=d.contacts||{};
+  const ctRow=(label,name,email,phone)=>{
+    if(!name&&!email&&!phone) return "";
+    const init=name?name.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase():label.slice(0,2).toUpperCase();
+    const det=[email?`<div class="em">${esc(email)}</div>`:"",phone?`<div class="ph">${esc(phone)}</div>`:""].join("");
+    return `<div class="ctc"><div class="av">${esc(init)}</div><div><div class="nm">${esc(name||label)}</div><div class="rl">${esc(label)}</div></div><div class="det">${det}</div></div>`;
+  };
+  const irRow=ctRow("Investor Relations",ct.ir_name,ct.ir_email,ct.ir_phone);
+  const prRow=ctRow("Media / Comms",ct.comms_name,ct.comms_email,ct.comms_phone);
+  const reachHtml=(irRow||prRow) ? irRow+prRow
+    : `<span class="gov-note">No IR/Comms contact parsed yet — pulled from recent 8-K press releases on the daily run.</span>
+       <div class="links" style="margin-top:8px;"><a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations contact")}" target="_blank" rel="noopener">Search IR ↗</a></div>`;
+  return `<div class="strip2">
+      <div><div class="mh3" style="margin:0 0 10px">Timing &amp; catalysts</div><div class="timing">${timingBody}</div></div>
+      <div><div class="mh3" style="margin:0 0 10px">Who to reach</div>${reachHtml}</div></div>`;
+}
+
+/* ===== Pitch kit (home) ===== */
+let PK_LEAD_CIK=null;
+function pkPickLead(){
+  const pool=(SHORTLIST||[]).filter(c=>!c.active_situation);
+  if(!pool.length) return null;
+  const hasCatalyst=c=>/recent (ceo|exec|earnings|results|impairment|layoff|leadership)/i.test(c.signals||"") || (c.week_change>0);
+  let cands=pool.filter(hasCatalyst).sort((a,b)=>(b.vuln||0)-(a.vuln||0));
+  if(!cands.length) cands=pool.slice().sort((a,b)=>(b.vuln||0)-(a.vuln||0));
+  const top=cands.slice(0,8);
+  const now=new Date(); const doy=Math.floor((now-new Date(now.getFullYear(),0,0))/86400000);
+  return top[doy%top.length];
+}
+function pkHero(d){
+  const vi=vulnInfo(d.vuln); const pitch=d.pitch||{}; const points=pitch.points||[]; const o=d.overview||{};
+  const pts=points.length?`<ol class="pitch-points">${points.map((p,i)=>`<li><span class="num">${i+1}</span><span>${esc(p)}</span></li>`).join("")}</ol>`:"";
+  const thesis=pitch.thesis?`<div class="verdict" style="margin-top:14px;">${esc(pitch.thesis)}</div>`:`<div class="verdict" style="margin-top:14px;">${esc(o.description||"")}</div>`;
+  return `<div class="pk-hero">
+    <div class="pk-hero-top">
+      <div><div class="cv-title" style="font-size:27px; cursor:pointer;" onclick="openCompany('${esc(d.cik)}')">${esc(d.company)}</div>
+        <div class="cv-meta">${[d.ticker,o.sector||o.industry,fmtCap(d.market_cap)].filter(Boolean).map(esc).join(" · ")}</div></div>
+      <div style="text-align:center; flex-shrink:0;"><div class="gnum" style="color:${vi.col}; line-height:1;">${d.vuln==null?"—":d.vuln}</div><div class="vband ${vi.cls}">${vulnBand(d.vuln)}</div></div>
+    </div>
+    ${thesis}${pts}${pitchStrip(d)}
+    <div style="margin-top:16px;"><button onclick="openCompany('${esc(d.cik)}')">View full pitch →</button></div>
+  </div>`;
+}
+async function renderPitchKit(){
+  const dEl=document.getElementById("pkDate");
+  if(dEl) dEl.textContent=new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"});
+  const host=document.getElementById("pkLead"); if(!host) return;
+  const lead=pkPickLead();
+  if(!lead){ host.innerHTML=`<div class="empty">No leads yet — data is still loading.</div>`; }
+  else{
+    PK_LEAD_CIK=lead.cik;
+    if(!host.dataset.cik || host.dataset.cik!==lead.cik){ host.innerHTML=`<div class="empty">Loading the lead…</div>`; }
+    try{ const d=await (await fetch("/api/company?cik="+encodeURIComponent(lead.cik))).json();
+      if(d.ok){ host.innerHTML=pkHero(d); host.dataset.cik=lead.cik; } }catch(e){}
+  }
+  const tg=document.getElementById("pkTargets");
+  if(tg){ const targets=(SHORTLIST||[]).filter(c=>c.cik!==PK_LEAD_CIK).slice(0,4);
+    tg.innerHTML=targets.map(c=>{ const i=vulnInfo(c.vuln); const hook=(c.signals||"").split(" + ").slice(0,2).join(" · ");
+      return `<div class="nr-card" style="flex:1 1 260px; align-items:flex-start;" onclick="openCompany('${esc(c.cik)}')">
+        <span class="vchip ${i.cls}">${c.vuln==null?"—":c.vuln}</span>
+        <div class="nr-co">${esc(c.company)}<div class="meta">${esc(c.ticker||"")}${hook?" · "+esc(hook):""}</div></div></div>`; }).join("")||`<div class="empty">—</div>`; }
+  const nEl=document.getElementById("pkNews");
+  if(nEl){ const news=(FEED.news||[]).slice(0,5); nEl.innerHTML=news.length?news.map(newsItemRow).join(""):`<div class="empty">No headlines yet.</div>`; }
+  const fEl=document.getElementById("pkFilings");
+  if(fEl){ const fil=(FEED.filings||[]).slice(0,5); fEl.innerHTML=fil.length?fil.map(filingItemRow).join(""):`<div class="empty">No filings yet.</div>`; }
+}
 function fmtMetricVal(key,v){
   if(v==null) return "—";
   if(key==="pb_ratio") return fmtNum(v)+"x";
@@ -569,32 +647,7 @@ function renderTab(){
     const ptsHtml = points.length
       ? `<div class="mh3">The pitch</div><ol class="pitch-points">${points.map((p,i)=>`<li><span class="num">${i+1}</span><span>${esc(p)}</span></li>`).join("")}</ol>`
       : "";
-    /* Timing & catalysts */
-    const sig=d.signals||""; const cat=[];
-    if(/CEO\/exec departure/i.test(sig)) cat.push("Exec departure");
-    if(/earnings miss|guidance cut/i.test(sig)) cat.push("Earnings miss");
-    if(/impairment/i.test(sig)) cat.push("Impairment");
-    const ernDate=(d.earnings&&d.earnings.next_date)?d.earnings.next_date:null;
-    const tpills=[...(ernDate?["Earnings "+ernDate]:[]),...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
-    const timingBody=(ernDate||cat.length)
-      ? `${tpills}${ernDate?`<br>Next print <b>${esc(ernDate)}</b> — often the most receptive window to reach out.`:""}`
-      : `<span class="gov-note">No near-term catalyst on the calendar.</span>`;
-    /* Who to reach */
-    const ct=d.contacts||{};
-    const ctRow=(label,name,email,phone)=>{
-      if(!name&&!email&&!phone) return "";
-      const init=name?name.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase():label.slice(0,2).toUpperCase();
-      const det=[email?`<div class="em">${esc(email)}</div>`:"",phone?`<div class="ph">${esc(phone)}</div>`:""].join("");
-      return `<div class="ctc"><div class="av">${esc(init)}</div><div><div class="nm">${esc(name||label)}</div><div class="rl">${esc(label)}</div></div><div class="det">${det}</div></div>`;
-    };
-    const irRow=ctRow("Investor Relations",ct.ir_name,ct.ir_email,ct.ir_phone);
-    const prRow=ctRow("Media / Comms",ct.comms_name,ct.comms_email,ct.comms_phone);
-    const reachHtml=(irRow||prRow) ? irRow+prRow
-      : `<span class="gov-note">No IR/Comms contact parsed yet — pulled from recent 8-K press releases on the daily run.</span>
-         <div class="links" style="margin-top:8px;"><a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations contact")}" target="_blank" rel="noopener">Search IR ↗</a></div>`;
-    const strip=`<div class="strip2">
-        <div><div class="mh3" style="margin:0 0 10px">Timing &amp; catalysts</div><div class="timing">${timingBody}</div></div>
-        <div><div class="mh3" style="margin:0 0 10px">Who to reach</div>${reachHtml}</div></div>`;
+    const strip=pitchStrip(d);
     body.innerHTML=`
       <div class="mh3">Why it's a target</div>
       ${thesisHtml}
@@ -706,6 +759,7 @@ function exportCsv(){ window.open("/api/shortlist.csv","_blank"); }
 async function refreshAll(){
   await loadWatchlist();
   await Promise.all([loadStatus(), loadFeed(), loadShortlist(), loadActiveSituations()]);
+  renderPitchKit();
   const u=document.getElementById("updated"); if(u) u.textContent="Last updated "+new Date().toLocaleTimeString();
 }
 refreshAll(); setInterval(refreshAll, 5*60*1000);
