@@ -126,6 +126,49 @@ def fetch_dated(symbols, k, start_date, end_date):
     return out
 
 
+def fetch_monthly(symbols, k, points=80):
+    """Return {symbol: [(date, close), ...]} (oldest-first) of MONTHLY closes — a tiny
+    payload (1 credit/symbol) that's enough for multi-year (3/5-yr) total-return math."""
+    global LAST_ERROR
+    try:
+        r = _session.get(URL, params={"symbol": ",".join(symbols), "interval": "1month",
+                                      "outputsize": points, "apikey": k}, timeout=25)
+    except requests.RequestException as e:
+        LAST_ERROR = f"{type(e).__name__}: {str(e)[:120]}"
+        return {}
+    if r.status_code != 200:
+        LAST_ERROR = f"HTTP {r.status_code}: {(r.text or '')[:180]}"
+        return {}
+    try:
+        d = r.json()
+    except ValueError:
+        LAST_ERROR = "non-JSON response"
+        return {}
+
+    def rows_to_pairs(obj):
+        vals = (obj or {}).get("values") or []
+        out = []
+        for row in reversed(vals):                 # API returns newest-first
+            try:
+                out.append((row.get("datetime"), round(float(row.get("close")), 4)))
+            except (ValueError, TypeError):
+                continue
+        return out
+
+    out = {}
+    if len(symbols) == 1:
+        obj = d if "values" in d else (d.get(symbols[0]) or {})
+        out[symbols[0]] = rows_to_pairs(obj)
+    else:
+        for sym in symbols:
+            obj = (d or {}).get(sym)
+            if isinstance(obj, dict) and obj.get("status") == "error":
+                LAST_ERROR = f"{sym}: {str(obj.get('message'))[:120]}"
+                continue
+            out[sym] = rows_to_pairs(obj)
+    return out
+
+
 def refresh_prices(pairs, db):
     """pairs: {cik: ticker}. Stores a daily-close series per name. Tries batch first;
     if batch yields nothing, falls back to one request per symbol. `db` is the database
