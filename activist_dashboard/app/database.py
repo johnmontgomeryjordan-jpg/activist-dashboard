@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS scores (
     cik TEXT PRIMARY KEY, ticker TEXT, company TEXT, market_cap REAL,
     score INTEGER, signals TEXT, top_item_title TEXT, top_item_url TEXT,
     first_flagged TEXT, evidence TEXT, active_situation INTEGER, vuln INTEGER,
-    situation_tier TEXT, situation_meta TEXT, pitch TEXT, updated_at TEXT
+    situation_tier TEXT, situation_meta TEXT, pitch TEXT, fin_context TEXT, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS subscribers (
     email TEXT PRIMARY KEY, created_at TEXT
@@ -92,6 +92,10 @@ CREATE TABLE IF NOT EXISTS company_profile (
 CREATE TABLE IF NOT EXISTS prices (
     cik TEXT PRIMARY KEY, series TEXT, last_close REAL, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS company_contacts (
+    cik TEXT PRIMARY KEY, ir_name TEXT, ir_email TEXT, ir_phone TEXT,
+    comms_name TEXT, comms_email TEXT, comms_phone TEXT, source_url TEXT, updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS manual_situations (
     cik TEXT PRIMARY KEY, status TEXT, actor TEXT, note TEXT, updated_at TEXT
 );
@@ -130,6 +134,8 @@ def init_db():
             conn.execute("ALTER TABLE scores ADD COLUMN situation_meta TEXT")
         if "pitch" not in scols:
             conn.execute("ALTER TABLE scores ADD COLUMN pitch TEXT")
+        if "fin_context" not in scols:
+            conn.execute("ALTER TABLE scores ADD COLUMN fin_context TEXT")
         fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
         if "raw" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
@@ -339,14 +345,15 @@ def replace_scores(rows):
                 """INSERT INTO scores
                    (cik,ticker,company,market_cap,score,signals,top_item_title,
                     top_item_url,first_flagged,evidence,active_situation,vuln,
-                    situation_tier,situation_meta,pitch,updated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    situation_tier,situation_meta,pitch,fin_context,updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (r["cik"], r["ticker"], r["company"], r["market_cap"], r["score"],
                  r["signals"], r["top_item_title"], r["top_item_url"], first,
                  json.dumps(r.get("evidence") or []), r.get("active_situation") or 0,
                  r.get("vuln") or 0, r.get("situation_tier") or "",
                  json.dumps(r.get("situation_meta") or {}),
-                 json.dumps(r.get("pitch") or {}), now_iso()),
+                 json.dumps(r.get("pitch") or {}),
+                 json.dumps(r.get("fin_context") or []), now_iso()),
             )
         today = datetime.utcnow().date().isoformat()
         for r in rows:
@@ -735,6 +742,30 @@ def upsert_company_profile(cik, d):
 def get_company_profile(cik):
     with get_conn() as conn:
         r = conn.execute("SELECT * FROM company_profile WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def upsert_company_contacts(cik, d):
+    """d: {'ir': {name,email,phone}|None, 'comms': {...}|None, 'source_url': ...}."""
+    ir = d.get("ir") or {}
+    co = d.get("comms") or {}
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO company_contacts
+               (cik,ir_name,ir_email,ir_phone,comms_name,comms_email,comms_phone,source_url,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 ir_name=excluded.ir_name, ir_email=excluded.ir_email, ir_phone=excluded.ir_phone,
+                 comms_name=excluded.comms_name, comms_email=excluded.comms_email,
+                 comms_phone=excluded.comms_phone, source_url=excluded.source_url,
+                 updated_at=excluded.updated_at""",
+            (cik, ir.get("name"), ir.get("email"), ir.get("phone"),
+             co.get("name"), co.get("email"), co.get("phone"), d.get("source_url"), now_iso()))
+
+
+def get_company_contacts(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM company_contacts WHERE cik=?", (cik,)).fetchone()
         return dict(r) if r else {}
 
 
