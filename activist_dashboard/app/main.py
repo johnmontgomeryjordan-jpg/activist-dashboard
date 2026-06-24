@@ -230,6 +230,7 @@ def api_company(cik: str):
     ear = database.get_earnings(cik) or {}
     fx = database.get_finnhub_extra(cik) or {}
     prof = database.get_company_profile(cik) or {}
+    con = database.get_company_contacts(cik) or {}
     px = database.get_prices(cik) or {}
     aflag = database.get_activist_flag(cik) or {}
     market = database.get_company_market(cik)
@@ -257,6 +258,10 @@ def api_company(cik: str):
         pitch_obj = json.loads(score.get("pitch") or "{}")
     except (ValueError, TypeError):
         pitch_obj = {}
+    try:
+        fin_context = json.loads(score.get("fin_context") or "[]")
+    except (ValueError, TypeError):
+        fin_context = []
     manual_sit = database.get_manual_situation(cik)
 
     try:
@@ -292,6 +297,7 @@ def api_company(cik: str):
         "signals": score.get("signals"),
         "evidence": evidence,
         "pitch": pitch_obj,
+        "fin_context": fin_context,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
         "note": database.get_note(cik),
@@ -361,6 +367,13 @@ def api_company(cik: str):
             "employees": prof.get("employees"),
             "ipo": prof.get("ipo"),
             "website": prof.get("website"),
+            "ir_name": con.get("ir_name"),
+            "ir_email": con.get("ir_email"),
+            "ir_phone": con.get("ir_phone"),
+            "comms_name": con.get("comms_name"),
+            "comms_email": con.get("comms_email"),
+            "comms_phone": con.get("comms_phone"),
+            "contacts_source": con.get("source_url"),
         },
         "prices": {"series": px.get("series") or [], "last_close": px.get("last_close")},
         "financials": {
@@ -437,6 +450,7 @@ def api_run_enrichment():
                          ("earnings", pipeline.refresh_earnings),
                          ("sentiment", pipeline.refresh_sentiment),
                          ("contacts", pipeline.refresh_contacts),
+                         ("ir-contacts", pipeline.refresh_ir_contacts),
                          ("prices", pipeline.refresh_prices)):
             try:
                 fn()
