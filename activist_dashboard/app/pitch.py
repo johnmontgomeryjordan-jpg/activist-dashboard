@@ -28,6 +28,20 @@ def _money(v):
     return f"${v:.0f}"
 
 
+def _money_precise(v):
+    """Like _money but keeps one decimal for M/B — used for exact figures like CEO pay."""
+    if v is None:
+        return None
+    a = abs(v)
+    if a >= 1e9:
+        return f"${v / 1e9:.1f}B"
+    if a >= 1e6:
+        return f"${v / 1e6:.1f}M"
+    if a >= 1e3:
+        return f"${v / 1e3:.0f}K"
+    return f"${v:.0f}"
+
+
 def _pct(v, dp=0):
     return None if v is None else f"{v * 100:.{dp}f}%"
 
@@ -80,6 +94,8 @@ def _catalyst_sentence(trig):
         return "A recent C-suite departure adds a leadership vacuum to exploit."
     if "weak_vote_support" in trig:
         return "Shareholders are already revolting on executive pay."
+    if "overpaid_ceo" in trig:
+        return "CEO pay has climbed even as the stock lagged — a ready-made pay-for-performance attack."
     if "insider_selling" in trig:
         return "Insiders have been selling into the weakness."
     if "earnings_miss" in trig:
@@ -214,6 +230,14 @@ def _point(key, r):
         return "A cluster of insider selling — management is voting with its feet."
     if key == "weak_vote_support":
         return "Weak say-on-pay support — shareholders are already signaling discontent."
+    if key == "overpaid_ceo":
+        c = r.get("_comp") or {}
+        pct = c.get("pct_change")
+        lt, ly = _money_precise(c.get("latest_total")), c.get("latest_year")
+        if pct is not None and lt:
+            return (f"CEO pay climbed {pct * 100:.0f}% to {lt} ({ly}) even as the stock lagged — "
+                    f"a pay-for-performance gap that anchors a governance campaign.")
+        return "CEO pay rose while shareholders lagged — a textbook pay-for-performance attack."
     if key == "earnings_miss":
         return "A recent earnings miss — a natural moment for a shareholder to press for change."
     return None
@@ -221,8 +245,8 @@ def _point(key, r):
 
 # Order points by how compelling they are in a pitch (not raw score weight).
 _POINT_PRIORITY = [
-    "cash_hoard", "weak_tsr_1y", "cheap_ev_ebitda", "low_margin", "high_sga",
-    "low_roa", "cheap_pb", "cheap_abs", "high_goodwill", "weak_growth",
+    "cash_hoard", "overpaid_ceo", "weak_tsr_1y", "cheap_ev_ebitda", "low_margin",
+    "high_sga", "low_roa", "cheap_pb", "cheap_abs", "high_goodwill", "weak_growth",
     "gov_classified", "gov_poison", "gov_dual", "ceo_departure",
     "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",
 ]
