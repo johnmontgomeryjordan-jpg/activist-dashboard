@@ -205,6 +205,12 @@ def _point(key, r):
         if d and g:
             return f"Down {d} over the year and {g} points behind the market — a cheap, frustrated shareholder base."
         return "Has badly lagged the market over the past year — a frustrated shareholder base."
+    if key == "weak_tsr_3y":
+        t3 = r.get("tsr_3y"); sp = r.get("_spy_3y")
+        if t3 is not None and sp is not None:
+            return (f"Total return of {t3 * 100:+.0f}% over three years vs the S&P's "
+                    f"{sp * 100:+.0f}% — a structural, multi-year underperformer, not a one-year blip.")
+        return "Has trailed the market for years — a structural underperformer, not a one-year blip."
     if key in ("cheap_abs", "cheap_pb"):
         pb = r.get("pb_ratio")
         return f"Trades at {pb:.1f}x book — a cheap entry point below its peer cutoff." if pb else "Trades cheap to book value — a cheap entry point."
@@ -254,10 +260,10 @@ def _point(key, r):
 
 # Order points by how compelling they are in a pitch (not raw score weight).
 _POINT_PRIORITY = [
-    "cash_hoard", "overpaid_ceo", "exec_reaction_drop", "weak_tsr_1y", "cheap_ev_ebitda",
-    "low_margin", "high_sga", "low_roa", "cheap_pb", "cheap_abs", "high_goodwill",
-    "weak_growth", "gov_classified", "gov_poison", "gov_dual", "ceo_departure",
-    "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",
+    "cash_hoard", "overpaid_ceo", "exec_reaction_drop", "weak_tsr_1y", "weak_tsr_3y",
+    "cheap_ev_ebitda", "low_margin", "high_sga", "low_roa", "cheap_pb", "cheap_abs",
+    "high_goodwill", "weak_growth", "gov_classified", "gov_poison", "gov_dual",
+    "ceo_departure", "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",
 ]
 
 
