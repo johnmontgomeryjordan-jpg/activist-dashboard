@@ -508,6 +508,22 @@ function evCard(e){
   const sl=(e.source||e.url)?`<div class="evsrc">Source: ${src}</div>`:"";
   return `<div class="evrow"><div class="evtop"><span class="evlabel">${esc(e.label)}</span>${val}</div>${ctx}${math}${sl}</div>`;
 }
+function fmtMetricVal(key,v){
+  if(v==null) return "—";
+  if(key==="pb_ratio") return fmtNum(v)+"x";
+  return (v*100).toFixed(1)+"%";
+}
+function finCard(m){
+  const v=fmtMetricVal(m.key,m.value);
+  const cut=m.cutoff!=null?fmtMetricVal(m.key,m.cutoff):null;
+  const cls=m.verdict==="bad"?"bad":m.verdict==="opp"?"opp":"mid";
+  const lab=m.verdict==="bad"?"Vulnerability":m.verdict==="opp"?"Opportunity":"In line";
+  const pos=m.pct!=null?Math.max(2,Math.min(98,Math.round(m.pct*100))):null;
+  const bar=pos!=null?`<div class="ptrack"><div class="pmark" style="left:${pos}%"></div></div>`:`<div class="ptrack"></div>`;
+  const cap=cut!=null?`Peer cutoff ${cut} · ${m.n||0} sector peers`:`${m.n||0} sector peers`;
+  return `<div class="metric"><div class="metric-top"><span class="mk">${esc(m.label)}</span><span class="chip ${cls}">${lab}</span></div>
+    <div class="metric-top" style="margin-top:5px;"><span class="mv">${v}</span></div>${bar}<div class="mc">${esc(cap)}</div></div>`;
+}
 function pillarsHtml(ev){
   if(!ev.length) return `<div class="empty">No evidence recorded.</div>`;
   const groups={}; ev.forEach(e=>{ const p=PILLAR_OF[e.key]||"event"; (groups[p]=groups[p]||[]).push(e); });
@@ -546,29 +562,67 @@ function renderTab(){
          <div class="verdict" style="font-size:13.5px;"><span style="color:var(--ok)">${aBuy} buy</span> · ${aHold} hold · <span style="color:var(--hot)">${aSell} sell</span>${an.period?` <span class="gov-note">(${esc(an.period)})</span>`:""}</div>`
       : "";
     const px=d.prices||{}; const pchart=priceChart(px.series, px.last_close);
+    const pitch=d.pitch||{}; const points=pitch.points||[];
+    const thesisHtml = pitch.thesis
+      ? `<div class="verdict">${esc(pitch.thesis)}</div>`
+      : `<div class="verdict">${o.description?esc(o.description):`Flagged on: ${top.slice(0,5).map(esc).join(", ")||"—"}.`}</div>`;
+    const ptsHtml = points.length
+      ? `<div class="mh3">The pitch</div><ol class="pitch-points">${points.map((p,i)=>`<li><span class="num">${i+1}</span><span>${esc(p)}</span></li>`).join("")}</ol>`
+      : "";
+    /* Timing & catalysts */
+    const sig=d.signals||""; const cat=[];
+    if(/CEO\/exec departure/i.test(sig)) cat.push("Exec departure");
+    if(/earnings miss|guidance cut/i.test(sig)) cat.push("Earnings miss");
+    if(/impairment/i.test(sig)) cat.push("Impairment");
+    const ernDate=(d.earnings&&d.earnings.next_date)?d.earnings.next_date:null;
+    const tpills=[...(ernDate?["Earnings "+ernDate]:[]),...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
+    const timingBody=(ernDate||cat.length)
+      ? `${tpills}${ernDate?`<br>Next print <b>${esc(ernDate)}</b> — often the most receptive window to reach out.`:""}`
+      : `<span class="gov-note">No near-term catalyst on the calendar.</span>`;
+    /* Who to reach */
+    const ct=d.contacts||{};
+    const ctRow=(label,name,email,phone)=>{
+      if(!name&&!email&&!phone) return "";
+      const init=name?name.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase():label.slice(0,2).toUpperCase();
+      const det=[email?`<div class="em">${esc(email)}</div>`:"",phone?`<div class="ph">${esc(phone)}</div>`:""].join("");
+      return `<div class="ctc"><div class="av">${esc(init)}</div><div><div class="nm">${esc(name||label)}</div><div class="rl">${esc(label)}</div></div><div class="det">${det}</div></div>`;
+    };
+    const irRow=ctRow("Investor Relations",ct.ir_name,ct.ir_email,ct.ir_phone);
+    const prRow=ctRow("Media / Comms",ct.comms_name,ct.comms_email,ct.comms_phone);
+    const reachHtml=(irRow||prRow) ? irRow+prRow
+      : `<span class="gov-note">No IR/Comms contact parsed yet — pulled from recent 8-K press releases on the daily run.</span>
+         <div class="links" style="margin-top:8px;"><a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations contact")}" target="_blank" rel="noopener">Search IR ↗</a></div>`;
+    const strip=`<div class="strip2">
+        <div><div class="mh3" style="margin:0 0 10px">Timing &amp; catalysts</div><div class="timing">${timingBody}</div></div>
+        <div><div class="mh3" style="margin:0 0 10px">Who to reach</div>${reachHtml}</div></div>`;
     body.innerHTML=`
       <div class="mh3">Why it's a target</div>
-      <div class="verdict">${o.description?esc(o.description):`Flagged on: ${top.slice(0,5).map(esc).join(", ")||"—"}.`}</div>
-      <div class="mh3">Signals</div><div class="sigchips">${chips||"—"}</div>
+      ${thesisHtml}
+      ${ptsHtml}
+      ${strip}
       ${pchart?`<div class="mh3">Price · 1-year</div>${pchart}`:""}
-      ${tsrPanel?`<div class="mh3">Returns</div>${tsrPanel}${ern}`:ern}
+      ${tsrPanel?`<div class="mh3">Returns</div>${tsrPanel}`:""}
       <div class="mh3">Governance</div>${govRow}
       ${analystHtml}
+      <div class="mh3">Screen signals</div><div class="sigchips">${chips||"—"}</div>
+      ${o.description?`<div class="mh3">About the company</div><div class="desc">${esc(o.description)}</div>`:""}
       <div class="mh3">Quick links</div><div class="links">${L.join("")}</div>`;
   }
   else if(CURRENT_TAB==="evidence"){
     body.innerHTML=pillarsHtml(d.evidence||[]);
   }
   else if(CURRENT_TAB==="financials"){
+    const fc=d.fin_context||[];
+    const finGrid=fc.length?`<div class="fin">${fc.map(finCard).join("")}</div>`:"";
     const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
-    body.innerHTML=`<div class="grid">
-      ${kv("Market cap",fmtCap(d.market_cap))}${kv("Price / book",fmtNum(f.pb_ratio))}${kv("P / E",fmtNum(f.pe_ratio))}
-      ${kv("Revenue",fmtCap(f.revenue))}${kv("Revenue growth",fmtPct(f.revenue_growth))}${kv("Operating margin",fmtPct(f.operating_margin))}
-      ${kv("Profit margin",fmtPct(f.profit_margin))}${kv("Return on assets",fmtPct(f.roa))}${kv("Return on equity",fmtPct(f.return_on_equity))}
-      ${kv("SG&amp;A % of revenue",fmtPct(f.sga_pct))}${kv("Cash / assets",fmtPct(f.cash_to_assets))}${kv("Debt / assets",fmtPct(f.debt_to_assets))}
-      ${kv("Dividend yield",fmtPct(f.dividend_yield))}
+    const rawGrid=`<div class="grid">
+      ${kv("Market cap",fmtCap(d.market_cap))}${kv("P / E",fmtNum(f.pe_ratio))}${kv("Profit margin",fmtPct(f.profit_margin))}
+      ${kv("Return on equity",fmtPct(f.return_on_equity))}${kv("Revenue",fmtCap(f.revenue))}${kv("Dividend yield",fmtPct(f.dividend_yield))}
       ${kv("52-wk range",(f.week52_low!=null&&f.week52_high!=null)?("$"+fmtNum(f.week52_low)+" – $"+fmtNum(f.week52_high)):"—")}
       ${kv("Analyst target",f.analyst_target!=null?("$"+fmtNum(f.analyst_target)):"—")}</div>`;
+    body.innerHTML=(finGrid?`<div class="mh3">Versus peers — what each number means</div>
+        <p class="hint" style="margin:-4px 0 12px">Red flags a <b style="color:var(--hot)">vulnerability</b> an activist would attack; gold marks an <b style="color:var(--warn)">opportunity</b> (idle capital, a cheap entry); the bar shows where the company sits in its sector range.</p>${finGrid}`:"")
+      +`<div class="mh3">All metrics</div>${rawGrid}`;
   }
   else if(CURRENT_TAB==="ownership"){
     const ins=d.insider||{};
