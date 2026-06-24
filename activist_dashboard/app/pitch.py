@@ -90,6 +90,8 @@ def _gov_list(trig):
 
 def _catalyst_sentence(trig):
     """An optional extra sentence about a fresh, time-sensitive opening."""
+    if "exec_reaction_drop" in trig:
+        return "The stock sold off on a recent leadership-change filing — the market has already lost confidence."
     if "ceo_departure" in trig:
         return "A recent C-suite departure adds a leadership vacuum to exploit."
     if "weak_vote_support" in trig:
@@ -238,6 +240,13 @@ def _point(key, r):
             return (f"CEO pay climbed {pct * 100:.0f}% to {lt} ({ly}) even as the stock lagged — "
                     f"a pay-for-performance gap that anchors a governance campaign.")
         return "CEO pay rose while shareholders lagged — a textbook pay-for-performance attack."
+    if key == "exec_reaction_drop":
+        rc = r.get("_reaction") or {}
+        mv = rc.get("move")
+        if mv is not None:
+            return (f"The stock fell {abs(mv) * 100:.0f}% the day the leadership-change 8-K hit — "
+                    f"a visible vote of no confidence in the transition.")
+        return "The market sold off on the leadership-change announcement — a visible loss of confidence."
     if key == "earnings_miss":
         return "A recent earnings miss — a natural moment for a shareholder to press for change."
     return None
@@ -245,9 +254,9 @@ def _point(key, r):
 
 # Order points by how compelling they are in a pitch (not raw score weight).
 _POINT_PRIORITY = [
-    "cash_hoard", "overpaid_ceo", "weak_tsr_1y", "cheap_ev_ebitda", "low_margin",
-    "high_sga", "low_roa", "cheap_pb", "cheap_abs", "high_goodwill", "weak_growth",
-    "gov_classified", "gov_poison", "gov_dual", "ceo_departure",
+    "cash_hoard", "overpaid_ceo", "exec_reaction_drop", "weak_tsr_1y", "cheap_ev_ebitda",
+    "low_margin", "high_sga", "low_roa", "cheap_pb", "cheap_abs", "high_goodwill",
+    "weak_growth", "gov_classified", "gov_poison", "gov_dual", "ceo_departure",
     "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",
 ]
 
