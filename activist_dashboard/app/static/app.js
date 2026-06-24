@@ -478,7 +478,10 @@ function renderCompany(){
     warn=`<div class="cv-warn" style="border-color:var(--line2);color:var(--muted)">Manually marked as <b>not</b> an active situation. <span style="cursor:pointer;text-decoration:underline" onclick="openSituationModal('${esc(d.cik)}')">change</span></div>`;
   }
   const star=WATCHLIST_SET.has(d.cik)?'★ On watchlist':'☆ Add to watchlist';
-  const tabs=[["overview","Overview"],["evidence","Evidence",(d.evidence||[]).length],["financials","Financials"],["ownership","Ownership & insiders"],["filings","Filings & news"],["notes","Notes"]];
+  const npeers=(d.peer_analysis&&d.peer_analysis.peers)?d.peer_analysis.peers.length:0;
+  const tabs=[["overview","Overview"],["evidence","Evidence",(d.evidence||[]).length],["financials","Financials"]];
+  if(npeers) tabs.push(["peers","Peer analysis",npeers]);
+  tabs.push(["ownership","Ownership & insiders"],["filings","Filings & news"],["notes","Notes"]);
   const tabbar=tabs.map(t=>`<div class="cv-tab ${CURRENT_TAB===t[0]?"active":""}" onclick="switchTab('${t[0]}')">${t[1]}${t[2]?` <span class="cv-tabcount">${t[2]}</span>`:""}</div>`).join("");
   document.getElementById("companyView").innerHTML=`
     <div class="cv-back" onclick="showView(CURRENT_VIEW)"><i class="ti ti-arrow-left"></i> Back</div>
@@ -640,6 +643,22 @@ function finCard(m){
   return `<div class="metric"><div class="metric-top"><span class="mk">${esc(m.label)}</span><span class="chip ${cls}">${lab}</span></div>
     <div class="metric-top" style="margin-top:5px;"><span class="mv">${v}</span></div>${bar}<div class="mc">${esc(cap)}</div></div>`;
 }
+function peerTable(pa){
+  const f=(v)=>v==null?"—":((v>=0?"+":"")+(v*100).toFixed(0)+"%");
+  const x=(v)=>v==null?"—":v.toFixed(1)+"x";
+  const tcol=(v)=>v==null?"":(v<0?"color:var(--hot)":"color:var(--ok)");
+  const bd="border-bottom:1px solid rgba(0,0,0,.08);";
+  const th=(t,a)=>`<th style="text-align:${a};padding:7px 8px;${bd}color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;">${t}</th>`;
+  const td=(t,a,extra)=>`<td style="text-align:${a};padding:7px 8px;${bd}${extra||""}">${t}</td>`;
+  const row=(o,extra)=>`<tr>${td((o.name?esc(o.name):esc(o.ticker||"—"))+(o.ticker&&o.name?` <span style="color:var(--muted)">${esc(o.ticker)}</span>`:""),"left",extra)}
+     ${td(f(o.tsr_1y),"right",extra+tcol(o.tsr_1y))}${td(f(o.operating_margin),"right",extra)}${td(x(o.pb_ratio),"right",extra)}${td(x(o.ev_ebitda),"right",extra)}</tr>`;
+  const self=pa.self||{}, med=pa.median||{};
+  const peers=(pa.peers||[]).slice().sort((a,b)=>((b.tsr_1y==null?-9:b.tsr_1y)-(a.tsr_1y==null?-9:a.tsr_1y)));
+  const head=`<tr>${th("Company","left")}${th("1-yr TSR","right")}${th("Op margin","right")}${th("P / B","right")}${th("EV/EBITDA","right")}</tr>`;
+  const selfRow=row(self,"background:rgba(47,95,166,.08);font-weight:700;");
+  const medRow=row({name:"Peer median",tsr_1y:med.tsr_1y,operating_margin:med.operating_margin,pb_ratio:med.pb_ratio,ev_ebitda:med.ev_ebitda},"font-style:italic;color:var(--muted);");
+  return `<table style="width:100%;border-collapse:collapse;font-size:13px;">${head}${selfRow}${medRow}${peers.map(o=>row(o,"")).join("")}</table>`;
+}
 function pillarsHtml(ev){
   if(!ev.length) return `<div class="empty">No evidence recorded.</div>`;
   const groups={}; ev.forEach(e=>{ const p=PILLAR_OF[e.key]||"event"; (groups[p]=groups[p]||[]).push(e); });
@@ -714,6 +733,16 @@ function renderTab(){
     body.innerHTML=(finGrid?`<div class="mh3">Versus peers — what each number means</div>
         <p class="hint" style="margin:-4px 0 12px">Red flags a <b style="color:var(--hot)">vulnerability</b> an activist would attack; gold marks an <b style="color:var(--warn)">opportunity</b> (idle capital, a cheap entry); the bar shows where the company sits in its sector range.</p>${finGrid}`:"")
       +`<div class="mh3">All metrics</div>${rawGrid}`;
+  }
+  else if(CURRENT_TAB==="peers"){
+    const pa=d.peer_analysis||{};
+    const rank=pa.rank, rof=pa.rank_of;
+    const summary=(rank&&rof)
+      ? `<p class="hint" style="margin:-4px 0 12px">Ranked <b>${rank} of ${rof}</b> by 1-year total return against the ${pa.n} peers <b>${esc(d.company)}</b> chose itself — the compensation peer group it named in its own proxy.</p>`
+      : `<p class="hint" style="margin:-4px 0 12px">The compensation peer group <b>${esc(d.company)}</b> named in its own proxy (DEF 14A), versus the metrics we track.</p>`;
+    body.innerHTML=`<div class="mh3">Peer analysis — self-selected proxy peer group</div>${summary}
+      ${peerTable(pa)}
+      <p class="hint" style="margin-top:12px">Peers are the companies the board picked to benchmark executive pay against; we show only those in our coverage. "Underperformance by its own yardstick" is one of the most credible activist arguments. TSR from Finnhub; margins &amp; valuation from SEC XBRL + market data.</p>`;
   }
   else if(CURRENT_TAB==="ownership"){
     const ins=d.insider||{};
