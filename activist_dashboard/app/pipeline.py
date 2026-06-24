@@ -68,6 +68,9 @@ _STI = ["ShortTermInvestments"]
 _DEBT_LT = ["LongTermDebtNoncurrent", "LongTermDebt"]
 _DEBT_CUR = ["LongTermDebtCurrent", "DebtCurrent"]
 _SHARES = ["EntityCommonStockSharesOutstanding"]
+_DEP = ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet",
+        "DepreciationAndAmortization"]                       # cash-flow D&A -> EBITDA
+_GOODWILL = ["Goodwill"]                                     # balance-sheet goodwill -> M&A
 
 
 def _pad(cik):
@@ -208,7 +211,7 @@ def _extract(facts):
     10-K when the quarterly data isn't cleanly available -- so scores refresh
     quarterly while never doing worse than annual."""
     rev_f = _flows(facts, _REV); op_f = _flows(facts, _OPINC)
-    sga_f = _flows(facts, _SGA); ni_f = _flows(facts, _NI)
+    sga_f = _flows(facts, _SGA); ni_f = _flows(facts, _NI); dep_f = _flows(facts, _DEP)
 
     # Use the recent period only when operating income is reported for it; else annual.
     base = _latest_period(rev_f)
@@ -221,10 +224,11 @@ def _extract(facts):
         opinc = _at(op_f, p_end, p_days)
         sga = _at(sga_f, p_end, p_days)
         ni = _at(ni_f, p_end, p_days)
+        dep = _at(dep_f, p_end, p_days)
         rev_prior = _prior_year(rev_f, p_end, p_days)
     else:
         p_end = p_days = p_accn = None
-        rev = opinc = sga = ni = rev_prior = None
+        rev = opinc = sga = ni = dep = rev_prior = None
 
     assets = _instant(facts, _ASSETS)
     equity = _instant(facts, _EQUITY)
@@ -232,7 +236,11 @@ def _extract(facts):
     cash = (cash_c or 0) + (sti or 0) if (cash_c is not None or sti is not None) else None
     dlt = _instant(facts, _DEBT_LT[:1]); dcur = _instant(facts, _DEBT_CUR[:1])
     debt = (dlt or 0) + (dcur or 0) if (dlt is not None or dcur is not None) else None
+    goodwill = _instant(facts, _GOODWILL)
     shares = _latest_shares(facts)
+
+    # EBITDA = operating income + D&A (over the SAME period). Used for EV/EBITDA.
+    ebitda = (opinc + dep) if (opinc is not None and dep is not None) else None
 
     # annualize a partial-year net income so ROA is comparable across fiscal positions
     ni_ann = ni
@@ -264,6 +272,7 @@ def _extract(facts):
         "revenue": rev, "revenue_prior": rev_prior, "operating_income": opinc,
         "sga": sga, "net_income": ni, "net_income_ann": ni_ann,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
+        "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill,
         "period_end": p_end, "period_days": p_days,
         "period_label": _period_label(p_end, p_days) if p_end else None,
         "source_accn": p_accn,
