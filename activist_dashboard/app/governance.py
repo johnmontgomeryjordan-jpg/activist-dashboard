@@ -107,31 +107,46 @@ def refresh_governance(ciks):
     that exact accession. Returns the number of newly-parsed proxies."""
     done = 0
     ncomp = 0
+    npeers = 0
+    # Universe name index (cik, name) for matching the self-selected comp peer group.
+    universe = [(c.get("cik"), c.get("name")) for c in database.get_companies()
+                if c.get("name") and c.get("cik")]
     for cik in ciks:
         cik10 = _pad(cik)
         prx = _latest_proxy(cik10); time.sleep(0.12)
         if not prx or not prx.get("accn"):
             continue
         cached = database.get_governance(cik10)
-        # Skip only if we've parsed this exact proxy AND already attempted comp (comp_json
-        # set — to a real dict or the "{}" not-found sentinel). Names cached before CEO-pay
-        # existed have comp_json NULL, so they get a one-time backfill re-parse.
+        # Skip only if we've parsed this exact proxy AND already attempted comp + peers
+        # (both stored non-None — a real value or the "attempted, none found" sentinel).
+        # Names cached before a parser existed have NULL there, so they get a one-time
+        # backfill re-parse.
         if (cached and cached.get("proxy_accn") == prx["accn"]
-                and cached.get("comp_json") is not None):
+                and cached.get("comp_json") is not None
+                and cached.get("peers_json") is not None):
             continue
         html = _proxy_html(int(cik10), prx["accn"], prx["doc"])
         if not html:
             continue
-        flags = detect(_detag(html))
+        detagged = _detag(html)
+        flags = detect(detagged)
         try:
             comp = compensation.parse_ceo_comp(html) or {}     # {} = attempted, none found
         except Exception:
             comp = {}
+        try:
+            raw_peers = compensation.find_peers(detagged, universe, self_cik=cik10)
+            peers = [_pad(p) for p in raw_peers if _pad(p) != cik10]
+        except Exception:
+            peers = []
         nod = prx["accn"].replace("-", "")
         url = f"{ARCHIVE}/{int(cik10)}/{nod}/{prx['doc']}"
-        database.upsert_governance(cik10, flags, prx["accn"], prx.get("date"), url, comp)
+        database.upsert_governance(cik10, flags, prx["accn"], prx.get("date"), url,
+                                   comp, peers)
         done += 1
         if comp:
             ncomp += 1
-    print(f"[governance] parsed {done} new proxies · CEO comp {ncomp}")
+        if peers:
+            npeers += 1
+    print(f"[governance] parsed {done} new proxies · CEO comp {ncomp} · peer groups {npeers}")
     return done
