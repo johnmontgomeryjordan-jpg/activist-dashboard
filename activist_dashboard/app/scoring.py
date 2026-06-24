@@ -42,7 +42,7 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "high_sga": 1, "cash_hoard": 1, "underlevered": 1, "high_goodwill": 1,
                  "gov_classified": 1, "gov_poison": 1, "gov_dual": 1,
                  "insider_selling": 1, "insider_buying": 0,
-                 "weak_vote_support": 1, "overpaid_ceo": 2}
+                 "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
@@ -99,6 +99,7 @@ LABELS = {
     "insider_buying": "insiders buying (confidence signal)",
     "weak_vote_support": "weak say-on-pay support",
     "overpaid_ceo": "CEO pay rising while the stock lags",
+    "exec_reaction_drop": "stock dropped on a leadership-change 8-K",
 }
 
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
@@ -115,6 +116,11 @@ SAY_ON_PAY_FLAG = 0.75
 COMP_KEYS = ("overpaid_ceo",)
 # Fire when comp rose at least this much over the SCT window (cumulative).
 COMP_RISE_FLOOR = 0.05
+
+# Exec-change stock reaction (the 1-day abnormal move vs S&P on a leadership-change 8-K).
+REACTION_KEYS = ("exec_reaction_drop",)
+# Fire when the stock fell at least this much MORE than the market on the announcement day.
+REACTION_DROP_FLOOR = -0.03
 
 # Governance red flags (from DEF 14A). Boolean signals -> their own evidence cards.
 GOV_KEYS = ("gov_classified", "gov_poison", "gov_dual")
@@ -405,6 +411,11 @@ def _severity(key, r, t, e):
         tsr = r.get("tsr_1y") or 0.0
         # bigger raise + worse stock = sharper disconnect
         return _clamp(0.4 + min(0.4, pct) + min(0.2, max(0.0, -tsr)))
+    if key == "exec_reaction_drop":
+        abn = (r.get("_reaction") or {}).get("abnormal")
+        if abn is None:
+            return 0.5
+        return _clamp((-abn - 0.03) / 0.12)          # -3% -> 0, -15% -> 1
     return 1.0  # governance flags + insider_buying + event accelerants
 
 
@@ -590,6 +601,23 @@ def _comp_evidence(key, r):
             "source": "SEC DEF 14A", "url": r.get("_gov_url")}
 
 
+def _reaction_evidence(key, r):
+    rc = r.get("_reaction") or {}
+    move, bench, abn = rc.get("move"), rc.get("bench_move"), rc.get("abnormal")
+    ed = rc.get("event_date") or rc.get("filed_at")
+    val = (f"{move * 100:+.0f}%" if move is not None else "")
+    benchtxt = (f" while the S&P moved {bench * 100:+.1f}%" if bench is not None else "")
+    ctx = (f"the stock moved {move * 100:+.1f}% the day the leadership-change 8-K was "
+           f"filed{benchtxt} — about {abs(abn) * 100:.0f} points of company-specific "
+           f"downside, signalling the market lost confidence in the transition"
+           if move is not None and abn is not None else
+           "the stock sold off on a leadership-change filing")
+    return {"key": key, "label": LABELS.get(key, key), "value": val, "context": ctx,
+            "inputs": (f"close on {ed} vs prior trading day, less the S&P's same-day move"),
+            "period": (f"8-K filed {rc.get('filed_at')}" if rc.get("filed_at") else "recent 8-K"),
+            "source": "SEC 8-K + Twelve Data", "url": rc.get("url")}
+
+
 def _struct_evidence(key, r, t):
     if key in ("weak_tsr_1y", "weak_tsr_3y"):
         return _tsr_evidence(key, r)
@@ -738,6 +766,7 @@ def recompute_all():
     gov = database.get_all_governance()
     ins_all = database.get_all_insider()
     votes_all = database.get_all_votes()
+    reactions = database.get_all_exec_reactions()
     aflags = database.get_all_activist_flags()
     manual = database.get_manual_situations()   # partner overrides (always win)
 
@@ -820,6 +849,13 @@ def recompute_all():
             if pc is not None and pc >= COMP_RISE_FLOOR and lags:
                 trig.append("overpaid_ceo")
 
+        # Exec-change stock reaction: the stock dropped (vs the S&P) on a leadership 8-K.
+        rxn = reactions.get(r["cik"]) or {}
+        r["_reaction"] = rxn
+        abn = rxn.get("abnormal")
+        if abn is not None and abn <= REACTION_DROP_FLOOR:
+            trig.append("exec_reaction_drop")
+
         # Insider activity (Form 4; only present for parsed names).
         ins = ins_all.get(r["cik"]) or {}
         r["_insider"] = ins
@@ -887,6 +923,8 @@ def recompute_all():
                 evidence.append(_vote_evidence(key, r))
             elif key in COMP_KEYS:
                 evidence.append(_comp_evidence(key, r))
+            elif key in REACTION_KEYS:
+                evidence.append(_reaction_evidence(key, r))
             elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
