@@ -23,7 +23,7 @@ filing), stored as JSON on the score so the detail view can prove why each tag f
 import json
 import re
 
-from . import config, database
+from . import config, database, pitch
 
 MIN_PEERS = 5
 # 1-yr stock return must lag the S&P 500 by at least this much (in return terms) to flag.
@@ -787,6 +787,7 @@ def recompute_all():
             "situation_tier": tier,
             "situation_meta": smeta,
             "evidence": evidence,
+            "pitch": pitch.build_pitch(r, trig),
             "first_flagged": database.now_iso()[:10],
         })
 
