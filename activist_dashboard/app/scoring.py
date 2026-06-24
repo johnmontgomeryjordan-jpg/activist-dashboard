@@ -386,6 +386,53 @@ def _severity(key, r, t, e):
     return 1.0  # governance flags + insider_buying + event accelerants
 
 
+# Financials-tab peer context: each metric vs its sector, with a verdict that says what
+# the number MEANS for a pitch -- a vulnerability to attack ("bad"), idle capital / a cheap
+# entry an activist could exploit ("opp"), or in line ("mid"). Drives the meaning bars.
+_FIN_METRICS = [
+    ("pb_ratio", "Price / book", "opp_low"),
+    ("operating_margin", "Operating margin", "bad_low"),
+    ("roa", "Return on assets", "bad_low"),
+    ("revenue_growth", "Revenue growth", "bad_low"),
+    ("sga_pct", "SG&A % of revenue", "bad_high"),
+    ("cash_to_assets", "Cash / assets", "opp_high"),
+    ("debt_to_assets", "Debt / assets", "opp_low"),
+]
+
+
+def _fin_context(r, t, e):
+    out = []
+    for key, label, rule in _FIN_METRICS:
+        v = r.get(key)
+        if v is None:
+            continue
+        q1, q3, n = t.get(key, (None, None, 0))
+        lo, hi = e.get(key, (None, None))
+        pct = None
+        if lo is not None and hi is not None and hi > lo:
+            pct = _clamp((v - lo) / (hi - lo))
+        verdict, cutoff = "mid", None
+        if rule == "bad_low":
+            cutoff = q1
+            if q1 is not None and v <= q1:
+                verdict = "bad"
+        elif rule == "bad_high":
+            cutoff = q3
+            if q3 is not None and v >= q3:
+                verdict = "bad"
+        elif rule == "opp_low":
+            cutoff = q1
+            if q1 is not None and v <= q1:
+                verdict = "opp"
+        elif rule == "opp_high":
+            cutoff = q3
+            if q3 is not None and v >= q3:
+                verdict = "opp"
+        out.append({"key": key, "label": label, "value": v, "cutoff": cutoff,
+                    "pct": pct, "verdict": verdict, "n": n})
+    return out
+
+
 def _vuln_score(trig, r, t, e):
     """0-VULN_MAX activist-target-profile index from the severity-weighted signal total.
     Capped below 100 so it never implies a guaranteed campaign."""
@@ -788,6 +835,7 @@ def recompute_all():
             "situation_meta": smeta,
             "evidence": evidence,
             "pitch": pitch.build_pitch(r, trig),
+            "fin_context": _fin_context(r, t, e),
             "first_flagged": database.now_iso()[:10],
         })
 
