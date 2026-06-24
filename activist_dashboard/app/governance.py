@@ -18,7 +18,7 @@ import time
 
 import requests
 
-from . import config, database
+from . import config, database, compensation
 
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 SUB_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
@@ -77,7 +77,8 @@ def _latest_proxy(cik10):
     return None
 
 
-def _proxy_text(cik_int, accn, doc):
+def _proxy_html(cik_int, accn, doc):
+    """Raw proxy HTML (table structure preserved — needed for comp parsing)."""
     if not accn or not doc:
         return ""
     nod = accn.replace("-", "")
@@ -85,7 +86,11 @@ def _proxy_text(cik_int, accn, doc):
     time.sleep(0.1)
     if not r or not r.text:
         return ""
-    return _TAG.sub(" ", r.text).lower()[:1500000]
+    return r.text[:3000000]
+
+
+def _detag(html):
+    return _TAG.sub(" ", html or "").lower()[:1500000]
 
 
 def detect(text):
@@ -101,21 +106,32 @@ def refresh_governance(ciks):
     """For each (padded) CIK, parse the latest DEF 14A unless we've already parsed
     that exact accession. Returns the number of newly-parsed proxies."""
     done = 0
+    ncomp = 0
     for cik in ciks:
         cik10 = _pad(cik)
         prx = _latest_proxy(cik10); time.sleep(0.12)
         if not prx or not prx.get("accn"):
             continue
         cached = database.get_governance(cik10)
-        if cached and cached.get("proxy_accn") == prx["accn"]:
-            continue  # already parsed this proxy
-        text = _proxy_text(int(cik10), prx["accn"], prx["doc"])
-        if not text:
+        # Skip only if we've parsed this exact proxy AND already attempted comp (comp_json
+        # set — to a real dict or the "{}" not-found sentinel). Names cached before CEO-pay
+        # existed have comp_json NULL, so they get a one-time backfill re-parse.
+        if (cached and cached.get("proxy_accn") == prx["accn"]
+                and cached.get("comp_json") is not None):
             continue
-        flags = detect(text)
+        html = _proxy_html(int(cik10), prx["accn"], prx["doc"])
+        if not html:
+            continue
+        flags = detect(_detag(html))
+        try:
+            comp = compensation.parse_ceo_comp(html) or {}     # {} = attempted, none found
+        except Exception:
+            comp = {}
         nod = prx["accn"].replace("-", "")
         url = f"{ARCHIVE}/{int(cik10)}/{nod}/{prx['doc']}"
-        database.upsert_governance(cik10, flags, prx["accn"], prx.get("date"), url)
+        database.upsert_governance(cik10, flags, prx["accn"], prx.get("date"), url, comp)
         done += 1
-    print(f"[governance] parsed {done} new proxies")
+        if comp:
+            ncomp += 1
+    print(f"[governance] parsed {done} new proxies · CEO comp {ncomp}")
     return done
