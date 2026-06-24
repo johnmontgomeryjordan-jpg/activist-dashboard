@@ -587,8 +587,19 @@ function pkPickLead(){
   const idx=((publishDayIndex()%top.length)+top.length)%top.length;
   return top[idx];
 }
+function effPitch(d){
+  // Prefer the Haiku-polished pitch when present; fall back to the templated one. Keeps the
+  // archetype from the deterministic pitch. _ai flags that prose came from the AI layer.
+  const ai=(d&&d.ai_pitch)||{};
+  if(ai.thesis){
+    const p=Object.assign({}, d.pitch||{}, {thesis:ai.thesis, _ai:true});
+    if(ai.points&&ai.points.length) p.points=ai.points;
+    return p;
+  }
+  return (d&&d.pitch)||{};
+}
 function pkHero(d){
-  const vi=vulnInfo(d.vuln); const pitch=d.pitch||{}; const points=pitch.points||[]; const o=d.overview||{};
+  const vi=vulnInfo(d.vuln); const pitch=effPitch(d); const points=pitch.points||[]; const o=d.overview||{};
   const pts=points.length?`<ol class="pitch-points">${points.map((p,i)=>`<li><span class="num">${i+1}</span><span>${esc(p)}</span></li>`).join("")}</ol>`:"";
   const thesis=pitch.thesis?`<div class="verdict" style="margin-top:14px;">${esc(pitch.thesis)}</div>`:`<div class="verdict" style="margin-top:14px;">${esc(o.description||"")}</div>`;
   return `<div class="pk-hero">
@@ -697,7 +708,8 @@ function renderTab(){
          <div class="verdict" style="font-size:13.5px;"><span style="color:var(--ok)">${aBuy} buy</span> · ${aHold} hold · <span style="color:var(--hot)">${aSell} sell</span>${an.period?` <span class="gov-note">(${esc(an.period)})</span>`:""}</div>`
       : "";
     const px=d.prices||{}; const pchart=priceChart(px.series, px.last_close);
-    const pitch=d.pitch||{}; const points=pitch.points||[];
+    const pitch=effPitch(d); const points=pitch.points||[];
+    const aiTag=pitch._ai?` <span class="gov-note" style="text-transform:none;letter-spacing:0;color:var(--accent);">✦ AI-polished</span>`:"";
     const thesisHtml = pitch.thesis
       ? `<div class="verdict">${esc(pitch.thesis)}</div>`
       : `<div class="verdict">${o.description?esc(o.description):`Flagged on: ${top.slice(0,5).map(esc).join(", ")||"—"}.`}</div>`;
@@ -706,7 +718,7 @@ function renderTab(){
       : "";
     const strip=pitchStrip(d);
     body.innerHTML=`
-      <div class="mh3">Why it's a target</div>
+      <div class="mh3">Why it's a target${aiTag}</div>
       ${thesisHtml}
       ${ptsHtml}
       ${strip}
