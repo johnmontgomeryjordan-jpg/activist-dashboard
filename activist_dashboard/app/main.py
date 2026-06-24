@@ -453,6 +453,7 @@ def api_run_enrichment():
                          ("contacts", pipeline.refresh_contacts),
                          ("ir-contacts", pipeline.refresh_ir_contacts),
                          ("exec-reactions", pipeline.refresh_exec_reactions),
+                         ("long-tsr", pipeline.refresh_long_tsr),
                          ("prices", pipeline.refresh_prices)):
             try:
                 fn()
