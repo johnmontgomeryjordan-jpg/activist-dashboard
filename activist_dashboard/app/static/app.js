@@ -613,10 +613,15 @@ const NEWS_RANK={activist:0,exec:1,distress:2,proxy:3,movers:4,market:5};
 function pkPickLead(){
   const pool=(SHORTLIST||[]).filter(c=>!c.active_situation);
   if(!pool.length) return null;
+  const byVuln=(a,b)=>(b.vuln||0)-(a.vuln||0);
   const hasCatalyst=c=>/recent (ceo|exec|earnings|results|impairment|layoff|leadership)/i.test(c.signals||"") || (c.week_change>0);
-  let cands=pool.filter(hasCatalyst).sort((a,b)=>(b.vuln||0)-(a.vuln||0));
-  if(!cands.length) cands=pool.slice().sort((a,b)=>(b.vuln||0)-(a.vuln||0));
-  const top=cands.slice(0,8);
+  // Catalyst names first (fresh angle), then PADDED with the highest-vuln names so the
+  // rotation pool is always deep enough to give a different lead each day. (Without the
+  // padding, a day with only one catalyst name would lock the lead to that name forever.)
+  const cats=pool.filter(hasCatalyst).sort(byVuln);
+  const rest=pool.filter(c=>!hasCatalyst(c)).sort(byVuln);
+  const top=cats.concat(rest).slice(0, Math.min(8, pool.length));
+  if(!top.length) return null;
   const idx=((publishDayIndex()%top.length)+top.length)%top.length;
   return top[idx];
 }
@@ -717,11 +722,26 @@ function renderTab(){
     const top=(d.signals||"").split(" + ").filter(Boolean);
     const chips=top.map(s=>`<span class="sigchip${/say-on-pay|vote/.test(s)?" warnchip":""}">${esc(s)}</span>`).join("");
     const tsr=d.tsr||{}; let tsrPanel="";
-    if(tsr.tsr_1y!=null){ const gap=tsr.gap, gcol=(gap!=null)?(gap<0?"var(--hot)":"var(--ok)"):"var(--muted)"; const gtxt=(gap!=null)?((gap>0?"+":"")+(gap*100).toFixed(0)+" pts"):"—";
-      tsrPanel=`<div class="tsr-panel"><div class="tsr-h">1-yr total return vs S&amp;P 500</div><div class="tsr-grid">
-        <div><div class="tsr-k">This stock</div><div class="tsr-v">${fmtPct(tsr.tsr_1y)}</div></div>
-        <div><div class="tsr-k">S&amp;P 500</div><div class="tsr-v">${fmtPct(tsr.spy_1y)}</div></div>
-        <div><div class="tsr-k">Gap</div><div class="tsr-v" style="color:${gcol}">${gtxt}</div></div></div></div>`; }
+    const tsrRow=(label,stock,spy,gap)=>{
+      if(stock==null) return "";
+      const gcol=(gap!=null)?(gap<0?"var(--hot)":"var(--ok)"):"var(--muted)";
+      const gtxt=(gap!=null)?((gap>0?"+":"")+(gap*100).toFixed(0)+" pts"):"—";
+      const c="padding:5px 8px;border-bottom:1px solid var(--line);font-family:var(--serif);font-size:15px;";
+      return `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;">${label}</td>`+
+        `<td style="${c}">${fmtPct(stock)}</td>`+
+        `<td style="${c}color:var(--muted);">${fmtPct(spy)}</td>`+
+        `<td style="${c}color:${gcol};">${gtxt}</td></tr>`;
+    };
+    const tsrRows=tsrRow("1-yr",tsr.tsr_1y,tsr.spy_1y,tsr.gap)
+      +tsrRow("3-yr",tsr.tsr_3y,tsr.spy_3y,tsr.gap_3y)
+      +tsrRow("5-yr",tsr.tsr_5y,tsr.spy_5y,tsr.gap_5y);
+    if(tsrRows){
+      const th="text-align:left;padding:2px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:600;";
+      tsrPanel=`<div class="tsr-panel"><div class="tsr-h">Total return vs S&amp;P 500</div>
+        <table style="width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;">
+        <thead><tr><th style="${th}"></th><th style="${th}">This stock</th><th style="${th}">S&amp;P 500</th><th style="${th}">Gap</th></tr></thead>
+        <tbody>${tsrRows}</tbody></table></div>`;
+    }
     const ern=(d.earnings&&d.earnings.next_date)?`<div class="timing"><i>◷</i> Next earnings <b>${esc(d.earnings.next_date)}</b> — often the most receptive window to reach out</div>`:"";
     const g=d.governance||{}; const gb=(on,t)=>`<span class="gov-badge ${on?'on':'off'}">${on?'●':'○'} ${t}</span>`;
     const anyGov=g.classified_board||g.poison_pill||g.dual_class;
