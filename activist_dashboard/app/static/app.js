@@ -547,15 +547,15 @@ function pitchStrip(d){
 
 /* ===== Pitch kit (home) ===== */
 let PK_LEAD_CIK=null;
-/* The "publish day" flips at 4 PM ET (when the daily rebuild + digest run), so the lead
-   of the day is stable through the trading day and changes with the fresh data. */
+/* The "publish day" flips at 6 AM ET (when the daily rebuild + digest run), so the lead
+   of the day is fresh each morning and stable through the day, in step with the new data. */
 function publishDayIndex(){
   try{
     const p=Object.fromEntries(new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",
       year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",hour12:false})
       .formatToParts(new Date()).map(x=>[x.type,x.value]));
     let ms=Date.UTC(+p.year,+p.month-1,+p.day);
-    if(+p.hour<16) ms-=86400000;                 // before 4 PM ET -> still on yesterday's kit
+    if(+p.hour<6) ms-=86400000;                  // before 6 AM ET -> still on yesterday's kit
     return Math.floor(ms/86400000);
   }catch(e){ const n=new Date(); return Math.floor((n-new Date(n.getFullYear(),0,0))/86400000); }
 }
@@ -718,7 +718,7 @@ function renderTab(){
       : "";
     const strip=pitchStrip(d);
     body.innerHTML=`
-      <div class="mh3">Why it's a target${aiTag}</div>
+      <div class="mh3">Why it's a potential target${aiTag}</div>
       ${thesisHtml}
       ${ptsHtml}
       ${strip}
