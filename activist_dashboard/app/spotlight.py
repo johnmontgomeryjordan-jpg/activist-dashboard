@@ -36,11 +36,13 @@ def pick_lead(rows):
     pool = [r for r in rows if not r.get("active_situation")]
     if not pool:
         return None
-    cands = [r for r in pool if _CATALYST.search(r.get("signals") or "")]
-    cands.sort(key=lambda r: r.get("vuln") or 0, reverse=True)
-    if not cands:
-        cands = sorted(pool, key=lambda r: r.get("vuln") or 0, reverse=True)
-    top = cands[:8]
+    def vk(r):
+        return r.get("vuln") or 0
+    # Catalyst names first, then padded with the highest-vuln names so the rotation pool is
+    # always deep enough to vary day to day (a single catalyst name must not lock the lead).
+    cats = sorted([r for r in pool if _CATALYST.search(r.get("signals") or "")], key=vk, reverse=True)
+    rest = sorted([r for r in pool if not _CATALYST.search(r.get("signals") or "")], key=vk, reverse=True)
+    top = (cats + rest)[:min(8, len(pool))]
     if not top:
         return None
     return top[day_index() % len(top)]
