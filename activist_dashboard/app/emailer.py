@@ -1,5 +1,5 @@
 """
-Pluggable email sender for the daily digest.
+Pluggable email sender for the daily pitch kit.
 
 Set EMAIL_PROVIDER in .env to "resend" or "sendgrid". Both have free tiers:
   * Resend   -> https://resend.com   (simplest; free tier ~3,000 emails/mo)
@@ -7,65 +7,141 @@ Set EMAIL_PROVIDER in .env to "resend" or "sendgrid". Both have free tiers:
 
 If no EMAIL_API_KEY is set, send_digest() becomes a no-op (and prints what it
 would have sent), so the rest of the app still runs without email configured.
+
+The email mirrors the on-site Daily Pitch Kit: the lead of the day (same backend
+picker the site uses) with its thesis + talking points, a few more proactive targets,
+and the top overnight headlines and filings.
 """
 import html
+import json
 
 import requests
 
-from . import config, database
+from . import config, database, spotlight
 
 RESEND_URL = "https://api.resend.com/emails"
 SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
 
+_BAND = [(75, "Severe"), (50, "High"), (25, "Elevated"), (0, "Moderate")]
 
-def build_digest_html(headlines, companies):
-    """Render the digest body: top 5 headlines + top 5 companies."""
-    def esc(s):
-        return html.escape(str(s or ""))
 
-    rows_news = "".join(
-        f'<li style="margin:6px 0;"><a href="{esc(h["url"])}">{esc(h["headline"])}</a>'
-        f' <span style="color:#888;">— {esc(h["source"])}</span></li>'
-        for h in headlines[:5]
-    ) or "<li>No relevant headlines today.</li>"
+def _esc(s):
+    return html.escape(str(s or ""))
 
-    rows_co = ""
-    for c in companies[:5]:
-        link = (f' &middot; <a href="{esc(c["top_item_url"])}">latest</a>'
-                if c.get("top_item_url") else "")
-        rows_co += (
-            f'<tr>'
-            f'<td style="padding:6px 10px;font-weight:600;">{esc(c["company"])} '
-            f'({esc(c["ticker"])})</td>'
-            f'<td style="padding:6px 10px;text-align:center;">{esc(c["score"])}</td>'
-            f'<td style="padding:6px 10px;color:#444;">{esc(c["signals"])}{link}</td>'
-            f'</tr>'
+
+def _band(v):
+    try:
+        v = int(v or 0)
+    except (ValueError, TypeError):
+        v = 0
+    for cut, name in _BAND:
+        if v >= cut:
+            return name
+    return "Moderate"
+
+
+def _eff_pitch(row):
+    """Effective pitch for a row: AI-polished thesis/points if present, else templated."""
+    try:
+        p = json.loads(row.get("pitch") or "{}")
+    except (ValueError, TypeError):
+        p = {}
+    ai = database.get_ai_pitch(row.get("cik")) or {}
+    if ai.get("pitch"):
+        try:
+            a = json.loads(ai["pitch"])
+        except (ValueError, TypeError):
+            a = {}
+        if a.get("thesis"):
+            p = dict(p)
+            p["thesis"] = a["thesis"]
+            if a.get("points"):
+                p["points"] = a["points"]
+    return p
+
+
+def build_digest_html(lead, targets, headlines, filings):
+    site = config.SITE_URL.rstrip("/")
+
+    # ---- Lead of the day -----------------------------------------------------
+    if lead:
+        lp = _eff_pitch(lead)
+        thesis = _esc(lp.get("thesis") or lead.get("signals") or "")
+        pts = "".join(
+            f'<li style="margin:7px 0;line-height:1.45;">{_esc(p)}</li>'
+            for p in (lp.get("points") or [])[:3]
         )
-    rows_co = rows_co or '<tr><td colspan="3" style="padding:6px 10px;">No flagged companies today.</td></tr>'
+        pts_block = (f'<ol style="padding-left:20px;margin:12px 0 0;color:#1c1b18;font-size:14px;">{pts}</ol>'
+                     if pts else "")
+        lead_html = f"""
+      <tr><td style="padding:0 0 6px;">
+        <span style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#9a948a;">Lead of the day</span>
+      </td></tr>
+      <tr><td style="padding:0 0 4px;">
+        <span style="font-family:Georgia,'Times New Roman',serif;font-size:23px;color:#1c1b18;">{_esc(lead.get('company'))}</span>
+        <span style="color:#9a948a;font-size:15px;"> ({_esc(lead.get('ticker'))})</span>
+      </td></tr>
+      <tr><td style="padding:0 0 12px;">
+        <span style="font-size:12px;font-weight:700;color:#15724e;">{_band(lead.get('vuln'))}</span>
+        <span style="color:#9a948a;font-size:12px;"> &middot; matches the activist-target profile ({_esc(lead.get('vuln'))}/92)</span>
+      </td></tr>
+      <tr><td style="padding:0 0 6px;font-size:15px;line-height:1.5;color:#1c1b18;">{thesis}</td></tr>
+      <tr><td>{pts_block}</td></tr>
+      <tr><td style="padding:14px 0 0;">
+        <a href="{site}/" style="background:#15724e;color:#fff;text-decoration:none;padding:9px 16px;border-radius:6px;font-size:13px;font-weight:600;">Open the pitch kit &rarr;</a>
+      </td></tr>"""
+    else:
+        lead_html = '<tr><td style="color:#9a948a;">No lead of the day yet — check the dashboard.</td></tr>'
+
+    # ---- More targets --------------------------------------------------------
+    lead_cik = lead.get("cik") if lead else None
+    more = [t for t in targets if t.get("cik") != lead_cik][:4]
+    tg_rows = "".join(
+        f'<tr>'
+        f'<td style="padding:7px 10px;font-weight:600;color:#1c1b18;">{_esc(t.get("company"))} '
+        f'<span style="color:#9a948a;font-weight:400;">({_esc(t.get("ticker"))})</span></td>'
+        f'<td style="padding:7px 10px;text-align:center;color:#15724e;font-weight:700;white-space:nowrap;">{_band(t.get("vuln"))}</td>'
+        f'<td style="padding:7px 10px;color:#5b554c;font-size:13px;">{_esc(t.get("signals"))}</td>'
+        f'</tr>'
+        for t in more
+    ) or '<tr><td colspan="3" style="padding:7px 10px;color:#9a948a;">No additional targets today.</td></tr>'
+
+    # ---- Headlines + filings -------------------------------------------------
+    news_rows = "".join(
+        f'<li style="margin:6px 0;line-height:1.4;"><a href="{_esc(h["url"])}" style="color:#2f5fa6;text-decoration:none;">{_esc(h["headline"])}</a>'
+        f' <span style="color:#9a948a;">— {_esc(h.get("source"))}</span></li>'
+        for h in (headlines or [])[:6]
+    ) or '<li style="color:#9a948a;">No notable headlines.</li>'
+
+    filing_rows = "".join(
+        f'<li style="margin:6px 0;line-height:1.4;"><a href="{_esc(f["url"])}" style="color:#2f5fa6;text-decoration:none;">{_esc(f.get("company"))} — {_esc(f.get("title"))}</a>'
+        f' <span style="color:#9a948a;">({_esc(f.get("form"))})</span></li>'
+        for f in (filings or [])[:5]
+    ) or '<li style="color:#9a948a;">No notable filings.</li>'
 
     return f"""\
-<div style="font-family:Arial,Helvetica,sans-serif;max-width:680px;margin:auto;color:#1a1a1a;">
-  <h2 style="margin-bottom:2px;">Activist Vulnerability — Daily Digest</h2>
-  <p style="color:#888;margin-top:0;">Generated automatically. Links open the original sources.</p>
+<div style="font-family:Helvetica,Arial,sans-serif;max-width:680px;margin:auto;background:#f6f4ee;padding:26px;color:#1c1b18;">
+  <div style="font-family:Georgia,serif;font-size:13px;letter-spacing:.04em;color:#15724e;">FGS GLOBAL &middot; DAILY PITCH KIT</div>
+  <div style="color:#9a948a;font-size:12px;margin:2px 0 18px;">Proactive activist-vulnerability leads &middot; generated automatically each morning</div>
 
-  <h3 style="border-bottom:2px solid #eee;padding-bottom:4px;">Top headlines</h3>
-  <ul style="padding-left:18px;">{rows_news}</ul>
-
-  <h3 style="border-bottom:2px solid #eee;padding-bottom:4px;">Companies to pitch</h3>
-  <table style="border-collapse:collapse;width:100%;font-size:14px;">
-    <thead>
-      <tr style="background:#f5f5f5;text-align:left;">
-        <th style="padding:6px 10px;">Company</th>
-        <th style="padding:6px 10px;">Score</th>
-        <th style="padding:6px 10px;">Signals</th>
-      </tr>
-    </thead>
-    <tbody>{rows_co}</tbody>
+  <table role="presentation" width="100%" style="background:#fffdf8;border:1px solid #e7e2d8;border-radius:10px;padding:20px;border-collapse:separate;">
+    {lead_html}
   </table>
 
-  <p style="color:#aaa;font-size:12px;margin-top:24px;">
-    You are receiving this because you subscribed on the dashboard. This is a
-    proof-of-concept demo for internal use.
+  <h3 style="font-family:Georgia,serif;font-size:15px;margin:24px 0 6px;color:#1c1b18;">More proactive targets</h3>
+  <table role="presentation" width="100%" style="border-collapse:collapse;font-size:14px;background:#fffdf8;border:1px solid #e7e2d8;border-radius:10px;overflow:hidden;">
+    <tbody>{tg_rows}</tbody>
+  </table>
+
+  <h3 style="font-family:Georgia,serif;font-size:15px;margin:24px 0 6px;color:#1c1b18;">Top headlines</h3>
+  <ul style="padding-left:18px;margin:0;font-size:14px;">{news_rows}</ul>
+
+  <h3 style="font-family:Georgia,serif;font-size:15px;margin:24px 0 6px;color:#1c1b18;">Recent filings</h3>
+  <ul style="padding-left:18px;margin:0;font-size:14px;">{filing_rows}</ul>
+
+  <p style="color:#9a948a;font-size:11px;margin-top:26px;line-height:1.5;border-top:1px solid #e7e2d8;padding-top:14px;">
+    Internal new-business tool for FGS Global. Predictive screen built on public data — it can
+    misflag, and is not a substitute for FactSet/Diligent or legal/financial advice. Not for client distribution.
   </p>
 </div>"""
 
@@ -110,18 +186,22 @@ def send_one(to_email, subject, html_body):
 
 
 def send_digest():
-    """Build today's digest and send to every subscriber. Returns count sent."""
+    """Build today's emailed pitch kit and send to every subscriber. Returns count sent."""
     subs = database.get_subscribers()
     if not subs:
         print("[email] no subscribers; nothing to send")
         return 0
-    headlines = database.recent_news(limit=5)
-    companies = database.get_scores(limit=5)
-    body = build_digest_html(headlines, companies)
-    subject = "Activist Vulnerability — Daily Digest"
+    rows = database.get_scores(limit=60)
+    lead = spotlight.pick_lead(rows)
+    headlines = database.recent_news(limit=6)
+    filings = database.recent_filings(limit=5)
+    body = build_digest_html(lead, rows, headlines, filings)
+    subject = "FGS — Daily Pitch Kit"
+    if lead:
+        subject += f": {lead.get('company')}"
     sent = 0
     for email in subs:
         if send_one(email, subject, body):
             sent += 1
-    print(f"[email] digest sent to {sent}/{len(subs)} subscribers")
+    print(f"[email] pitch kit sent to {sent}/{len(subs)} subscribers")
     return sent
