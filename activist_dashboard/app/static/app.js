@@ -27,7 +27,40 @@ function showView(name){
   if(name!=="company") CURRENT_VIEW=name;
   if(name==="watchlist") loadWatchlist();
   if(name==="pitchkit") renderPitchKit();
+  if(name==="about") loadFeedback();
   window.scrollTo(0,0);
+}
+
+/* ===== How it works: subtabs + feedback ===== */
+function aboutTab(id){
+  ["purpose","method","glossary","limits","roadmap","feedback"].forEach(s=>{
+    const sec=document.getElementById("about-"+s); if(sec) sec.style.display = s===id?"block":"none";
+    const btn=document.getElementById("ab-"+s); if(btn) btn.classList.toggle("active", s===id);
+  });
+  if(id==="feedback") loadFeedback();
+}
+async function loadFeedback(){
+  const box=document.getElementById("fbList"); if(!box) return;
+  try{
+    const d=await (await fetch("/api/feedback")).json();
+    const items=d.feedback||[];
+    box.innerHTML = items.length
+      ? items.map(f=>`<div class="row2"><div>${esc(f.message)}</div><div class="meta"><span>${esc(f.name)||"Anonymous"}</span><span>${fmtDate((f.created_at||"").slice(0,10))}</span></div></div>`).join("")
+      : `<div class="empty">No notes yet — be the first.</div>`;
+  }catch(e){ box.innerHTML=`<div class="empty">Couldn't load notes.</div>`; }
+}
+async function submitFeedback(){
+  const msg=(document.getElementById("fbMsg").value||"").trim();
+  const out=document.getElementById("fbMsgOut");
+  if(!msg){ if(out) out.textContent="Add a comment first."; return; }
+  const name=(document.getElementById("fbName").value||"").trim();
+  try{
+    const r=await (await fetch("/api/feedback",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name,message:msg})})).json();
+    if(out) out.textContent=r.message||"Saved.";
+    document.getElementById("fbMsg").value="";
+    loadFeedback();
+  }catch(e){ if(out) out.textContent="Couldn't save — try again."; }
 }
 
 /* ===== Status + summary ===== */
