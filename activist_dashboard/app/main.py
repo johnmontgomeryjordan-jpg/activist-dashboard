@@ -2,8 +2,10 @@
 FastAPI app: serves the dashboard, JSON API (incl. per-company detail + CSV
 export), the subscribe endpoint, and runs the background scheduler.
 """
+import base64
 import json
 import re
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,6 +50,38 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Activist Vulnerability Dashboard", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _gate_and_secure(request: Request, call_next):
+    """Internal-tool access control: if SITE_PASSWORD is set, the whole site requires a
+    shared firm login (HTTP Basic). /healthz stays open so the host can probe the port.
+    Also stamps a few conservative security headers on every response."""
+    if request.url.path == "/healthz":
+        return JSONResponse({"ok": True})
+    pw = config.SITE_PASSWORD
+    if pw:
+        hdr = request.headers.get("authorization", "")
+        ok = False
+        if hdr.startswith("Basic "):
+            try:
+                raw = base64.b64decode(hdr[6:]).decode("utf-8", "ignore")
+                u, _, p = raw.partition(":")
+                ok = (secrets.compare_digest(u, config.SITE_USER)
+                      and secrets.compare_digest(p, pw))
+            except Exception:
+                ok = False
+        if not ok:
+            return Response("Authentication required", status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="FGS Activist Dashboard"'})
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    resp.headers["X-Robots-Tag"] = "noindex, nofollow"   # keep it out of search engines
+    return resp
+
+
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
