@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS scores (
 CREATE TABLE IF NOT EXISTS subscribers (
     email TEXT PRIMARY KEY, created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, message TEXT, created_at TEXT
+);
 CREATE TABLE IF NOT EXISTS fundamentals (
     cik TEXT PRIMARY KEY, ticker TEXT, sector TEXT,
     revenue REAL, revenue_growth REAL, operating_margin REAL, sga_pct REAL,
@@ -440,6 +443,19 @@ def remove_subscriber(email):
 def get_subscribers():
     with get_conn() as conn:
         return [r["email"] for r in conn.execute("SELECT email FROM subscribers")]
+
+
+# --- Feedback (team comments from the How-it-works page) ----------------------
+def add_feedback(name, message):
+    with get_conn() as conn:
+        conn.execute("INSERT INTO feedback (name,message,created_at) VALUES (?,?,?)",
+                     ((name or "").strip()[:120], (message or "").strip()[:4000], now_iso()))
+
+
+def get_feedback(limit=50):
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM feedback ORDER BY id DESC LIMIT ?", (limit,))]
 
 
 # --- Watchlist (shared) ------------------------------------------------------
