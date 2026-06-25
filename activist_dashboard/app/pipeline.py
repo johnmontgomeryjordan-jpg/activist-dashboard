@@ -761,7 +761,10 @@ def refresh_long_tsr(force=False):
                                         tsr_3y=rr.get("3y"), tsr_5y=rr.get("5y"))
             done += 1
         time.sleep(1.0)
-    database.set_meta("long_tsr_at", datetime.utcnow().isoformat())
+    # Only stamp the 6-day cache if we actually got data — so a credit-exhausted run
+    # (all fetches 429) retries next cycle instead of silently skipping for 6 days.
+    if done:
+        database.set_meta("long_tsr_at", datetime.utcnow().isoformat())
     print(f"[long-tsr] {done}/{len(syms)} names (S&P 3y={bench.get('3y')} 5y={bench.get('5y')})")
     try:
         scoring.recompute_all()
