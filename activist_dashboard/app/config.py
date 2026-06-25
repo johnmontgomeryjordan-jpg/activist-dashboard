@@ -32,6 +32,12 @@ EMAIL_API_KEY = os.getenv("EMAIL_API_KEY", "")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "digest@example.com")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Activist Vulnerability Dashboard")
 
+# --- Access control ----------------------------------------------------------
+# Single shared firm password gating the whole site (internal tool). If SITE_PASSWORD
+# is left blank the site stays open; set it in the host dashboard to require a login.
+SITE_USER = os.getenv("SITE_USER", "fgs")
+SITE_PASSWORD = os.getenv("SITE_PASSWORD", "")
+
 # --- Universe ----------------------------------------------------------------
 # Minimum market cap (USD) for a company to be monitored.
 MIN_MARKET_CAP = float(os.getenv("MIN_MARKET_CAP", "1000000000"))  # $1B
@@ -46,7 +52,9 @@ SHORTLIST_SIZE = int(os.getenv("SHORTLIST_SIZE", "15"))
 
 # --- Scheduler ---------------------------------------------------------------
 REFRESH_MINUTES = int(os.getenv("REFRESH_MINUTES", "30"))   # data refresh cadence
-DIGEST_HOUR_ET = int(os.getenv("DIGEST_HOUR_ET", "16"))     # 16:00 ET = 4pm ET
+# Hard daily rebuild + digest at 6:00 AM ET, so the site + pitch kit are fresh each
+# morning and capture overnight filings/headlines. Override with DIGEST_HOUR_ET.
+DIGEST_HOUR_ET = int(os.getenv("DIGEST_HOUR_ET", "6"))      # 06:00 ET = 6am ET
 TIMEZONE = "America/New_York"
 
 # --- Database ----------------------------------------------------------------
