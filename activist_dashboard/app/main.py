@@ -278,6 +278,12 @@ def api_company(cik: str):
     tsr_1y = _f(market.get("tsr_1y"))
     spy_1y = _f(database.get_meta("spy_1y"))
     tsr_gap = (tsr_1y - spy_1y) if (tsr_1y is not None and spy_1y is not None) else None
+    tsr_3y = _f(market.get("tsr_3y"))
+    spy_3y = _f(database.get_meta("spy_3y"))
+    gap_3y = (tsr_3y - spy_3y) if (tsr_3y is not None and spy_3y is not None) else None
+    tsr_5y = _f(market.get("tsr_5y"))
+    spy_5y = _f(database.get_meta("spy_5y"))
+    gap_5y = (tsr_5y - spy_5y) if (tsr_5y is not None and spy_5y is not None) else None
 
     try:
         evidence = json.loads(score.get("evidence") or "[]")
@@ -347,7 +353,9 @@ def api_company(cik: str):
         "note": database.get_note(cik),
         "history": [r["score"] for r in database.get_score_history(cik)],
         "week_change": (score.get("score") - prior) if prior is not None else None,
-        "tsr": {"tsr_1y": tsr_1y, "spy_1y": spy_1y, "gap": tsr_gap},
+        "tsr": {"tsr_1y": tsr_1y, "spy_1y": spy_1y, "gap": tsr_gap,
+                "tsr_3y": tsr_3y, "spy_3y": spy_3y, "gap_3y": gap_3y,
+                "tsr_5y": tsr_5y, "spy_5y": spy_5y, "gap_5y": gap_5y},
         "governance": {
             "classified_board": bool(gov.get("classified_board")),
             "poison_pill": bool(gov.get("poison_pill")),
