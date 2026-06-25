@@ -475,6 +475,21 @@ async def api_unsubscribe(request: Request):
     return {"ok": True, "message": f"Unsubscribed {email}."}
 
 
+@app.get("/api/feedback")
+def api_feedback_list():
+    return {"feedback": database.get_feedback(limit=50)}
+
+
+@app.post("/api/feedback")
+async def api_feedback_add(request: Request):
+    data = await request.json()
+    msg = (data.get("message") or "").strip()
+    if not msg:
+        return JSONResponse({"ok": False, "error": "Message is empty."}, status_code=400)
+    database.add_feedback(data.get("name") or "", msg)
+    return {"ok": True, "message": "Thanks — your note was saved."}
+
+
 @app.post("/api/refresh")
 def api_refresh():
     result = pipeline.refresh_data()
