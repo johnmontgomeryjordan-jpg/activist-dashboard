@@ -31,6 +31,8 @@ EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "resend").lower()
 EMAIL_API_KEY = os.getenv("EMAIL_API_KEY", "")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "digest@example.com")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Activist Vulnerability Dashboard")
+# Public base URL of the dashboard (used for links in the emailed pitch kit).
+SITE_URL = os.getenv("SITE_URL", "https://activist-dashboard.onrender.com")
 
 # --- Access control ----------------------------------------------------------
 # Single shared firm password gating the whole site (internal tool). If SITE_PASSWORD
