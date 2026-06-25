@@ -205,6 +205,11 @@
   .abtab { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:20px;
     padding:6px 14px; font:inherit; font-size:13px; cursor:pointer; }
   .abtab.active { background:var(--brand); color:#fff; border-color:var(--brand); }
+  .cmp { font-size:13px; min-width:640px; margin-top:8px; }
+  .cmp th { background:var(--panel2); font-size:10px; }
+  .cmp td { vertical-align:top; line-height:1.5; color:var(--text); }
+  .cmp td:first-child { white-space:nowrap; }
+  .cmp tbody tr:nth-child(even) { background:rgba(0,0,0,.015); }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; margin-top:12px; }
   .legend td,.legend th { padding:8px 12px; }
   .pts { color:var(--hot); font-weight:700; text-align:center; white-space:nowrap; }
@@ -633,18 +638,77 @@
 
   <!-- ROADMAP -->
   <div class="about-sec" id="about-roadmap" style="display:none;">
-    <h2>Roadmap — with budget</h2>
-    <p>What we'd add to take this from an internal prototype toward a firmer, wider-use tool:</p>
+    <h2>Roadmap &amp; budget</h2>
+    <p>Today this runs as a <b>free-tier internal prototype</b> for roughly <b>$10 a month</b>. That
+    constraint — free, non-commercial data feeds — is what shapes most of its current limits. Below is
+    what it costs to run now, what each capability looks like today versus with budget, and rough
+    spending tiers to get there.</p>
+
+    <h3>What it costs to run today</h3>
     <ul>
-      <li><b>Paid market-data tier</b> — the biggest unlock: universe-wide live pricing/valuation and
-        multi-year TSR for <em>all</em> names, not just the top-ranked set, plus commercial licensing.</li>
-      <li><b>Verified sending domain</b> — so the morning pitch kit can email the whole team, not just
-        the owner's inbox.</li>
-      <li><b>Deeper signals</b> — granular pay-versus-performance, guidance-versus-delivery, and
-        segment / sum-of-the-parts break-up analysis.</li>
-      <li><b>Broader, higher-quality news</b> — a stronger news provider for earlier, cleaner signal.</li>
-      <li><b>Workflow</b> — CRM hand-off, saved searches, and alerting when a name crosses into a higher band.</li>
+      <li><b>Hosting</b> (Render Starter, always-on): ~$7 / month</li>
+      <li><b>Data</b> (SEC, Finnhub, Twelve Data, FMP, News API): <b>$0</b> — all free, non-commercial tiers</li>
+      <li><b>AI thesis</b> (Claude Haiku, cached): ~$1–3 / month</li>
+      <li><b>Total: roughly $10 / month</b></li>
     </ul>
+    <p class="gov-note">The free data tiers are licensed for internal, non-commercial use — fine for a
+    new-business prototype, but a client-facing or commercially-distributed version needs paid,
+    commercially-licensed feeds.</p>
+
+    <h3>What it does today vs. with budget</h3>
+    <div style="overflow-x:auto;">
+    <table class="cmp">
+      <thead><tr><th>Capability</th><th>Today (free tiers)</th><th>With budget</th></tr></thead>
+      <tbody>
+        <tr><td><b>Screen coverage</b></td>
+          <td>~20 signals across the full S&amp;P 1500 from SEC + Finnhub.</td>
+          <td>Same breadth, but with commercial-grade fundamentals &amp; live valuation across every name.</td></tr>
+        <tr><td><b>Multi-year TSR &amp; price charts</b></td>
+          <td>Top ~30 names only (Twelve Data free cap of 800 credits/day).</td>
+          <td>All tracked names, refreshed daily, no credit ceiling.</td></tr>
+        <tr><td><b>Valuation / pricing</b></td>
+          <td>Daily-ish market cap &amp; P/B from a free tier.</td>
+          <td>Real-time, universe-wide pricing and valuation multiples.</td></tr>
+        <tr><td><b>News</b></td>
+          <td>News API free tier (~100 requests/day) — basic activist/distress headlines.</td>
+          <td>A premium feed (e.g. Benzinga / Marketaux) — earlier, broader, de-duplicated, higher signal.</td></tr>
+        <tr><td><b>Coverage gaps</b></td>
+          <td>Earnings calendar partial; say-on-pay parsing partial; self-selected peer groups resolve ~40% of names.</td>
+          <td>Paid earnings &amp; governance data close these gaps.</td></tr>
+        <tr><td><b>Signal depth</b></td>
+          <td>Filings + fundamentals signals (the current set).</td>
+          <td>Granular pay-vs-performance, guidance-vs-delivery, segment / sum-of-the-parts break-up analysis.</td></tr>
+        <tr><td><b>Email distribution</b></td>
+          <td>Only the owner's inbox (Resend test mode).</td>
+          <td>Verified sending domain → the morning pitch kit emails the whole team.</td></tr>
+        <tr><td><b>Reliability &amp; security</b></td>
+          <td>Single Starter instance; shared firm password.</td>
+          <td>Larger instance + backups; SSO logins and audit logging.</td></tr>
+        <tr><td><b>Workflow</b></td>
+          <td>Shared watchlist, notes, CSV export.</td>
+          <td>CRM hand-off, saved searches, and alerts when a name crosses into a higher band.</td></tr>
+        <tr><td><b>Licensing</b></td>
+          <td>Free, non-commercial — internal use only.</td>
+          <td>Commercially-licensed data — safe for client-facing use.</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>What it would take</h3>
+    <ul>
+      <li><b>Today — ~$10/mo.</b> Free tiers, internal prototype.</li>
+      <li><b>Next steps — ~$75–150/mo.</b> Paid Twelve Data + FMP tiers, a verified email domain, and a
+        sturdier hosting plan → multi-year TSR/pricing across the whole tracked set, daily email to the
+        full team, and fewer coverage gaps.</li>
+      <li><b>Going even further — ~$300–800/mo.</b> Commercial market-data + a premium news provider +
+        alerting/workflow → universe-wide live valuation, earlier/cleaner news, and CRM hand-off.</li>
+      <li><b>The full build-out — data licenses $10k+/yr.</b> Integrate FactSet / Diligent /
+        AlphaSense-grade sources. The tool stays the screen and front-end; those provide the depth.
+        Likely only worth it if this becomes a core, widely-used product.</li>
+    </ul>
+    <p class="gov-note">Figures are indicative planning estimates, not quotes — confirm current vendor
+    pricing before committing. The single highest-leverage spend is the paid market-data tier, which
+    removes the credit cap that drives most of today's limitations.</p>
   </div>
 
   <!-- FEEDBACK -->
