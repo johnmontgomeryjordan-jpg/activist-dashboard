@@ -202,6 +202,9 @@
   .about h3 { font-size:11px; text-transform:uppercase; letter-spacing:.16em; color:var(--brand); margin:26px 0 10px; font-weight:700; }
   .about p,.about li { color:var(--text); line-height:1.7; }
   .about ul { padding-left:20px; }
+  .abtab { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:20px;
+    padding:6px 14px; font:inherit; font-size:13px; cursor:pointer; }
+  .abtab.active { background:var(--brand); color:#fff; border-color:var(--brand); }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; margin-top:12px; }
   .legend td,.legend th { padding:8px 12px; }
   .pts { color:var(--hot); font-weight:700; text-align:center; white-space:nowrap; }
@@ -423,7 +426,7 @@
     </div>
     <div class="subscribe">
       <h2>Daily email digest</h2>
-      <p>Top headlines and top companies to pitch, sent automatically at 4:00 PM ET.</p>
+      <p>The daily pitch kit — lead of the day, top targets, headlines &amp; filings — emailed automatically at 6:00 AM ET.</p>
       <input type="email" id="emailInput" placeholder="you@fgsglobal.com" />
       <div class="toolbar" style="margin-bottom:0; gap:8px;">
         <button onclick="subscribe()">Subscribe</button>
@@ -473,38 +476,192 @@
 
 <!-- HOW IT WORKS -->
 <div class="wrap page about" id="page-about" style="display:none;">
-  <h2>What this is</h2>
-  <p class="lead">A <em>predictive</em> screen that finds companies likely to attract an activist
-  investor — <em>before</em> the activist starts building a position — so FGS can get in the door
-  early. It ranks the S&amp;P 1500 on the traits activists screen for, measured against each
-  company's industry peers, using free public data.</p>
+  <div class="about-subnav" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;border-bottom:1px solid rgba(0,0,0,.1);padding-bottom:10px;">
+    <button class="abtab active" id="ab-purpose" onclick="aboutTab('purpose')">Purpose</button>
+    <button class="abtab" id="ab-method" onclick="aboutTab('method')">Methodology</button>
+    <button class="abtab" id="ab-glossary" onclick="aboutTab('glossary')">Glossary</button>
+    <button class="abtab" id="ab-limits" onclick="aboutTab('limits')">Limitations &amp; disclaimer</button>
+    <button class="abtab" id="ab-roadmap" onclick="aboutTab('roadmap')">Roadmap</button>
+    <button class="abtab" id="ab-feedback" onclick="aboutTab('feedback')">Feedback</button>
+  </div>
 
-  <h3>How the rating works</h3>
-  <p>Each company is scored on traits measured <b>relative to its industry peers</b> plus recent
-  event accelerants. Those signals become a 0–92 <b>activist-target profile index</b>, weighted by
-  how severe each one is, shown as a rating band:
-  <span class="pill" style="color:var(--hot);">75+ Severe</span>
-  <span class="pill" style="color:var(--warn);">50–74 High</span>
-  <span class="pill" style="color:var(--accent);">25–49 Elevated</span>
-  <span class="pill">&lt;25 Moderate</span>
-  It measures how strongly a company matches the profile activists target — it is <b>not</b> a
-  probability that a campaign will happen, and is capped below 100 so it never implies certainty.</p>
+  <!-- PURPOSE -->
+  <div class="about-sec" id="about-purpose">
+    <h2>Purpose</h2>
+    <p class="lead">A <em>predictive</em> screen that surfaces companies likely to attract an
+    activist investor — <em>before</em> the activist builds a position — so FGS can get in the door
+    early for new business. It ranks the S&amp;P 1500 on the traits activists screen for, measured
+    against each company's industry peers, using public data.</p>
+    <h3>Who it's for</h3>
+    <p>An <b>internal new-business tool</b> for the FGS team — a lead-generation and prep aid, not a
+    client deliverable.</p>
+    <h3>What it is not</h3>
+    <ul>
+      <li>It is <b>not client-facing</b> and not meant for distribution outside the firm.</li>
+      <li>It is <b>not a replacement</b> for FactSet, Diligent, Bloomberg or a dedicated activism
+        database — it points you at names worth a closer look using those tools.</li>
+      <li>It is <b>not investment or legal advice</b>, and not a prediction that any campaign will
+        actually happen — only a measure of how strongly a company fits the profile activists target.</li>
+    </ul>
+  </div>
 
-  <h3>Where the data comes from (all free)</h3>
-  <ul>
-    <li><b>SEC XBRL fundamentals</b> — revenue, margins, SG&amp;A, returns, balance sheet vs peers.</li>
-    <li><b>SEC EDGAR filings</b> — 8-K / 10-K / 10-Q events, Form 4 insider trades, 8-K 5.07 vote
-      results, and a 13D / contested-proxy sweep for active situations.</li>
-    <li><b>Finnhub</b> — market cap, price-to-book, P/E, 1-yr return, and the earnings calendar.</li>
-    <li><b>News API</b> — activist / distress headlines, grouped on the Live feed.</li>
-  </ul>
+  <!-- METHODOLOGY -->
+  <div class="about-sec" id="about-method" style="display:none;">
+    <h2>Methodology</h2>
+    <h3>The universe</h3>
+    <p>Roughly the S&amp;P 1500, screened to companies above a ~$1B market cap. Delisted, deregistered
+    or long-dormant names are dropped automatically and kept out of the peer benchmarks.</p>
 
-  <h3>How often it updates</h3>
-  <ul>
-    <li><b>Every 30 minutes</b> — news, filings, market cap &amp; valuation refresh and scores recompute.</li>
-    <li><b>Daily (4 PM ET)</b> — full SEC fundamentals, governance, insider, votes, and the
-      universe-wide activist sweep, then the email digest.</li>
-  </ul>
+    <h3>How the rating works</h3>
+    <p>Each company is scored on traits measured <b>relative to its industry peers</b> (grouped by
+    2-digit SIC code) plus recent event accelerants. Each triggered signal contributes points
+    weighted by <b>how severe</b> it is (how deep in the peer tail, how cheap, how far returns lag).
+    The total becomes a 0–92 <b>activist-target profile index</b>, shown as a band:
+    <span class="pill" style="color:var(--hot);">75+ Severe</span>
+    <span class="pill" style="color:var(--warn);">50–74 High</span>
+    <span class="pill" style="color:var(--accent);">25–49 Elevated</span>
+    <span class="pill">&lt;25 Moderate</span>
+    It is <b>not</b> a probability of a campaign, and is capped below 100 so it never implies certainty.</p>
+
+    <h3>The signals</h3>
+    <p><b>Valuation gap</b> — cheap vs peers (low price-to-book); cheap on EV/EBITDA vs peers.<br>
+    <b>Capital allocation</b> — cash-heavy balance sheet; under-levered; goodwill-heavy (an
+    acquisition-overpayment / impairment-risk proxy).<br>
+    <b>Operating performance</b> — low operating margin vs peers; low return on assets; weak or
+    shrinking revenue; bloated SG&amp;A.<br>
+    <b>Shareholder returns</b> — 1-year total return lagging the S&amp;P; multi-year (3/5-year) total
+    return lagging the S&amp;P (a structural underperformer).<br>
+    <b>Governance red flags</b> — classified/staggered board; poison pill; dual-class super-voting
+    stock; CEO pay rising while the stock lags (pay-for-performance gap, from the proxy).<br>
+    <b>Peer benchmarking</b> — trails the company's own self-selected compensation peer group
+    (the peers it named in its proxy).<br>
+    <b>Shareholder support</b> — weak say-on-pay vote at the last annual meeting.<br>
+    <b>Insider activity</b> — a cluster of open-market insider selling (Form 4).<br>
+    <b>Event catalysts</b> — recent CEO/exec departure, earnings miss, impairment, layoffs,
+    leadership change, a negative activist headline, or a sharp stock drop on a leadership-change 8-K.</p>
+    <p>Every signal on a company's profile carries an <b>evidence card</b> with the underlying number,
+    the SEC math behind it, the peer cutoff, the period, and a link to the source filing.</p>
+
+    <h3>Active situations (already engaged)</h3>
+    <p>When an activist has <b>already</b> shown up, the name moves off the proactive shortlist into
+    Active Situations at one of three confidence tiers: <b>Confirmed</b> (an SEC 13D or contested-proxy
+    filing), <b>Reported</b> (a known activist named in the press alongside the company), or
+    <b>Manual</b> (tagged by a partner). These are tracked for awareness — they're past the point of a
+    proactive pitch.</p>
+
+    <h3>Where the data comes from</h3>
+    <ul>
+      <li><b>SEC XBRL</b> — fundamentals: revenue, margins, SG&amp;A, returns, cash, debt, goodwill, D&amp;A.</li>
+      <li><b>SEC EDGAR</b> — 8-K / 10-K / 10-Q events, Form 4 insider trades, 8-K Item 5.07 vote
+        results, DEF 14A proxies (governance, CEO pay, peer group), and a 13D / contested-proxy sweep.</li>
+      <li><b>Finnhub</b> — market cap, price-to-book, P/E, 1-yr return, earnings calendar, insider sentiment.</li>
+      <li><b>Twelve Data</b> — daily price history and multi-year (3/5-yr) total returns.</li>
+      <li><b>Financial Modeling Prep</b> — company profile and IR/contact details.</li>
+      <li><b>News API</b> — activist / distress headlines, grouped on the Live feed.</li>
+      <li><b>Claude (Haiku)</b> — re-voices the thesis prose, strictly limited to the facts above.</li>
+    </ul>
+
+    <h3>The AI thesis layer</h3>
+    <p>The pitch thesis and talking points are first assembled deterministically from the computed
+    numbers, then re-voiced by Claude Haiku for readability — <b>constrained to only the facts we
+    computed</b>, never adding new claims. The deterministic evidence cards remain the source of truth,
+    and a "&#10022; AI-polished" tag marks where the AI voice is shown.</p>
+
+    <h3>How often it updates</h3>
+    <ul>
+      <li><b>Every 30 minutes</b> — news, filings, market cap &amp; valuation refresh, and scores recompute.</li>
+      <li><b>Daily at 6 AM ET</b> — full SEC fundamentals, governance &amp; CEO pay, insider, votes, the
+        universe-wide activist sweep, multi-year TSR, price charts, the AI thesis, and the emailed pitch
+        kit. The "lead of the day" rotates on this 6 AM build, so the site is fresh each morning and
+        captures the prior night's filings and headlines.</li>
+    </ul>
+  </div>
+
+  <!-- GLOSSARY -->
+  <div class="about-sec" id="about-glossary" style="display:none;">
+    <h2>Glossary</h2>
+    <ul>
+      <li><b>Activist investor</b> — a shareholder who buys a stake to push for change (board seats,
+        capital return, a sale, strategy shifts).</li>
+      <li><b>13D</b> — an SEC filing required when an investor crosses 5% ownership with intent to
+        influence; the clearest signal an activist has engaged.</li>
+      <li><b>DEF 14A (proxy statement)</b> — the annual filing with board, governance, executive pay,
+        and the company's self-selected compensation peer group.</li>
+      <li><b>8-K</b> — a filing for material events (leadership changes, results, restructurings).
+        <b>Item 5.02</b> = executive/director changes; <b>Item 5.07</b> = shareholder vote results.</li>
+      <li><b>10-K / 10-Q</b> — annual / quarterly financial reports.</li>
+      <li><b>Form 4</b> — a disclosure of insider (officer/director) open-market buys and sells.</li>
+      <li><b>XBRL</b> — the structured, machine-readable tagging of figures in SEC financial filings.</li>
+      <li><b>Price-to-book (P/B)</b> — share price vs. book value per share; low can signal undervaluation.</li>
+      <li><b>EV/EBITDA</b> — enterprise value (market cap + debt − cash) vs. operating earnings; a core
+        valuation multiple.</li>
+      <li><b>Goodwill</b> — the premium paid over fair value in acquisitions; high goodwill flags an
+        acquisitive history and impairment risk.</li>
+      <li><b>Operating margin</b> — operating income ÷ revenue.</li>
+      <li><b>Return on assets (ROA)</b> — net income ÷ total assets; how well assets generate profit.</li>
+      <li><b>SG&amp;A</b> — selling, general &amp; administrative expense (overhead).</li>
+      <li><b>Total shareholder return (TSR)</b> — stock return including dividends over a period.</li>
+      <li><b>Say-on-pay</b> — the annual non-binding shareholder vote on executive compensation; low
+        support signals discontent.</li>
+      <li><b>Classified / staggered board</b> — directors elected in classes over multiple years,
+        slowing a board takeover.</li>
+      <li><b>Poison pill</b> — a shareholder-rights plan that makes accumulating a large stake costly.</li>
+      <li><b>Dual-class stock</b> — share classes with unequal votes, concentrating control with insiders.</li>
+      <li><b>Compensation peer group</b> — the companies a board picks to benchmark its executive pay.</li>
+    </ul>
+  </div>
+
+  <!-- LIMITATIONS -->
+  <div class="about-sec" id="about-limits" style="display:none;">
+    <h2>Limitations &amp; disclaimer</h2>
+    <p>A few things to keep in mind so the tool is used well — none dramatic, just for awareness.</p>
+    <ul>
+      <li><b>It can misflag.</b> This is a screen: it will sometimes flag a name that isn't a realistic
+        target (false positive) and miss one that is (false negative). Treat it as a starting point and
+        verify before acting.</li>
+      <li><b>Free, non-commercial data tiers.</b> The current feeds are free tiers, which means coverage
+        gaps — e.g., the earnings calendar and say-on-pay parsing are partial, multi-year TSR and price
+        charts cover the top-ranked names rather than the whole universe, and self-selected peer groups
+        only resolve when enough peers are in our coverage.</li>
+      <li><b>Point-in-time figures.</b> Fundamentals come from the latest quarterly filing; one-time
+        charges can distort a single period's margins or returns.</li>
+      <li><b>Not advice.</b> Nothing here is investment, legal, or financial advice, and the rating is
+        not a probability that a campaign will occur.</li>
+      <li><b>Internal use only.</b> This is an internal new-business tool — not for client distribution.</li>
+    </ul>
+  </div>
+
+  <!-- ROADMAP -->
+  <div class="about-sec" id="about-roadmap" style="display:none;">
+    <h2>Roadmap — with budget</h2>
+    <p>What we'd add to take this from an internal prototype toward a firmer, wider-use tool:</p>
+    <ul>
+      <li><b>Paid market-data tier</b> — the biggest unlock: universe-wide live pricing/valuation and
+        multi-year TSR for <em>all</em> names, not just the top-ranked set, plus commercial licensing.</li>
+      <li><b>Verified sending domain</b> — so the morning pitch kit can email the whole team, not just
+        the owner's inbox.</li>
+      <li><b>Deeper signals</b> — granular pay-versus-performance, guidance-versus-delivery, and
+        segment / sum-of-the-parts break-up analysis.</li>
+      <li><b>Broader, higher-quality news</b> — a stronger news provider for earlier, cleaner signal.</li>
+      <li><b>Workflow</b> — CRM hand-off, saved searches, and alerting when a name crosses into a higher band.</li>
+    </ul>
+  </div>
+
+  <!-- FEEDBACK -->
+  <div class="about-sec" id="about-feedback" style="display:none;">
+    <h2>Feedback</h2>
+    <p>Spot a misflag, a missing name, or have an idea? Leave a note for the team.</p>
+    <div style="max-width:560px;">
+      <input id="fbName" type="text" placeholder="Your name (optional)"
+        style="width:100%;padding:9px 11px;margin-bottom:8px;border:1px solid rgba(0,0,0,.18);border-radius:6px;font:inherit;box-sizing:border-box;">
+      <textarea id="fbMsg" rows="4" placeholder="Your comment or suggestion…"
+        style="width:100%;padding:9px 11px;border:1px solid rgba(0,0,0,.18);border-radius:6px;font:inherit;box-sizing:border-box;"></textarea>
+      <div style="margin-top:8px;"><button onclick="submitFeedback()">Submit</button>
+        <span id="fbMsgOut" class="notes-msg"></span></div>
+    </div>
+    <h3 style="margin-top:22px;">Recent notes</h3>
+    <div id="fbList"><div class="empty">Loading…</div></div>
+  </div>
 </div>
 
 <!-- COMPANY PROFILE (full page) -->
