@@ -191,8 +191,8 @@ def send_digest():
     if not subs:
         print("[email] no subscribers; nothing to send")
         return 0
-    rows = database.get_scores(limit=60)
-    lead = spotlight.pick_lead(rows)
+    rows = database.get_scores(limit=80)
+    lead = spotlight.todays_lead(rows, database)
     headlines = database.recent_news(limit=6)
     filings = database.recent_filings(limit=5)
     body = build_digest_html(lead, rows, headlines, filings)
