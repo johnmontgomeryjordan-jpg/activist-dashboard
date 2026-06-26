@@ -104,6 +104,15 @@ EXCLUDE_PATTERNS = [
     "crore", " ofs ", "nlc india", " sebi ", "lakh", "disinvestment", " rs ",
     # crypto promo
     "airdrop", "memecoin", "presale", "token sale",
+    # analyst / retail-promo noise (chart setups, "is it a buy", target-price clickbait)
+    "breakout", "momentum", "stocks to buy", "best stocks", "top stocks",
+    "stock a buy", "a buy before", "buy before", "should you buy", "should i buy",
+    "is it time to buy", "time to buy", "price target", "chartmill", "zacks",
+    "motley fool", "here's why", "this stock", "magnificent seven",
+    "dividend aristocrat", "dividend king", "best dividend", "to watch",
+    # political / non-corporate "ousted/steps down/fight" false positives
+    "worker party", "workers' party", "party chief", "cadres", "prime minister",
+    "parliament", "general election", "lawmaker",
 ]
 
 
@@ -115,11 +124,18 @@ def _norm(t):
     return re.sub(r"\s+", " ", (t or "").strip().lower())
 
 
+def _is_noise(title):
+    """Promo / off-topic / non-corporate headline that should never be shown, regardless
+    of whether it also trips a distress keyword (e.g. 'Worker Party chief ousted')."""
+    t = " " + _norm(title) + " "
+    return any(bad in t for bad in EXCLUDE_PATTERNS)
+
+
 def is_relevant(title):
     t = " " + _norm(title) + " "
     if not t.strip():
         return False
-    if any(bad in t for bad in EXCLUDE_PATTERNS):
+    if _is_noise(title):
         return False
     return any(kw in t for kw in DISTRESS_KEYWORDS)
 
@@ -289,6 +305,8 @@ def refresh_company_news(tickers, key, days=COMPANY_NEWS_DAYS, per_symbol=COMPAN
             url = a.get("url") or ""
             head = a.get("headline") or ""
             if not url or not head:
+                continue
+            if _is_noise(head):       # skip analyst-promo / chart-setup / off-topic clutter
                 continue
             dt = a.get("datetime")
             try:
