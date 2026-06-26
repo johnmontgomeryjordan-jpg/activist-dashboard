@@ -59,10 +59,14 @@ GDELT_TERMS = [t.strip() for t in os.getenv(
     '"cuts guidance"|"strategic review"|"explores sale"|"goodwill impairment"|'
     '"earnings miss"|"steps down"'
 ).split("|") if t.strip()]
-# How far back GDELT looks each pull (its feed is real-time; we keep a few days).
-GDELT_TIMESPAN = os.getenv("GDELT_TIMESPAN", "3d")
+# How far back GDELT looks each pull. Its feed is real-time, but a wider window keeps the
+# feed from going empty on quiet days (the local relevance filter still trims it).
+GDELT_TIMESPAN = os.getenv("GDELT_TIMESPAN", "7d")
 # Max articles to request per term per pull.
-GDELT_PER_TERM = int(os.getenv("GDELT_PER_TERM", "25"))
+GDELT_PER_TERM = int(os.getenv("GDELT_PER_TERM", "50"))
+# Pause between per-term GDELT calls. GDELT throttles rapid bursts (what produced the
+# intermittent fetched=0), so we space the calls out and retry a throttled term once.
+GDELT_SLEEP = float(os.getenv("GDELT_SLEEP", "0.7"))
 
 # Per-company (Finnhub) news settings.
 COMPANY_NEWS_DAYS = int(os.getenv("COMPANY_NEWS_DAYS", "21"))
@@ -149,24 +153,30 @@ def _gdelt_one(term, maxrecords):
             GDELT_URL, params=params, timeout=25,
             headers={"User-Agent": "activist-dashboard/1.0 (+internal research tool)"},
         )
-        r.raise_for_status()
-        # GDELT returns HTML (not JSON) when a query is malformed/empty; that raises
-        # ValueError here and we skip this term rather than failing the whole pull.
+        if r.status_code != 200:
+            return None                       # throttled / transient -> caller can retry
+        # GDELT returns HTML (not JSON) when throttled or the query is malformed; that
+        # raises ValueError -> treat as a transient miss the caller can retry, not a
+        # genuine empty.
         data = r.json()
     except (requests.RequestException, ValueError):
-        return []
+        return None
     return _normalize_gdelt(data.get("articles", []) or [])
 
 
 def _fetch_gdelt(limit):
     out, seen = [], set()
     for term in GDELT_TERMS:
-        for a in _gdelt_one(term, GDELT_PER_TERM):
+        res = _gdelt_one(term, GDELT_PER_TERM)
+        if res is None:                       # throttled/failed -> one slower retry
+            time.sleep(2.0)
+            res = _gdelt_one(term, GDELT_PER_TERM)
+        for a in (res or []):
             if a["url"] in seen:
                 continue
             seen.add(a["url"])
             out.append(a)
-        time.sleep(0.3)            # be polite to the free endpoint
+        time.sleep(GDELT_SLEEP)               # space calls so GDELT doesn't throttle
     return out
 
 
