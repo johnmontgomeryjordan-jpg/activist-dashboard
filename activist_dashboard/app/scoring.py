@@ -19,6 +19,7 @@ fiscal period, peer context with sample size, source, and a link to the exact
 filing), stored as JSON on the score so the detail view can prove why each tag fired.
 """
 import json
+import os
 import re
 from . import config, database, pitch
 MIN_PEERS = 5
@@ -70,6 +71,14 @@ VULN_MAX = 92
 # this only fires where we've parsed the proxy AND detected the dual-class structure;
 # sharpening that detection (and using actual voting %) is a follow-up.
 DUAL_CLASS_DISCOUNT = 0.6
+# Known founder / family / super-voting controlled names where an activist effectively
+# cannot win a vote. We discount these even if the proxy parser hasn't flagged the
+# dual-class structure yet (a stopgap until that detection is sharper). Tickers; extend
+# via the FOUNDER_CONTROLLED env var (comma-separated).
+FOUNDER_CONTROLLED = set(filter(None, os.getenv(
+    "FOUNDER_CONTROLLED",
+    "COIN,IAC,GOOGL,GOOG,META,FOXA,FOX,NWSA,NWS,PARA,PARAA,DELL,F,NKE,UAA,UA,EL"
+).replace(" ", "").upper().split(",")))
 # Rating bands shown as the headline (defensible, no probability implied).
 def vuln_band(v):
     if v is None:
@@ -474,7 +483,8 @@ def _vuln_score(trig, r, t, e):
     sev_total = sum(POINTS.get(k, 0) * _severity(k, r, t, e) for k in trig)
     raw = 100 * sev_total / VULN_SCALE
     v = _soft_cap(raw)
-    if "gov_dual" in trig:
+    tk = (r.get("ticker") or "").upper()
+    if "gov_dual" in trig or tk in FOUNDER_CONTROLLED:
         v *= DUAL_CLASS_DISCOUNT
     return int(round(v))
 def _fmt_metric(metric, v):
