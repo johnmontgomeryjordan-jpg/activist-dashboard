@@ -8,7 +8,7 @@ Fast jobs -- every 30 minutes (refresh_data):
   refresh_enrichment(fetch_desc=False): Finnhub market cap + P/B + P/E + 52-wk for the
   shortlist/watchlist/active names. So valuation is continuously updated, not daily.
 
-Heavier jobs -- on boot and in the 4pm ET daily run:
+Heavier jobs -- on boot and in the 6 AM ET daily run (new build with no-repeat lead):
   refresh_fundamentals()  -- SEC XBRL fundamentals + sector + shares + equity (universe).
   refresh_governance()    -- DEF 14A entrenchment flags (tracked names).
   refresh_insider()       -- Form 4 open-market buys/sells (tracked names).
