@@ -531,6 +531,7 @@ def api_run_enrichment():
                          ("exec-reactions", pipeline.refresh_exec_reactions),
                          ("long-tsr", lambda: pipeline.refresh_long_tsr(force=True)),
                          ("prices", pipeline.refresh_prices),
+                         ("lead-data", pipeline.refresh_lead_data),
                          ("ai-thesis", pipeline.refresh_ai_thesis)):
             try:
                 fn()
