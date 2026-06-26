@@ -654,13 +654,17 @@ async function renderPitchKit(){
   const dEl=document.getElementById("pkDate");
   if(dEl) dEl.textContent=new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"});
   const host=document.getElementById("pkLead"); if(!host) return;
-  const lead=pkPickLead();
-  if(!lead){ host.innerHTML=`<div class="empty">No leads yet — data is still loading.</div>`; }
+  // Backend is the source of truth for the lead (locked per day, no-repeat rotation, and
+  // identical to the emailed pitch kit). Fall back to the client picker only if it's unreachable.
+  let leadCik=null;
+  try{ leadCik=(await (await fetch("/api/lead")).json()).cik; }catch(e){}
+  if(!leadCik){ const f=pkPickLead(); leadCik=f?f.cik:null; }
+  if(!leadCik){ host.innerHTML=`<div class="empty">No leads yet — data is still loading.</div>`; }
   else{
-    PK_LEAD_CIK=lead.cik;
-    if(!host.dataset.cik || host.dataset.cik!==lead.cik){ host.innerHTML=`<div class="empty">Loading the lead…</div>`; }
-    try{ const d=await (await fetch("/api/company?cik="+encodeURIComponent(lead.cik))).json();
-      if(d.ok){ host.innerHTML=pkHero(d); host.dataset.cik=lead.cik; } }catch(e){}
+    PK_LEAD_CIK=leadCik;
+    if(!host.dataset.cik || host.dataset.cik!==leadCik){ host.innerHTML=`<div class="empty">Loading the lead…</div>`; }
+    try{ const d=await (await fetch("/api/company?cik="+encodeURIComponent(leadCik))).json();
+      if(d.ok){ host.innerHTML=pkHero(d); host.dataset.cik=leadCik; } }catch(e){}
   }
   const tg=document.getElementById("pkTargets");
   if(tg){ const targets=(SHORTLIST||[]).filter(c=>c.cik!==PK_LEAD_CIK).slice(0,4);
