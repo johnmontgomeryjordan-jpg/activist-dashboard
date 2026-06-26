@@ -484,8 +484,9 @@
   <div class="about-subnav" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;border-bottom:1px solid rgba(0,0,0,.1);padding-bottom:10px;">
     <button class="abtab active" id="ab-purpose" onclick="aboutTab('purpose')">Purpose</button>
     <button class="abtab" id="ab-method" onclick="aboutTab('method')">Methodology</button>
-    <button class="abtab" id="ab-glossary" onclick="aboutTab('glossary')">Glossary</button>
-    <button class="abtab" id="ab-limits" onclick="aboutTab('limits')">Limitations &amp; disclaimer</button>
+    <button class="abtab" id="ab-glossary" onclick="aboutTab('glossary')">Metrics &amp; terms</button>
+    <button class="abtab" id="ab-using" onclick="aboutTab('using')">Using it</button>
+    <button class="abtab" id="ab-limits" onclick="aboutTab('limits')">Limitations</button>
     <button class="abtab" id="ab-roadmap" onclick="aboutTab('roadmap')">Roadmap</button>
     <button class="abtab" id="ab-feedback" onclick="aboutTab('feedback')">Feedback</button>
   </div>
@@ -493,20 +494,25 @@
   <!-- PURPOSE -->
   <div class="about-sec" id="about-purpose">
     <h2>Purpose</h2>
-    <p class="lead">A <em>predictive</em> screen that surfaces companies likely to attract an
-    activist investor — <em>before</em> the activist builds a position — so FGS can get in the door
-    early for new business. It ranks the S&amp;P 1500 on the traits activists screen for, measured
-    against each company's industry peers, using public data.</p>
+    <p class="lead">An early-warning screen that flags public companies likely to attract an
+    activist investor — <em>before</em> the activist surfaces — so FGS can reach the company first,
+    with a specific, evidence-backed point of view.</p>
+    <p>By the time a stake is disclosed, the company is already taking calls and the field is crowded.
+    The edge is getting there early. This tool ranks the S&amp;P 1500 every morning on the traits
+    activists actually screen for — measured against each company's industry peers — and turns the
+    strongest matches into a ready-to-use pitch: the thesis, the talking points, the supporting
+    numbers, and who to call.</p>
     <h3>Who it's for</h3>
-    <p>An <b>internal new-business tool</b> for the FGS team — a lead-generation and prep aid, not a
-    client deliverable.</p>
-    <h3>What it is not</h3>
+    <p>An <b>internal new-business tool</b> for the FGS team — partners and team members alike. It's a
+    lead-generation and preparation aid, used inside the firm.</p>
+    <h3>What it is — and isn't</h3>
     <ul>
-      <li>It is <b>not client-facing</b> and not meant for distribution outside the firm.</li>
-      <li>It is <b>not a replacement</b> for FactSet, Diligent, Bloomberg or a dedicated activism
-        database — it points you at names worth a closer look using those tools.</li>
-      <li>It is <b>not investment or legal advice</b>, and not a prediction that any campaign will
-        actually happen — only a measure of how strongly a company fits the profile activists target.</li>
+      <li>It's a <b>first-pass screen</b>, not the last word. It tells you <em>where to look</em>;
+        you confirm the story in the evidence and your own research before acting on it.</li>
+      <li>It's <b>not a replacement</b> for FactSet, Diligent, Bloomberg or a dedicated activism
+        database — it points you at names worth a closer look in those tools, faster and for free.</li>
+      <li>It measures how strongly a company <b>fits the profile</b> activists target. A high rating is
+        a strong match, not a guarantee a campaign will happen (more on that under Limitations).</li>
     </ul>
   </div>
 
@@ -517,16 +523,26 @@
     <p>Roughly the S&amp;P 1500, screened to companies above a ~$1B market cap. Delisted, deregistered
     or long-dormant names are dropped automatically and kept out of the peer benchmarks.</p>
 
+    <h3>The core idea</h3>
+    <p>Activists look for a recognizable setup: a company that is <b>underperforming</b>, for a
+    <b>reason that's fixable</b>, with a <b>lever</b> someone can pull (capital to return, costs to
+    cut, a board to refresh, a business to sell). The tool measures how closely each company matches
+    that setup and ranks the strongest matches.</p>
+
     <h3>How the rating works</h3>
-    <p>Each company is scored on traits measured <b>relative to its industry peers</b> (grouped by
-    2-digit SIC code) plus recent event accelerants. Each triggered signal contributes points
-    weighted by <b>how severe</b> it is (how deep in the peer tail, how cheap, how far returns lag).
-    The total becomes a 0–92 <b>activist-target profile index</b>, shown as a band:
+    <p>Every trait is measured <b>relative to a company's industry peers</b> (grouped by 2-digit SIC
+    code), not on an absolute basis — because the same number means different things in different
+    industries. A 12% operating margin is weak for software and strong for a grocer; "cheap" for a
+    bank isn't "cheap" for a chipmaker. Comparing each company to its own peer set is what makes a
+    flag meaningful.</p>
+    <p>Each triggered signal contributes points <b>weighted by how severe it is</b> — how deep in the
+    peer tail, how cheap, how far returns lag. The points sum to a 0–92 <b>activist-target profile
+    index</b>, shown as a band:
     <span class="pill" style="color:var(--hot);">75+ Severe</span>
     <span class="pill" style="color:var(--warn);">50–74 High</span>
     <span class="pill" style="color:var(--accent);">25–49 Elevated</span>
     <span class="pill">&lt;25 Moderate</span>
-    It is <b>not</b> a probability of a campaign, and is capped below 100 so it never implies certainty.</p>
+    It is capped below 100 by design, so it never reads as a certainty — it's a measure of fit, not odds.</p>
 
     <h3>The signals</h3>
     <p><b>Valuation gap</b> — cheap vs peers (low price-to-book); cheap on EV/EBITDA vs peers.<br>
@@ -550,11 +566,13 @@
     <h3>Active situations (already engaged)</h3>
     <p>When an activist has <b>already</b> shown up, the name moves off the proactive shortlist into
     Active Situations at one of three confidence tiers: <b>Confirmed</b> (an SEC 13D or contested-proxy
-    filing), <b>Reported</b> (a known activist named in the press alongside the company), or
-    <b>Manual</b> (tagged by a partner). These are tracked for awareness — they're past the point of a
-    proactive pitch.</p>
+    filing on record), <b>Reported</b> (a known activist named in the press alongside the company), or
+    <b>Manual</b> (tagged by a team member). These are tracked for awareness — they're usually past the
+    point of a proactive pitch, though a fresh filing can be an urgent defense lead.</p>
 
-    <h3>Where the data comes from</h3>
+    <h3>Where the data comes from — all public</h3>
+    <p>Everything here is built from <b>publicly available data</b> — SEC filings and free market-data
+    tiers. There's no private, paid, or non-public information in the screen.</p>
     <ul>
       <li><b>SEC XBRL</b> — fundamentals: revenue, margins, SG&amp;A, returns, cash, debt, goodwill, D&amp;A.</li>
       <li><b>SEC EDGAR</b> — 8-K / 10-K / 10-Q events, Form 4 insider trades, 8-K Item 5.07 vote
@@ -582,80 +600,168 @@
     </ul>
   </div>
 
-  <!-- GLOSSARY -->
+  <!-- METRICS & TERMS -->
   <div class="about-sec" id="about-glossary" style="display:none;">
-    <h2>Glossary</h2>
+    <h2>Metrics &amp; terms</h2>
+    <p>Each metric below is what it measures and, more importantly, <b>why an activist cares about it</b>
+    — i.e., why it earns a place in the screen.</p>
+
+    <h3>Valuation &amp; balance sheet</h3>
     <ul>
-      <li><b>Activist investor</b> — a shareholder who buys a stake to push for change (board seats,
-        capital return, a sale, strategy shifts).</li>
-      <li><b>13D</b> — an SEC filing required when an investor crosses 5% ownership with intent to
-        influence; the clearest signal an activist has engaged.</li>
-      <li><b>DEF 14A (proxy statement)</b> — the annual filing with board, governance, executive pay,
-        and the company's self-selected compensation peer group.</li>
-      <li><b>8-K</b> — a filing for material events (leadership changes, results, restructurings).
-        <b>Item 5.02</b> = executive/director changes; <b>Item 5.07</b> = shareholder vote results.</li>
-      <li><b>10-K / 10-Q</b> — annual / quarterly financial reports.</li>
-      <li><b>Form 4</b> — a disclosure of insider (officer/director) open-market buys and sells.</li>
-      <li><b>XBRL</b> — the structured, machine-readable tagging of figures in SEC financial filings.</li>
-      <li><b>Price-to-book (P/B)</b> — share price vs. book value per share; low can signal undervaluation.</li>
-      <li><b>EV/EBITDA</b> — enterprise value (market cap + debt − cash) vs. operating earnings; a core
-        valuation multiple.</li>
-      <li><b>Goodwill</b> — the premium paid over fair value in acquisitions; high goodwill flags an
-        acquisitive history and impairment risk.</li>
-      <li><b>Operating margin</b> — operating income ÷ revenue.</li>
-      <li><b>Return on assets (ROA)</b> — net income ÷ total assets; how well assets generate profit.</li>
-      <li><b>SG&amp;A</b> — selling, general &amp; administrative expense (overhead).</li>
-      <li><b>Total shareholder return (TSR)</b> — stock return including dividends over a period.</li>
-      <li><b>Say-on-pay</b> — the annual non-binding shareholder vote on executive compensation; low
-        support signals discontent.</li>
-      <li><b>Classified / staggered board</b> — directors elected in classes over multiple years,
-        slowing a board takeover.</li>
-      <li><b>Poison pill</b> — a shareholder-rights plan that makes accumulating a large stake costly.</li>
-      <li><b>Dual-class stock</b> — share classes with unequal votes, concentrating control with insiders.</li>
-      <li><b>Compensation peer group</b> — the companies a board picks to benchmark its executive pay.</li>
+      <li><b>Price-to-book (P/B)</b> — share price vs. the company's net asset value. <em>Why it
+        matters:</em> a low P/B says the market values the company near or below its own assets — the
+        market doesn't believe management will create value from what it has. It's the simplest "this is
+        undervalued and fixable" entry point.</li>
+      <li><b>EV/EBITDA</b> — enterprise value (market cap + debt − cash) against operating earnings.
+        <em>Why it matters:</em> the standard multiple buyers and peers are judged on. A low multiple
+        versus peers is the cleanest "you're cheap" argument and screens for sale / break-up candidates.</li>
+      <li><b>Cash / assets</b> — how much of the balance sheet is cash. <em>Why it matters:</em> idle
+        cash is the #1 activist lever — the push to return it via buybacks, dividends, or a special
+        dividend writes itself.</li>
+      <li><b>Debt / assets</b> — how levered the company is. <em>Why it matters:</em> an under-levered
+        balance sheet is "lazy capital"; activists argue for borrowing to buy back stock or fund growth.</li>
+      <li><b>Goodwill / assets</b> — how much of the balance sheet is the premium paid in past
+        acquisitions. <em>Why it matters:</em> a lot of goodwill means a lot of deals — it flags possible
+        overpayment and impairment risk, and supports a "stop the empire-building" argument.</li>
     </ul>
+
+    <h3>Operating performance</h3>
+    <ul>
+      <li><b>Operating margin</b> — operating income ÷ revenue, vs. peers. <em>Why it matters:</em>
+        below-peer margins are a cost story — the classic "there's fat to cut" / margin-expansion campaign.</li>
+      <li><b>Return on assets (ROA)</b> — profit generated per dollar of assets. <em>Why it matters:</em>
+        weak returns say the asset base isn't working, supporting strategy- or management-change pressure.</li>
+      <li><b>Revenue growth</b> — top-line trend. <em>Why it matters:</em> a stalling or shrinking top
+        line invites calls for a strategic review, a break-up, or a sale.</li>
+      <li><b>SG&amp;A % of revenue</b> — overhead as a share of sales. <em>Why it matters:</em> bloated
+        overhead is the most concrete, quantifiable cost-cut target an activist can name.</li>
+    </ul>
+
+    <h3>Shareholder returns</h3>
+    <ul>
+      <li><b>Total shareholder return (TSR), 1 / 3 / 5-yr vs. the S&amp;P 500</b> — stock return
+        (incl. dividends) against the market. <em>Why it matters:</em> sustained underperformance is the
+        emotional core of every campaign — "the board has destroyed value." The multi-year view separates
+        one bad year from a structural problem, which is the more damning case.</li>
+    </ul>
+
+    <h3>Governance &amp; pay</h3>
+    <ul>
+      <li><b>Classified / staggered board</b> — directors elected in classes over multiple years.
+        <em>Why it matters:</em> it slows a proxy fight, so it's both an entrenchment red flag and a
+        reform target.</li>
+      <li><b>Poison pill</b> — a shareholder-rights plan that makes accumulating a large stake costly.
+        <em>Why it matters:</em> it blocks stake-building and is a lightning rod for "just vote no" pressure.</li>
+      <li><b>Dual-class stock</b> — share classes with unequal votes. <em>Why it matters:</em> insiders
+        keep control regardless of economics — a governance flashpoint.</li>
+      <li><b>CEO pay-for-performance</b> — the trend in CEO pay against the stock. <em>Why it matters:</em>
+        pay rising while the stock falls is the most relatable, headline-ready attack an activist has.</li>
+      <li><b>Say-on-pay support</b> — the annual shareholder vote on executive pay. <em>Why it matters:</em>
+        weak support means shareholders are already unhappy — a recognized pre-activism warning sign.</li>
+      <li><b>Self-selected compensation peer group</b> — the peers the board itself named in its proxy.
+        <em>Why it matters:</em> showing a company lags the peers <em>it chose</em> is more credible than
+        any sector comparison — "you underperform even your own benchmark."</li>
+    </ul>
+
+    <h3>Insider activity &amp; events</h3>
+    <ul>
+      <li><b>Insider selling (Form 4)</b> — open-market sales by officers and directors. <em>Why it
+        matters:</em> a cluster of insiders selling is management voting with their feet.</li>
+      <li><b>Exec-change stock reaction</b> — the 1-day move vs. the market when a leadership-change 8-K
+        hits. <em>Why it matters:</em> a sharp drop is the market saying it's lost confidence in the
+        transition — a timing-based opening.</li>
+    </ul>
+
+    <h3>Filings you'll see referenced</h3>
+    <ul>
+      <li><b>13D</b> — filed when an investor crosses 5% ownership with intent to influence; the clearest
+        sign an activist has actually engaged.</li>
+      <li><b>DEF 14A (proxy statement)</b> — the annual filing with board, governance, executive pay, and
+        the self-selected peer group.</li>
+      <li><b>8-K</b> — material-event filing. <b>Item 5.02</b> = executive/director changes;
+        <b>Item 5.07</b> = shareholder vote results.</li>
+      <li><b>10-K / 10-Q</b> — annual / quarterly financial reports (the source of the fundamentals).</li>
+      <li><b>Form 4</b> — insider open-market buys and sells.</li>
+    </ul>
+  </div>
+
+  <!-- USING IT -->
+  <div class="about-sec" id="about-using" style="display:none;">
+    <h2>Using it</h2>
+    <p>A quick tour of how to work the tool day to day.</p>
+    <h3>Start on the Daily Pitch Kit</h3>
+    <p>The home page is the morning brief: the <b>lead of the day</b> (the highest-conviction name, on a
+    no-repeat rotation so it changes daily), a few <b>more proactive targets</b>, and the overnight
+    <b>headlines and filings</b>. It refreshes every morning, so it's a standing place to start the day.</p>
+    <h3>Open a company profile</h3>
+    <p>Click any name for the full work-up: the <b>"why it's a potential target" thesis</b> and three
+    talking points, the <b>evidence</b> grouped by pillar (each card shows the number, the SEC math, the
+    peer cutoff, and a link to the source filing), <b>financials with meaning</b> (each metric flagged as
+    a vulnerability or an opportunity vs. peers), the <b>peer analysis</b> tab, <b>returns</b> vs. the
+    S&amp;P, <b>governance</b> flags, and <b>who to reach</b> (IR / Comms contacts pulled from filings).</p>
+    <h3>Track and triage</h3>
+    <p>Use the <b>Dashboard</b> to sort and filter the full ranked list. Star a name to add it to the
+    shared <b>Watchlist</b>. <b>Active situations</b> lists companies where an activist has already
+    engaged (by confidence tier); you can add or remove one by hand. Export the list to <b>CSV</b> to
+    work it elsewhere.</p>
+    <h3>Read it the right way</h3>
+    <p>Treat the rating as <b>"worth a look,"</b> not a verdict. Open the evidence, sanity-check the
+    numbers against the source filings and your own tools, and use the thesis as a starting draft —
+    not a finished pitch. The <b>Feedback</b> tab is there to flag a misfire or a missing name.</p>
   </div>
 
   <!-- LIMITATIONS -->
   <div class="about-sec" id="about-limits" style="display:none;">
-    <h2>Limitations &amp; disclaimer</h2>
-    <p>A few things to keep in mind so the tool is used well — none dramatic, just for awareness.</p>
-    <ul>
-      <li><b>It can misflag.</b> This is a screen: it will sometimes flag a name that isn't a realistic
-        target (false positive) and miss one that is (false negative). Treat it as a starting point and
-        verify before acting.</li>
-      <li><b>Free, non-commercial data tiers.</b> The current feeds are free tiers, which means coverage
-        gaps — e.g., the earnings calendar and say-on-pay parsing are partial, multi-year TSR and price
-        charts cover the top-ranked names rather than the whole universe, and self-selected peer groups
-        only resolve when enough peers are in our coverage.</li>
-      <li><b>Point-in-time figures.</b> Fundamentals come from the latest quarterly filing; one-time
-        charges can distort a single period's margins or returns.</li>
-      <li><b>Not advice.</b> Nothing here is investment, legal, or financial advice, and the rating is
-        not a probability that a campaign will occur.</li>
-      <li><b>Internal use only.</b> This is an internal new-business tool — not for client distribution.</li>
-    </ul>
+    <h2>Limitations</h2>
+    <p>This is a screen, and screens are wrong sometimes. Here's <b>why</b> it misfires, so you can read
+    a flag with the right amount of skepticism. The short version: it measures a <em>profile</em>, from
+    <em>public, point-in-time</em> data, on <em>free tiers</em> — and each of those is a source of error.</p>
+
+    <h3>It scores the profile, not the intent</h3>
+    <p>The tool measures how much a company <b>looks like</b> a target. It can't see whether an activist
+    actually will engage. A company can match the profile perfectly and never draw a campaign — because
+    insiders control the vote, it just settled with an activist, it's too small or illiquid for the funds,
+    or the board is already acting. And an activist can target a name that <em>doesn't</em> screen, driven
+    by a catalyst or thesis the data can't capture. Fit is a strong prior, not a forecast.</p>
+
+    <h3>Point-in-time accounting can distort a quarter</h3>
+    <p>Fundamentals come from the most recent quarterly filing. A one-time event — an impairment, a
+    restructuring charge, a legal settlement — can crush a single quarter's margin or return on assets and
+    make a perfectly healthy company screen as distressed. The evidence card shows the period, so a quick
+    look usually reveals when a number is a blip rather than a trend.</p>
+
+    <h3>Peer grouping is approximate</h3>
+    <p>Companies are compared within their 2-digit industry code. That's a reasonable proxy, but it's
+    coarse: a conglomerate, a holding company, or an unusual business model can be lumped with peers it
+    doesn't really resemble, which skews where it lands in the percentile and can over- or under-state a
+    signal.</p>
+
+    <h3>Free-tier data has gaps</h3>
+    <p>Running entirely on free, public data means some inputs are partial: the earnings calendar and
+    say-on-pay vote parsing don't resolve for every name, multi-year returns and price charts are pulled
+    for the top-ranked set rather than the whole universe, and a self-selected peer group only resolves
+    when enough of those peers are in coverage. <b>Missing data shows up as a missing signal, not an
+    "all clear"</b> — absence of a flag isn't proof of safety.</p>
+
+    <h3>News and filing matching isn't perfect</h3>
+    <p>Headlines and filings are matched to companies by name and ticker, and there's a natural lag. It can
+    miss a relevant item or, occasionally, associate one with the wrong company — so the news/filings feed
+    is a prompt to look, not a vetted record.</p>
+
+    <h3>Bottom line</h3>
+    <p>Use a flag as a <b>lead to investigate</b>, not a conclusion. Open the evidence, check the source
+    filings and your own tools, and form your own judgment before you act on it. It's an internal tool to
+    point attention in the right direction — the analysis is still yours.</p>
   </div>
 
   <!-- ROADMAP -->
   <div class="about-sec" id="about-roadmap" style="display:none;">
-    <h2>Roadmap &amp; budget</h2>
-    <p>Today this runs as a <b>free-tier internal prototype</b> for roughly <b>$10 a month</b>. That
-    constraint — free, non-commercial data feeds — is what shapes most of its current limits. Below is
-    what it costs to run now, what each capability looks like today versus with budget, and rough
-    spending tiers to get there.</p>
+    <h2>Roadmap</h2>
+    <p>The tool runs today on <b>entirely free, publicly available data</b> — which is remarkable for what
+    it does, and also the source of most of its current limits. The biggest improvements all come from
+    moving past those free tiers. Here's where it stands now versus what it could become.</p>
 
-    <h3>What it costs to run today</h3>
-    <ul>
-      <li><b>Hosting</b> (Render Starter, always-on): ~$7 / month</li>
-      <li><b>Data</b> (SEC, Finnhub, Twelve Data, FMP, News API): <b>$0</b> — all free, non-commercial tiers</li>
-      <li><b>AI thesis</b> (Claude Haiku, cached): ~$1–3 / month</li>
-      <li><b>Total: roughly $10 / month</b></li>
-    </ul>
-    <p class="gov-note">The free data tiers are licensed for internal, non-commercial use — fine for a
-    new-business prototype, but a client-facing or commercially-distributed version needs paid,
-    commercially-licensed feeds.</p>
-
-    <h3>What it does today vs. with budget</h3>
+    <h3>What it does today vs. with more investment</h3>
     <div style="overflow-x:auto;">
     <table class="cmp">
       <thead><tr><th>Capability</th><th>Today (free tiers)</th><th>With budget</th></tr></thead>
@@ -670,8 +776,8 @@
           <td>Daily-ish market cap &amp; P/B from a free tier.</td>
           <td>Real-time, universe-wide pricing and valuation multiples.</td></tr>
         <tr><td><b>News</b></td>
-          <td>News API free tier (~100 requests/day) — basic activist/distress headlines.</td>
-          <td>A premium feed (e.g. Benzinga / Marketaux) — earlier, broader, de-duplicated, higher signal.</td></tr>
+          <td>Free news tier (limited daily requests) — basic activist/distress headlines.</td>
+          <td>A premium news feed — earlier, broader, de-duplicated, higher-signal coverage.</td></tr>
         <tr><td><b>Coverage gaps</b></td>
           <td>Earnings calendar partial; say-on-pay parsing partial; self-selected peer groups resolve ~40% of names.</td>
           <td>Paid earnings &amp; governance data close these gaps.</td></tr>
@@ -694,21 +800,23 @@
     </table>
     </div>
 
-    <h3>What it would take</h3>
+    <h3>What more investment could unlock</h3>
     <ul>
-      <li><b>Today — ~$10/mo.</b> Free tiers, internal prototype.</li>
-      <li><b>Next steps — ~$75–150/mo.</b> Paid Twelve Data + FMP tiers, a verified email domain, and a
-        sturdier hosting plan → multi-year TSR/pricing across the whole tracked set, daily email to the
-        full team, and fewer coverage gaps.</li>
-      <li><b>Going even further — ~$300–800/mo.</b> Commercial market-data + a premium news provider +
-        alerting/workflow → universe-wide live valuation, earlier/cleaner news, and CRM hand-off.</li>
-      <li><b>The full build-out — data licenses $10k+/yr.</b> Integrate FactSet / Diligent /
-        AlphaSense-grade sources. The tool stays the screen and front-end; those provide the depth.
-        Likely only worth it if this becomes a core, widely-used product.</li>
+      <li><b>Full-universe market data.</b> Professional pricing and valuation would cover every name with
+        live, multi-year data — not just the top-ranked set it pulls today — and lift the daily limits that
+        currently cap how much it can refresh.</li>
+      <li><b>Better, faster news.</b> High-quality financial news is largely paywalled and hard to reach
+        from a free site, which is why the current feed is thin. A paid source would mean earlier, broader,
+        cleaner signal — often the first hint a situation is developing.</li>
+      <li><b>Deeper signals.</b> Richer pay-versus-performance, guidance-versus-delivery, and
+        segment / break-up analysis to sharpen the case on each name.</li>
+      <li><b>Wider distribution &amp; reliability.</b> Team-wide automated delivery, individual logins,
+        backups, and alerts when a company jumps into a higher band.</li>
+      <li><b>Beyond internal use.</b> Commercially-licensed data is also what would let the tool move past
+        an internal-only setting down the road.</li>
     </ul>
-    <p class="gov-note">Figures are indicative planning estimates, not quotes — confirm current vendor
-    pricing before committing. The single highest-leverage spend is the paid market-data tier, which
-    removes the credit cap that drives most of today's limitations.</p>
+    <p class="gov-note">The single highest-leverage upgrade is professional market data — it removes the
+    free-tier limits behind most of what's described under Limitations.</p>
   </div>
 
   <!-- FEEDBACK -->
