@@ -1,29 +1,30 @@
 """
-Financial news ingestion for the broad early-warning feed.
+Financial news ingestion.
 
-Providers (set via NEWS_PROVIDER):
-  - "gdelt"   -> GDELT 2.0 DOC API. Free, no key, real-time (~15 min), commercial-OK.
-                 This is the recommended source: it fixes NewsAPI's 24-hour delay and
-                 non-commercial license at zero cost. (Default.)
-  - "newsapi" -> NewsAPI.org (legacy; free tier is 24h-delayed + non-commercial).
-  - "gnews"   -> GNews (legacy alternative).
+Two jobs, two sources:
+  * BROAD early-warning feed (ingest)  -> GDELT 2.0 DOC API. Free, no key, real-time
+    (~15 min), commercial-OK. Default provider. (Legacy NewsAPI/GNews kept as options.)
+  * PER-COMPANY news (refresh_company_news) -> Finnhub's company-news endpoint, by ticker.
+    Stored in the same `news` table tagged with the company's ticker so the company
+    profile can show its recent headlines.
 
-Per-company news does NOT come through here -- that runs on Finnhub's per-symbol
-company-news endpoint (see news pipeline). This module powers the firm-wide feed
-and the daily brief.
-
-Relevance strategy (tuned for "distressed / activist-attracting" public-company news):
-  1. Ask the source to match distress/activist terms in the HEADLINE.
+Relevance strategy for the BROAD feed:
+  1. Query distress/activist terms (GDELT is broad, so we query each term and merge).
   2. Re-check each headline locally against DISTRESS_KEYWORDS.
   3. Drop noise: academic journals, sports, govt share sales, crypto promos,
-     and law-firm "deadline alert" solicitations.
+     law-firm "deadline alert" solicitations.
   4. De-duplicate the same story from multiple outlets.
+
+Per-company headlines are NOT relevance-filtered (any recent news about a tracked
+company is useful context) and are NOT pruned by the broad-feed prune.
 
 We only store/display headline, source, date, and a link out -- never article text.
 """
 import hashlib
 import os
 import re
+import time
+from datetime import datetime, timedelta
 
 import requests
 
@@ -32,6 +33,7 @@ from . import config, database
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 GNEWS_URL = "https://gnews.io/api/v4/search"
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+FINNHUB_COMPANY_NEWS_URL = "https://finnhub.io/api/v1/company-news"
 
 # Financial outlets only (NewsAPI 'domains' filter). Override via NEWS_DOMAINS env.
 DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatch.com,"
@@ -47,20 +49,26 @@ QUERY = ('"profit warning" OR "guidance cut" OR "cuts guidance" OR "lowers guida
          'OR impairment OR "write-down" OR downgraded OR "profit warning" OR selloff '
          'OR plunges OR tumbles OR "steps down"')
 
-# Sent to GDELT. GDELT's full-text engine is sensitive to very long boolean
-# strings, so this is a tighter, high-signal set of quoted phrases. Each phrase
-# is finance-specific enough to keep political/other "activist" noise out, and
-# the local DISTRESS_KEYWORDS re-check below is the second gate.
-GDELT_QUERY = os.getenv(
-    "GDELT_QUERY",
-    '("activist investor" OR "proxy fight" OR "proxy battle" OR "short seller" '
-    'OR "profit warning" OR "cuts guidance" OR "lowers guidance" OR "earnings miss" '
-    'OR "strategic review" OR "explores sale" OR "goodwill impairment") sourcelang:english',
-)
+# GDELT's full-text engine rejects long multi-clause boolean queries (returns an empty
+# HTML page), which is why a single giant OR-query came back with 0 results. So we query
+# each high-signal phrase SEPARATELY and merge + de-dupe the results. Each of these is a
+# short, well-formed query GDELT reliably answers. Override the list via env if needed.
+GDELT_TERMS = [t.strip() for t in os.getenv(
+    "GDELT_TERMS",
+    '"activist investor"|"proxy fight"|"short seller"|"profit warning"|'
+    '"cuts guidance"|"strategic review"|"explores sale"|"goodwill impairment"|'
+    '"earnings miss"|"steps down"'
+).split("|") if t.strip()]
 # How far back GDELT looks each pull (its feed is real-time; we keep a few days).
 GDELT_TIMESPAN = os.getenv("GDELT_TIMESPAN", "3d")
+# Max articles to request per term per pull.
+GDELT_PER_TERM = int(os.getenv("GDELT_PER_TERM", "25"))
 
-# A headline must contain at least one of these to be kept.
+# Per-company (Finnhub) news settings.
+COMPANY_NEWS_DAYS = int(os.getenv("COMPANY_NEWS_DAYS", "21"))
+COMPANY_NEWS_PER = int(os.getenv("COMPANY_NEWS_PER", "6"))
+
+# A headline must contain at least one of these to be kept (broad feed only).
 DISTRESS_KEYWORDS = [
     "activist", "proxy fight", "proxy battle", "short seller", "short-seller",
     "shareholder", "profit warning", "guidance cut", "cuts guidance",
@@ -125,14 +133,14 @@ def fetch_headlines(limit=40):
 
 
 # --------------------------------------------------------------------------- #
-# GDELT 2.0 DOC API (default)                                                  #
+# GDELT 2.0 DOC API (default broad feed) — one query per term, merged          #
 # --------------------------------------------------------------------------- #
-def _fetch_gdelt(limit):
+def _gdelt_one(term, maxrecords):
     params = {
-        "query": GDELT_QUERY,
+        "query": f"{term} sourcelang:english",
         "mode": "ArtList",
         "format": "json",
-        "maxrecords": min(max(int(limit), 1), 250),
+        "maxrecords": min(max(int(maxrecords), 1), 250),
         "sort": "DateDesc",
         "timespan": GDELT_TIMESPAN,
     }
@@ -142,12 +150,24 @@ def _fetch_gdelt(limit):
             headers={"User-Agent": "activist-dashboard/1.0 (+internal research tool)"},
         )
         r.raise_for_status()
-        # GDELT returns HTML (not JSON) when a query is malformed/empty; that
-        # raises ValueError here and we fail closed to an empty list.
+        # GDELT returns HTML (not JSON) when a query is malformed/empty; that raises
+        # ValueError here and we skip this term rather than failing the whole pull.
         data = r.json()
     except (requests.RequestException, ValueError):
         return []
     return _normalize_gdelt(data.get("articles", []) or [])
+
+
+def _fetch_gdelt(limit):
+    out, seen = [], set()
+    for term in GDELT_TERMS:
+        for a in _gdelt_one(term, GDELT_PER_TERM):
+            if a["url"] in seen:
+                continue
+            seen.add(a["url"])
+            out.append(a)
+        time.sleep(0.3)            # be polite to the free endpoint
+    return out
 
 
 def _gdelt_date(s):
@@ -230,6 +250,55 @@ def _normalize(articles):
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Per-company news (Finnhub)                                                   #
+# --------------------------------------------------------------------------- #
+def refresh_company_news(tickers, key, days=COMPANY_NEWS_DAYS, per_symbol=COMPANY_NEWS_PER):
+    """Recent headlines for each tracked ticker from Finnhub's company-news endpoint,
+    stored in the shared `news` table tagged with that ticker (so the company profile
+    can show them). Real-time and ticker-clean — no fuzzy name matching. Returns the
+    number of headlines stored. No-op without a key or tickers."""
+    if not key or not tickers:
+        return 0
+    frm = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
+    to = datetime.utcnow().date().isoformat()
+    kept = 0
+    for tk in tickers:
+        try:
+            r = requests.get(FINNHUB_COMPANY_NEWS_URL,
+                             params={"symbol": tk, "from": frm, "to": to, "token": key},
+                             timeout=20)
+            arts = r.json() if r.status_code == 200 else []
+        except (requests.RequestException, ValueError):
+            arts = []
+        if not isinstance(arts, list):
+            arts = []
+        arts.sort(key=lambda a: a.get("datetime") or 0, reverse=True)
+        n = 0
+        for a in arts:
+            url = a.get("url") or ""
+            head = a.get("headline") or ""
+            if not url or not head:
+                continue
+            dt = a.get("datetime")
+            try:
+                pub = datetime.utcfromtimestamp(int(dt)).isoformat() if dt else ""
+            except (ValueError, TypeError, OSError):
+                pub = ""
+            database.upsert_news({
+                "id": _hash(url), "headline": head,
+                "source": a.get("source") or "",
+                "published_at": pub, "url": url,
+                "matched_tickers": tk,
+            })
+            kept += 1
+            n += 1
+            if n >= per_symbol:
+                break
+        time.sleep(0.15)           # under Finnhub's 60/min free limit
+    return kept
+
+
 def _match_tickers(headline, companies):
     text = headline.lower()
     matched = []
@@ -245,16 +314,22 @@ def _match_tickers(headline, companies):
 
 
 def _prune_stored():
-    """Re-check already-stored headlines against the current filter and delete
-    any that no longer qualify (cleans out old noise when the filter tightens).
-    Also drops anything older than 21 days to keep the feed fresh."""
-    from datetime import datetime, timedelta
+    """Re-check the BROAD-feed headlines against the current filter and delete any that
+    no longer qualify (cleans out old noise when the filter tightens). Per-company news
+    (rows tagged with a ticker) is NEVER relevance-pruned — only aged out. Everything
+    older than 21 days is dropped to keep the table fresh."""
     cutoff = (datetime.utcnow() - timedelta(days=21)).isoformat()
     try:
         with database.get_conn() as conn:
-            rows = conn.execute("SELECT id, headline, published_at FROM news").fetchall()
-            drop = [r["id"] for r in rows
-                    if not is_relevant(r["headline"]) or (r["published_at"] or "") < cutoff]
+            rows = conn.execute(
+                "SELECT id, headline, published_at, matched_tickers FROM news").fetchall()
+            drop = []
+            for r in rows:
+                tagged = (r["matched_tickers"] or "").strip()
+                too_old = (r["published_at"] or "") < cutoff
+                # broad-feed rows (no ticker) must stay relevant; company rows only age out
+                if too_old or (not tagged and not is_relevant(r["headline"])):
+                    drop.append(r["id"])
             conn.executemany("DELETE FROM news WHERE id=?", [(i,) for i in drop])
         return len(drop)
     except Exception:
