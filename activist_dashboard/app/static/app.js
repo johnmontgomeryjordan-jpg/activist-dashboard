@@ -707,7 +707,7 @@ function peerTable(pa){
      ${td(f(o.tsr_1y),"right",extra+tcol(o.tsr_1y))}${td(f(o.operating_margin),"right",extra)}${td(x(o.pb_ratio),"right",extra)}${td(x(o.ev_ebitda),"right",extra)}</tr>`;
   const self=pa.self||{}, med=pa.median||{};
   const peers=(pa.peers||[]).slice().sort((a,b)=>((b.tsr_1y==null?-9:b.tsr_1y)-(a.tsr_1y==null?-9:a.tsr_1y)));
-  const head=`<tr>${th("Company","left")}${th("1-yr TSR","right")}${th("Op margin","right")}${th("P / B","right")}${th("EV/EBITDA","right")}</tr>`;
+  const head=`<tr>${th("Company","left")}${th("1-yr return","right")}${th("Op margin","right")}${th("P / B","right")}${th("EV/EBITDA","right")}</tr>`;
   const selfRow=row(self,"background:rgba(47,95,166,.08);font-weight:700;");
   const medRow=row({name:"Peer median",tsr_1y:med.tsr_1y,operating_margin:med.operating_margin,pb_ratio:med.pb_ratio,ev_ebitda:med.ev_ebitda},"font-style:italic;color:var(--muted);");
   return `<table style="width:100%;border-collapse:collapse;font-size:13px;">${head}${selfRow}${medRow}${peers.map(o=>row(o,"")).join("")}</table>`;
@@ -741,7 +741,7 @@ function renderTab(){
       +tsrRow("5-yr",tsr.tsr_5y,tsr.spy_5y,tsr.gap_5y);
     if(tsrRows){
       const th="text-align:left;padding:2px 8px;font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:600;";
-      tsrPanel=`<div class="tsr-panel"><div class="tsr-h">Total return vs S&amp;P 500</div>
+      tsrPanel=`<div class="tsr-panel"><div class="tsr-h">Price return vs S&amp;P 500</div>
         <table style="width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;">
         <thead><tr><th style="${th}"></th><th style="${th}">This stock</th><th style="${th}">S&amp;P 500</th><th style="${th}">Gap</th></tr></thead>
         <tbody>${tsrRows}</tbody></table></div>`;
@@ -807,11 +807,11 @@ function renderTab(){
     const pa=d.peer_analysis||{};
     const rank=pa.rank, rof=pa.rank_of;
     const summary=(rank&&rof)
-      ? `<p class="hint" style="margin:-4px 0 12px">Ranked <b>${rank} of ${rof}</b> by 1-year total return against the ${pa.n} peers <b>${esc(d.company)}</b> chose itself — the compensation peer group it named in its own proxy.</p>`
+      ? `<p class="hint" style="margin:-4px 0 12px">Ranked <b>${rank} of ${rof}</b> by 1-year price return against the ${pa.n} peers <b>${esc(d.company)}</b> chose itself — the compensation peer group it named in its own proxy.</p>`
       : `<p class="hint" style="margin:-4px 0 12px">The compensation peer group <b>${esc(d.company)}</b> named in its own proxy (DEF 14A), versus the metrics we track.</p>`;
     body.innerHTML=`<div class="mh3">Peer analysis — self-selected proxy peer group</div>${summary}
       ${peerTable(pa)}
-      <p class="hint" style="margin-top:12px">Peers are the companies the board picked to benchmark executive pay against; we show only those in our coverage. "Underperformance by its own yardstick" is one of the most credible activist arguments. TSR from Finnhub; margins &amp; valuation from SEC XBRL + market data.</p>`;
+      <p class="hint" style="margin-top:12px">Peers are the companies the board picked to benchmark executive pay against; we show only those in our coverage. "Underperformance by its own yardstick" is one of the most credible activist arguments. Price return from Finnhub; margins &amp; valuation from SEC XBRL + market data.</p>`;
   }
   else if(CURRENT_TAB==="ownership"){
     const ins=d.insider||{};
