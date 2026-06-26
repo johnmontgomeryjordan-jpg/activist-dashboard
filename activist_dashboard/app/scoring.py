@@ -60,7 +60,9 @@ POINTS = {**STRUCT_POINTS, **EVENT_POINTS}
 # high / clustered, raise it. (Starting point chosen so a genuinely strong multi-signal
 # lead lands in low-Severe ~75-85, mid leads in High/Elevated, light leads Moderate —
 # eyeball the live board after the first run and nudge this one number if needed.)
-VULN_SCALE = 16.0
+# Lowered 16 -> 14 alongside the cluster caps below: those caps reduce severity totals for
+# value-heavy names, so a slightly smaller scale keeps genuine leads in High/low-Severe.
+VULN_SCALE = 14.0
 # Above this raw value the score compresses smoothly toward VULN_MAX instead of clipping.
 VULN_KNEE = 80.0
 VULN_MAX = 92
@@ -79,6 +81,20 @@ FOUNDER_CONTROLLED = set(filter(None, os.getenv(
     "FOUNDER_CONTROLLED",
     "COIN,IAC,GOOGL,GOOG,META,FOXA,FOX,NWSA,NWS,PARA,PARAA,DELL,F,NKE,UAA,UA,EL"
 ).replace(" ", "").upper().split(",")))
+# Viability gate: an unprofitable but fast-growing company is a growth bet, not a cheap
+# underperformer — "cheap + low margin" misreads it (that's why SDGR/INSP topped the board).
+# When a name loses money on operations AND is still growing revenue briskly, discount it so
+# value/quality signals it doesn't really exhibit don't push it to the top.
+GROWTH_GATE = 0.10          # revenue growing at least this fast (YoY)
+GROWTH_DISCOUNT = 0.6       # score multiplier when unprofitable + growing
+# De-correlation: signals driven by the SAME underlying fact — a depressed share price —
+# shouldn't each add full weight. Cap the combined severity-weighted contribution of the
+# valuation cluster and the return cluster so one beaten-down price counts once (with size),
+# not three or four times. The signals still all appear as evidence; only the SCORE is capped.
+VALUE_CLUSTER = ("cheap_abs", "cheap_pb", "cheap_ev_ebitda")
+RETURN_CLUSTER = ("weak_tsr_1y", "weak_tsr_3y")
+VALUE_CLUSTER_CAP = 2.0     # severity-weighted points
+RETURN_CLUSTER_CAP = 1.0
 # Rating bands shown as the headline (defensible, no probability implied).
 def vuln_band(v):
     if v is None:
@@ -475,17 +491,32 @@ def _fin_context(r, t, e):
         out.append({"key": key, "label": label, "value": v, "cutoff": cutoff,
                     "pct": pct, "verdict": verdict, "n": n})
     return out
+def _is_growth_stage(r):
+    """Unprofitable on operations but still growing revenue briskly -> a growth bet, not a
+    cheap underperformer. The value/quality signals misfire on these, so we discount them."""
+    om = r.get("operating_margin")
+    g = r.get("revenue_growth")
+    return (om is not None and om < 0) and (g is not None and g >= GROWTH_GATE)
+
+
 def _vuln_score(trig, r, t, e):
     """0-VULN_MAX activist-target-profile index from the severity-weighted signal total.
-    Linear up to a knee, then a smooth soft-cap (so the strongest leads keep an order
-    instead of all clipping to the ceiling). Founder/super-voting control discounts the
-    score, since an activist campaign is rarely winnable there."""
-    sev_total = sum(POINTS.get(k, 0) * _severity(k, r, t, e) for k in trig)
+    Correlated value/return signals are capped per-cluster (one depressed price counts once);
+    linear up to a knee, then a smooth soft-cap so the strongest leads keep an order instead
+    of clipping to the ceiling. Founder/super-voting control and growth-stage (unprofitable +
+    growing) names are discounted, since neither is a clean actionable value target."""
+    contrib = {k: POINTS.get(k, 0) * _severity(k, r, t, e) for k in trig}
+    clustered = set(VALUE_CLUSTER) | set(RETURN_CLUSTER)
+    sev_total = sum(v for k, v in contrib.items() if k not in clustered)
+    sev_total += min(VALUE_CLUSTER_CAP, sum(contrib.get(k, 0) for k in VALUE_CLUSTER))
+    sev_total += min(RETURN_CLUSTER_CAP, sum(contrib.get(k, 0) for k in RETURN_CLUSTER))
     raw = 100 * sev_total / VULN_SCALE
     v = _soft_cap(raw)
     tk = (r.get("ticker") or "").upper()
     if "gov_dual" in trig or tk in FOUNDER_CONTROLLED:
         v *= DUAL_CLASS_DISCOUNT
+    if _is_growth_stage(r):
+        v *= GROWTH_DISCOUNT
     return int(round(v))
 def _fmt_metric(metric, v):
     if v is None:
@@ -958,6 +989,11 @@ def recompute_all():
                 is_active, tier = True, "reported"
             else:
                 is_active, tier = False, ""
+        # Data-quality guard: a proactive lead with no market cap is data-incomplete
+        # (its valuation signals can't be trusted and the card looks broken, e.g. IAC's
+        # blank market cap). Drop it from the leads — but never drop an active situation.
+        if not is_active and r.get("market_cap") is None:
+            continue
         # 0-100 absolute vulnerability, weighted by how severe each signal is.
         vuln = _vuln_score(trig, r, t, e)
         evidence = []
