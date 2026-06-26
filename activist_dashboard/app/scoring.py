@@ -66,6 +66,11 @@ VULN_SCALE = 14.0
 # Above this raw value the score compresses smoothly toward VULN_MAX instead of clipping.
 VULN_KNEE = 80.0
 VULN_MAX = 92
+# Minimum rating for a name to appear on the proactive "Companies to pitch" board. A
+# Moderate match (< 25) barely fits the activist-target profile, so showing it as a pitch
+# target just dilutes the list. 25 = the Elevated band floor; raise toward 50 for a tighter,
+# High-and-above board. (Active situations ignore this — they're tracked, not pitched.)
+MIN_LEAD_VULN = int(os.getenv("MIN_LEAD_VULN", "25"))
 # Founder / super-voting control (gov_dual) makes an activist campaign rarely winnable, so
 # such a name is a poor *actionable* lead even when its governance is genuinely bad. We
 # DISCOUNT the score (rather than adding points) when a dual-class / super-voting structure
@@ -1021,6 +1026,12 @@ def recompute_all():
             continue
         # 0-100 absolute vulnerability, weighted by how severe each signal is.
         vuln = _vuln_score(trig, r, t, e)
+        # Quality floor for the PROACTIVE board: a Moderate match (< MIN_LEAD_VULN) barely
+        # fits the activist-target profile and shouldn't be presented as a "company to pitch"
+        # — it just dilutes the list. We drop those from the leads (active situations are
+        # always kept regardless, since they're tracked for awareness, not pitched).
+        if not is_active and vuln < MIN_LEAD_VULN:
+            continue
         evidence = []
         if aflag:
             evidence.append({
