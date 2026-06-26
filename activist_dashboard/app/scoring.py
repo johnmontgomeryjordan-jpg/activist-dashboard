@@ -41,7 +41,7 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "gov_classified": 1, "gov_poison": 1, "gov_dual": 0,
                  "insider_selling": 1, "insider_buying": 0,
                  "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2,
-                 "lags_own_peers": 2}
+                 "lags_own_peers": 2, "strategic_review": 3}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
@@ -94,6 +94,13 @@ FOUNDER_CONTROLLED = set(filter(None, os.getenv(
 # IS a legitimate margin-expansion target and must stay on the board.
 DEEP_BURN_MARGIN = -0.25    # operating margin at/below this = structural cash burn
 BURN_DISCOUNT = 0.6         # score multiplier for deep cash-burners
+# "Fallen quality / strategic alternatives" — a viable business whose stock has de-rated
+# sharply. The activist thesis here is a sale / take-private / brand reset (Lululemon,
+# Wendy's, Bio-Techne), driven by the drawdown itself — NOT by cheap-vs-peers margins, which
+# is the whole class the value/distress signals structurally miss. Fires on a deep 1-yr
+# decline in a company that is NOT a cash-burner (a fixable, acquirable business, not a
+# falling knife). Profitable/quality names that just fell out of favor are exactly the point.
+STRATEGIC_DROP = -0.30      # 1-yr price return at/below this = a sharp de-rating
 # De-correlation: signals driven by the SAME underlying fact — a depressed share price —
 # shouldn't each add full weight. Cap the combined severity-weighted contribution of the
 # valuation cluster and the return cluster so one beaten-down price counts once (with size),
@@ -151,6 +158,7 @@ LABELS = {
     "overpaid_ceo": "CEO pay rising while the stock lags",
     "exec_reaction_drop": "stock dropped on a leadership-change 8-K",
     "lags_own_peers": "trails its self-selected proxy peer group",
+    "strategic_review": "sharp de-rating — strategic-review / sale candidate",
 }
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
 # insider_buying is shown as a 0-point defense/confidence note.
@@ -449,6 +457,11 @@ def _severity(key, r, t, e):
         if abn is None:
             return 0.5
         return _clamp((-abn - 0.03) / 0.12)          # -3% -> 0, -15% -> 1
+    if key == "strategic_review":
+        ret = r.get("tsr_1y")
+        if ret is None:
+            return 0.5
+        return _clamp((-ret - 0.30) / 0.40 + 0.3)    # -30% -> ~0.3, -55% -> ~0.9, deeper -> 1
     if key == "lags_own_peers":
         pa = r.get("_peers") or {}
         med = (pa.get("median") or {}).get("tsr_1y")
@@ -722,6 +735,17 @@ def _peer_evidence(key, r):
             "inputs": "self-selected compensation peer group (DEF 14A) vs 1-yr total return",
             "period": "trailing 1 yr", "source": "SEC DEF 14A + Finnhub",
             "url": r.get("_gov_url")}
+def _strategic_evidence(key, r):
+    ret = r.get("tsr_1y")
+    val = _fmt_metric("tsr_1y", ret) if ret is not None else ""
+    ctx = (f"the stock has de-rated sharply — down {abs(ret) * 100:.0f}% over the past year — "
+           f"on a still-viable business; the classic setup for a sale, take-private, or "
+           f"strategic review (a fixable, acquirable brand, not a falling knife)"
+           if ret is not None else
+           "a sharp de-rating on a still-viable business — a strategic-alternatives setup")
+    return {"key": key, "label": LABELS.get(key, key), "value": val, "context": ctx,
+            "inputs": "", "period": "trailing 1 yr",
+            "source": "Finnhub (price return, excl. dividends)", "url": None}
 def _struct_evidence(key, r, t):
     if key in ("weak_tsr_1y", "weak_tsr_3y"):
         return _tsr_evidence(key, r)
@@ -922,6 +946,11 @@ def recompute_all():
         if (r.get("tsr_3y") is not None and spy_3y is not None
                 and (r["tsr_3y"] - spy_3y) <= TSR_LAG_3Y):
             trig.append("weak_tsr_3y")
+        # Fallen-quality / strategic-alternatives: a viable business that de-rated sharply
+        # (down >=30% over the year) — a sale / take-private / brand-reset candidate the
+        # value/distress signals miss. Excludes cash-burners (falling knives, already discounted).
+        if r.get("tsr_1y") is not None and r["tsr_1y"] <= STRATEGIC_DROP and not _is_cash_burner(r):
+            trig.append("strategic_review")
         if low("roa") and not (_distorted and (r.get("roa") or 0) < 0):
             trig.append("low_roa")
         if r.get("revenue_growth") is not None and (r["revenue_growth"] < 0 or low("revenue_growth")):
@@ -1030,7 +1059,11 @@ def recompute_all():
         # fits the activist-target profile and shouldn't be presented as a "company to pitch"
         # — it just dilutes the list. We drop those from the leads (active situations are
         # always kept regardless, since they're tracked for awareness, not pitched).
-        if not is_active and vuln < MIN_LEAD_VULN:
+        # EXEMPTION: a "strategic_review" (fallen-quality / sale-candidate) name is a distinct,
+        # high-value category that trips few signals by nature — it would score below the
+        # generic floor, but it's exactly the class we built this signal to surface, so it's
+        # kept even at a modest score (it's labeled distinctly, not generic weak-signal noise).
+        if not is_active and vuln < MIN_LEAD_VULN and "strategic_review" not in trig:
             continue
         evidence = []
         if aflag:
@@ -1051,6 +1084,8 @@ def recompute_all():
                 evidence.append(_reaction_evidence(key, r))
             elif key in PEER_KEYS:
                 evidence.append(_peer_evidence(key, r))
+            elif key == "strategic_review":
+                evidence.append(_strategic_evidence(key, r))
             elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
