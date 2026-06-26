@@ -139,7 +139,8 @@ function withinDays(s,n){ if(!s) return false; const d=new Date(s+"T00:00:00"); 
 /* ===== Pillars ===== */
 const PILLAR_OF={
   cheap_abs:"value", cheap_pb:"value", cheap_ev_ebitda:"value",
-  weak_tsr_1y:"perf", weak_tsr_3y:"perf",
+  weak_tsr_1y:"perf", weak_tsr_3y:"perf", lags_own_peers:"perf",
+  strategic_review:"strategic",
   low_margin:"ops", low_roa:"ops", weak_growth:"ops", high_sga:"ops",
   cash_hoard:"capital", underlevered:"capital", high_goodwill:"capital",
   gov_classified:"gov", gov_poison:"gov", gov_dual:"gov", overpaid_ceo:"gov",
@@ -151,6 +152,7 @@ const PILLAR_OF={
 const PILLAR_META={
   value:{t:"Valuation gap", d:"Trading cheap relative to assets or peers"},
   perf:{t:"Shareholder returns", d:"Stock lagging the broader market"},
+  strategic:{t:"Strategic vulnerability", d:"A de-rated but viable business — a sale / take-private setup"},
   ops:{t:"Operating performance", d:"Margins, returns or growth below peers"},
   capital:{t:"Capital allocation", d:"Balance sheet an activist could push to optimize"},
   gov:{t:"Governance red flags", d:"Entrenchment provisions and pay-for-performance gaps in the proxy"},
@@ -158,7 +160,7 @@ const PILLAR_META={
   insider:{t:"Insider activity", d:"What management is doing with their own money (Form 4)"},
   event:{t:"Recent catalysts", d:"Events that tend to draw activist attention"}
 };
-const PILLAR_ORDER=["value","perf","ops","capital","gov","vote","insider","event"];
+const PILLAR_ORDER=["value","perf","strategic","ops","capital","gov","vote","insider","event"];
 
 /* ===== Dashboard: leads table + fresh picks ===== */
 async function loadShortlist(){
