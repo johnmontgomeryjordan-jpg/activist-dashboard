@@ -234,6 +234,17 @@ def _annual_growth(rev_f):
     return None
 
 
+def _annual_latest(flows):
+    """Most recent FULL-YEAR (~365-day) value from a flow series, by fiscal-year-end.
+    Used for a profitability sanity check — a single quarter can be distorted by a one-time
+    charge or a discontinued-operations divestiture, but the full year tells the real story."""
+    ann = [e for e in flows if 350 <= e["days"] <= 380 and e.get("end")]
+    if not ann:
+        return None
+    ann.sort(key=lambda e: e["end"], reverse=True)
+    return ann[0]["val"]
+
+
 def _extract(facts):
     """Return (metrics, raw). Signals are computed from the company's MOST RECENT
     reporting period (latest 10-Q year-to-date), falling back to the latest annual
@@ -284,6 +295,15 @@ def _extract(facts):
             return None
         return r
 
+    def ratio_cap(n, d, lo, hi):
+        # Like ratio(), but CAPS extreme values instead of nulling them. Used for margin and
+        # ROA so a deep cash-burner (e.g. a clinical biotech at -700% margin) still registers
+        # as deeply negative — and so still trips the low-margin signal AND the deep-burn
+        # discount — instead of clamping to None and silently escaping both.
+        if n is None or not d or d <= 0:
+            return None
+        return max(lo, min(hi, n / d))
+
     # Revenue growth: prefer full-year (10-K) YoY — a single quarter's YoY is misleading for
     # lumpy-revenue names and made real double-digit growers (e.g. SDGR) read as flat/negative.
     # Fall back to the period-over-prior-year figure only when two annual periods aren't there.
@@ -292,10 +312,15 @@ def _extract(facts):
         g = (rev - rev_prior) / rev_prior
         growth = g if -10 < g < 10 else None
 
+    # Most recent FULL-YEAR net income — the profitability sanity check. A GAAP-profitable
+    # year means a negative latest-period margin/ROA is almost certainly a one-time charge
+    # (impairment, divestiture) distorting the quarter, not real distress (see scoring).
+    annual_ni = _annual_latest(ni_f)
+
     metrics = {
         "revenue": rev, "revenue_growth": growth,
-        "operating_margin": ratio(opinc, rev, -5, 5), "sga_pct": ratio(sga, rev, 0, 5),
-        "roa": ratio(ni_ann, assets, -5, 5),
+        "operating_margin": ratio_cap(opinc, rev, -5, 5), "sga_pct": ratio(sga, rev, 0, 5),
+        "roa": ratio_cap(ni_ann, assets, -5, 5),
         "cash_to_assets": ratio(cash, assets, 0, 1),
         "debt_to_assets": ratio(debt, assets, 0, 5),
         "shares": shares, "book_equity": equity,
@@ -303,6 +328,7 @@ def _extract(facts):
     raw = {
         "revenue": rev, "revenue_prior": rev_prior, "operating_income": opinc,
         "sga": sga, "net_income": ni, "net_income_ann": ni_ann,
+        "annual_net_income": annual_ni,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
         "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill,
         "period_end": p_end, "period_days": p_days,
