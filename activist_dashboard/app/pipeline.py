@@ -750,17 +750,25 @@ def refresh_long_tsr(force=False):
         if tk:
             sym_to_cik.setdefault(tk, cik)
     syms = list(sym_to_cik)
-    done = 0
+    got = {}
+    # Try batched first; this account's free tier may not support multi-symbol requests,
+    # so fall back to one-per-symbol for anything the batch didn't return (rate-limited).
     for i in range(0, len(syms), 25):
-        chunk = syms[i:i + 25]
-        res = longtsr.fetch(chunk, key)
-        for sym, rr in res.items():
-            if rr.get("3y") is None and rr.get("5y") is None:
-                continue
-            database.set_company_market(_unpad(sym_to_cik[sym]),
-                                        tsr_3y=rr.get("3y"), tsr_5y=rr.get("5y"))
-            done += 1
+        got.update(longtsr.fetch(syms[i:i + 25], key))
         time.sleep(1.0)
+    missing = [s for s in syms if not got.get(s)]
+    for s in missing:
+        r = longtsr.fetch([s], key)
+        if r.get(s):
+            got[s] = r[s]
+        time.sleep(8.0)                 # free tier = 8 requests/minute
+    done = 0
+    for sym, rr in got.items():
+        if not rr or (rr.get("3y") is None and rr.get("5y") is None):
+            continue
+        database.set_company_market(_unpad(sym_to_cik[sym]),
+                                    tsr_3y=rr.get("3y"), tsr_5y=rr.get("5y"))
+        done += 1
     # Only stamp the 6-day cache if we actually got data — so a credit-exhausted run
     # (all fetches 429) retries next cycle instead of silently skipping for 6 days.
     if done:
