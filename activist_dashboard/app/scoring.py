@@ -497,9 +497,19 @@ def _is_cash_burner(r):
     """Deeply unprofitable on operations -> a structural cash burner (clinical/platform
     biotech, etc.) where 'low margin / low ROA' reflect the business model, not a fixable
     inefficiency. Discounted. A merely thin or slightly-negative margin is NOT caught — that
-    is a genuine margin-expansion target and stays on the board."""
+    is a genuine margin-expansion target and stays on the board. A company that is GAAP-
+    profitable over the full year is never a burner (its negative period figure is a charge)."""
+    if r.get("_gaap_profitable"):
+        return False
     om = r.get("operating_margin")
-    return om is not None and om <= DEEP_BURN_MARGIN
+    roa = r.get("roa")
+    if om is not None and om <= DEEP_BURN_MARGIN:
+        return True
+    # Fallback: some clinical-stage names report no clean operating income, so margin is
+    # missing — a deeply negative ROA still identifies the cash burn.
+    if om is None and roa is not None and roa <= DEEP_BURN_MARGIN:
+        return True
+    return False
 
 
 def _vuln_score(trig, r, t, e):
@@ -870,6 +880,14 @@ def recompute_all():
         r["_spy_1y"] = spy_1y
         r["_spy_3y"] = spy_3y
         r["_spy_5y"] = spy_5y
+        # Profitability sanity: when a company is GAAP-profitable over the full year, a
+        # negative latest-period margin/ROA is almost always a one-time charge (impairment,
+        # discontinued-ops divestiture) distorting the quarter — not real distress. We don't
+        # let those distressed signals fire in that case (this is the Gibraltar fix: a company
+        # that earned $3.25/share shouldn't carry a "negative margin / loses money" thesis).
+        _ani = (r.get("raw") or {}).get("annual_net_income")
+        r["_gaap_profitable"] = (_ani is not None and _ani > 0)
+        _distorted = r["_gaap_profitable"]
         trig = []
         def low(metric):
             q1, _, _ = t.get(metric, (None, None, 0))
@@ -887,7 +905,7 @@ def recompute_all():
             trig.append("cheap_ev_ebitda")
         if r.get("goodwill_to_assets") is not None and high("goodwill_to_assets"):
             trig.append("high_goodwill")
-        if low("operating_margin"):
+        if low("operating_margin") and not (_distorted and (r.get("operating_margin") or 0) < 0):
             trig.append("low_margin")
         if (r.get("tsr_1y") is not None and spy_1y is not None
                 and (r["tsr_1y"] - spy_1y) <= TSR_LAG_1Y):
@@ -895,7 +913,7 @@ def recompute_all():
         if (r.get("tsr_3y") is not None and spy_3y is not None
                 and (r["tsr_3y"] - spy_3y) <= TSR_LAG_3Y):
             trig.append("weak_tsr_3y")
-        if low("roa"):
+        if low("roa") and not (_distorted and (r.get("roa") or 0) < 0):
             trig.append("low_roa")
         if r.get("revenue_growth") is not None and (r["revenue_growth"] < 0 or low("revenue_growth")):
             trig.append("weak_growth")
