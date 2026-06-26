@@ -69,8 +69,30 @@ GDELT_PER_TERM = int(os.getenv("GDELT_PER_TERM", "50"))
 GDELT_SLEEP = float(os.getenv("GDELT_SLEEP", "0.7"))
 
 # Per-company (Finnhub) news settings.
-COMPANY_NEWS_DAYS = int(os.getenv("COMPANY_NEWS_DAYS", "21"))
+COMPANY_NEWS_DAYS = int(os.getenv("COMPANY_NEWS_DAYS", "90"))
 COMPANY_NEWS_PER = int(os.getenv("COMPANY_NEWS_PER", "6"))
+# Activist-naming headlines are kept far longer than the 21-day default and are always
+# captured (even past the per-company cap), so the profile's "reported activist" check
+# (scoring._activist_news_hit, a 220-day window) still has data to match weeks later. That's
+# what lets an already-engaged name route itself into Active Situations without a manual tag.
+ACTIVIST_RETAIN_DAYS = int(os.getenv("ACTIVIST_RETAIN_DAYS", "220"))
+# Compact known-activist cue list for capture/retention. The authoritative fund list lives
+# in scoring.KNOWN_FUNDS; this mirror keeps news.py self-contained (no cross-module import).
+_ACTIVIST_CUES = [
+    "activist", "13d", "proxy fight", "proxy contest", "proxy battle", "dissident",
+    "elliott", "starboard", "trian", "jana", "third point", "icahn", "peltz",
+    "valueact", "value act", "engine no", "ancora", "politan", "sachem head",
+    "legion partners", "pershing square", "ackman", "corvex", "land & buildings",
+    "mantle ridge", "saba capital", "h partners", "irenic", "barington",
+    "d.e. shaw", "glenview", "hestia", "bluebell", "soroban", "kimmeridge",
+    "impactive", "scopia", "lynrock", "browning west", "ananym", "caligan",
+    "kanen", "gatemore", "vision one",
+]
+
+
+def _names_activist(title):
+    t = " " + _norm(title) + " "
+    return any(c in t for c in _ACTIVIST_CUES)
 
 # A headline must contain at least one of these to be kept (broad feed only).
 DISTRESS_KEYWORDS = [
@@ -308,6 +330,12 @@ def refresh_company_news(tickers, key, days=COMPANY_NEWS_DAYS, per_symbol=COMPAN
                 continue
             if _is_noise(head):       # skip analyst-promo / chart-setup / off-topic clutter
                 continue
+            is_act = _names_activist(head)
+            # Keep the most-recent `per_symbol` general headlines for display, but ALWAYS
+            # capture an activist-naming headline (even past the cap) so it's available to
+            # route the name to Active Situations.
+            if n >= per_symbol and not is_act:
+                continue
             dt = a.get("datetime")
             try:
                 pub = datetime.utcfromtimestamp(int(dt)).isoformat() if dt else ""
@@ -320,9 +348,8 @@ def refresh_company_news(tickers, key, days=COMPANY_NEWS_DAYS, per_symbol=COMPAN
                 "matched_tickers": tk,
             })
             kept += 1
-            n += 1
-            if n >= per_symbol:
-                break
+            if not is_act:
+                n += 1
         time.sleep(0.15)           # under Finnhub's 60/min free limit
     return kept
 
@@ -347,6 +374,7 @@ def _prune_stored():
     (rows tagged with a ticker) is NEVER relevance-pruned — only aged out. Everything
     older than 21 days is dropped to keep the table fresh."""
     cutoff = (datetime.utcnow() - timedelta(days=21)).isoformat()
+    act_cutoff = (datetime.utcnow() - timedelta(days=ACTIVIST_RETAIN_DAYS)).isoformat()
     try:
         with database.get_conn() as conn:
             rows = conn.execute(
@@ -354,7 +382,10 @@ def _prune_stored():
             drop = []
             for r in rows:
                 tagged = (r["matched_tickers"] or "").strip()
-                too_old = (r["published_at"] or "") < cutoff
+                pub = r["published_at"] or ""
+                # Activist-naming headlines get the long retention window so they can keep a
+                # name routed to Active Situations; everything else ages out at 21 days.
+                too_old = pub < (act_cutoff if _names_activist(r["headline"]) else cutoff)
                 # broad-feed rows (no ticker) must stay relevant; company rows only age out
                 if too_old or (not tagged and not is_relevant(r["headline"])):
                     drop.append(r["id"])
