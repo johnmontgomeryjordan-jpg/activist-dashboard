@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS subscribers (
 CREATE TABLE IF NOT EXISTS feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, message TEXT, created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS daily_lead (
+    day INTEGER PRIMARY KEY, cik TEXT, chosen_at TEXT
+);
 CREATE TABLE IF NOT EXISTS fundamentals (
     cik TEXT PRIMARY KEY, ticker TEXT, sector TEXT,
     revenue REAL, revenue_growth REAL, operating_margin REAL, sga_pct REAL,
@@ -456,6 +459,32 @@ def get_feedback(limit=50):
     with get_conn() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM feedback ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+# --- Daily lead-of-the-day (no-repeat rotation) ------------------------------
+def get_lead_for_day(day):
+    with get_conn() as conn:
+        r = conn.execute("SELECT cik FROM daily_lead WHERE day=?", (day,)).fetchone()
+        return r["cik"] if r else None
+
+
+def record_daily_lead(day, cik):
+    with get_conn() as conn:
+        conn.execute("INSERT INTO daily_lead (day,cik,chosen_at) VALUES (?,?,?) "
+                     "ON CONFLICT(day) DO UPDATE SET cik=excluded.cik, chosen_at=excluded.chosen_at",
+                     (day, cik, now_iso()))
+
+
+def get_lead_history(window_days, current_day):
+    """{cik: most-recent day it was lead} within the prior `window_days` (excluding today).
+    Lets the picker prefer never-featured names, then the least-recently-featured."""
+    out = {}
+    with get_conn() as conn:
+        for r in conn.execute(
+                "SELECT day, cik FROM daily_lead WHERE day < ? AND day >= ? ORDER BY day",
+                (current_day, current_day - window_days)):
+            out[r["cik"]] = r["day"]          # ascending order -> ends on the latest day
+    return out
 
 
 # --- Watchlist (shared) ------------------------------------------------------
