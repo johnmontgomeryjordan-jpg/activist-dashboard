@@ -1,6 +1,5 @@
 """
 Predictive target-attractiveness scoring.
-
 Structural, peer-relative within sector (2-digit SIC):
   Cheap valuation (price-to-book < 1.5x absolute, or bottom quartile) ... 2
   Operating margin in bottom quartile of sector ........................ 2
@@ -15,23 +14,19 @@ Event accelerants (recent filings/news), text-confirmed where it matters:
   Leadership change (routine appointment/board) ........................ 1
   Negative activist headline ........................................... 1
   Recent results (no clear miss) ....................................... 0  (note only)
-
 Each triggered signal produces an EVIDENCE record (value, the underlying SEC math,
 fiscal period, peer context with sample size, source, and a link to the exact
 filing), stored as JSON on the score so the detail view can prove why each tag fired.
 """
 import json
 import re
-
 from . import config, database, pitch
-
 MIN_PEERS = 5
 # 1-yr stock return must lag the S&P 500 by at least this much (in return terms) to flag.
 TSR_LAG_1Y = -0.15
 # 3-yr CUMULATIVE return must lag the S&P by at least this much (30 pts) to flag a
 # structural, multi-year underperformer (a bigger bar than the 1-yr gate, by design).
 TSR_LAG_3Y = -0.30
-
 # We STORE any company that shows at least this many signal points (plus all active
 # situations), then RANK them by the 0-92 vulnerability index and surface the top of the
 # list on the dashboard. This is deliberately low so the leads table, spotlight, and
@@ -39,11 +34,10 @@ TSR_LAG_3Y = -0.30
 # ranking is. (Previously the much higher config.SCORE_THRESHOLD let only a handful
 # through, which made the dashboard look empty even though the data was there.)
 LEAD_FLOOR = 2
-
 STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margin": 2,
                  "weak_tsr_1y": 1, "weak_tsr_3y": 1, "low_roa": 1, "weak_growth": 1,
                  "high_sga": 1, "cash_hoard": 1, "underlevered": 1, "high_goodwill": 1,
-                 "gov_classified": 1, "gov_poison": 1, "gov_dual": 1,
+                 "gov_classified": 1, "gov_poison": 1, "gov_dual": 0,
                  "insider_selling": 1, "insider_buying": 0,
                  "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2,
                  "lags_own_peers": 2}
@@ -51,19 +45,31 @@ EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "layoffs": 1, "leadership_change": 1, "results_update": 0,
                 "news_negative": 1}
 POINTS = {**STRUCT_POINTS, **EVENT_POINTS}
-
 # The 0-100 number is an ABSOLUTE "activist-target profile" index, NOT a probability of
 # a campaign. Each triggered signal contributes its point weight scaled by *how severe*
 # it is (0..1) — how cheap, how deep in the peer tail, how far returns lag. VULN_SCALE is
-# the severity-weighted point total that maps to the top of the range. We deliberately
-# cap the index at VULN_MAX (below 100) so it never reads as "100% certain to be targeted"
-# — the highest a company can score is "matches the activist-target profile as strongly as
-# we measure." A strong multi-signal lead lands in the 80s; lighter leads spread down into
-# the 30s-50s. The headline a partner sees is a RATING BAND (see VULN_BANDS), with this
-# index as supporting detail.
-VULN_SCALE = 10.0
+# the severity-weighted point total that maps to the top of the range.
+#
+# CALIBRATION (June 2026): VULN_SCALE was 10.0, which combined with a hard 92 cap pegged
+# every multi-signal lead at the same "92 / Severe" — the index stopped discriminating at
+# the top. We raised the scale so realistic strong leads land in the 70s-80s and lighter
+# leads spread down into the 30s-50s, and replaced the hard cap with a SMOOTH soft-cap
+# (see _soft_cap) so even the hottest names keep an order instead of clipping to one
+# number. This is the main knob: if the live board reads too low, lower VULN_SCALE; too
+# high / clustered, raise it. (Starting point chosen so a genuinely strong multi-signal
+# lead lands in low-Severe ~75-85, mid leads in High/Elevated, light leads Moderate —
+# eyeball the live board after the first run and nudge this one number if needed.)
+VULN_SCALE = 16.0
+# Above this raw value the score compresses smoothly toward VULN_MAX instead of clipping.
+VULN_KNEE = 80.0
 VULN_MAX = 92
-
+# Founder / super-voting control (gov_dual) makes an activist campaign rarely winnable, so
+# such a name is a poor *actionable* lead even when its governance is genuinely bad. We
+# DISCOUNT the score (rather than adding points) when a dual-class / super-voting structure
+# is present, demoting it down the board while keeping the flag visible as context. NOTE:
+# this only fires where we've parsed the proxy AND detected the dual-class structure;
+# sharpening that detection (and using actual voting %) is a follow-up.
+DUAL_CLASS_DISCOUNT = 0.6
 # Rating bands shown as the headline (defensible, no probability implied).
 def vuln_band(v):
     if v is None:
@@ -75,7 +81,15 @@ def vuln_band(v):
     if v >= 25:
         return "Elevated"
     return "Moderate"
-
+def _soft_cap(raw, knee=VULN_KNEE, ceiling=VULN_MAX):
+    """Linear up to `knee`, then compress smoothly toward `ceiling` (asymptotic, never
+    clipping). Keeps ordering intact among the very strongest leads instead of mapping
+    them all to the same capped number."""
+    if raw <= knee:
+        return raw
+    over = raw - knee
+    head = ceiling - knee
+    return knee + head * over / (over + head)
 LABELS = {
     "cheap_abs": "cheap (low price-to-book < 1.5x)",
     "cheap_pb": "cheap vs peers (low price-to-book)",
@@ -85,7 +99,7 @@ LABELS = {
     "weak_tsr_1y": "1-yr stock return lagging the market",
     "weak_tsr_3y": "weak 3-yr stock return vs market",
     "low_roa": "low return on assets vs peers",
-    "weak_growth": "shrinking / weak revenue growth",
+    "weak_growth": "weak / below-peer revenue growth",
     "high_sga": "bloated SG&A vs peers",
     "cash_hoard": "cash-heavy balance sheet",
     "underlevered": "under-levered balance sheet",
@@ -106,33 +120,27 @@ LABELS = {
     "exec_reaction_drop": "stock dropped on a leadership-change 8-K",
     "lags_own_peers": "trails its self-selected proxy peer group",
 }
-
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
 # insider_buying is shown as a 0-point defense/confidence note.
 INSIDER_KEYS = ("insider_selling", "insider_buying")
-
 # Shareholder-vote discontent (8-K Item 5.07). Flag when say-on-pay support falls below
 # this fraction -- well under the ~90%+ norm, a recognized pre-activism warning.
 VOTE_KEYS = ("weak_vote_support",)
 SAY_ON_PAY_FLAG = 0.75
-
 # CEO pay-for-performance (from DEF 14A Summary Comp Table). Fires when total CEO comp
 # rose while the stock lagged — its own evidence card with the pay trajectory.
 COMP_KEYS = ("overpaid_ceo",)
 # Fire when comp rose at least this much over the SCT window (cumulative).
 COMP_RISE_FLOOR = 0.05
-
 # Exec-change stock reaction (the 1-day abnormal move vs S&P on a leadership-change 8-K).
 REACTION_KEYS = ("exec_reaction_drop",)
 # Fire when the stock fell at least this much MORE than the market on the announcement day.
 REACTION_DROP_FLOOR = -0.03
-
 # Self-selected proxy peer group (from the DEF 14A). lags_own_peers fires when the
 # company's 1-yr TSR trails the MEDIAN of the peers it named itself, by PEER_LAG.
 PEER_KEYS = ("lags_own_peers",)
 PEER_MIN = 5            # need at least this many matched peers (with TSR) to judge
 PEER_LAG = 0.05         # company must trail the peer-median 1-yr return by >= 5 pts
-
 # Governance red flags (from DEF 14A). Boolean signals -> their own evidence cards.
 GOV_KEYS = ("gov_classified", "gov_poison", "gov_dual")
 GOV_META = {
@@ -140,7 +148,6 @@ GOV_META = {
     "gov_poison": "shareholder rights plan in place — blocks an activist from accumulating a stake",
     "gov_dual": "super-voting share structure — insiders control the vote",
 }
-
 # Structural signal -> (metric, direction, source label).
 PCT_METRICS = {"operating_margin", "tsr_1y", "tsr_3y", "roa", "revenue_growth",
                "sga_pct", "cash_to_assets", "debt_to_assets", "goodwill_to_assets"}
@@ -170,7 +177,6 @@ EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
                 "impairment": "SEC 8-K", "layoffs": "SEC 8-K",
                 "leadership_change": "SEC 8-K", "results_update": "SEC 8-K",
                 "news_negative": "News"}
-
 # A news headline only counts as an "active situation" when it BOTH (a) names an activist
 # -- a known fund, or an explicit proxy-fight / "activist" cue -- AND (b) names the company
 # itself. Requiring the company NAME (not just a loose ticker/keyword match) kills the
@@ -181,7 +187,6 @@ EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
 # How many days of news to scan for a named-activist headline (longer than the general
 # scoring window, since a campaign stays "active" for months).
 ACTIVIST_NEWS_WINDOW = 220
-
 # Known activist funds. Substring match on the lowercased headline.
 KNOWN_FUNDS = [
     "elliott", "starboard value", "starboard", "trian", "jana partners", "jana",
@@ -251,15 +256,11 @@ _NAME_STOP = _NAME_SUFFIX | {
     "group", "partners", "resources", "enterprises", "ventures", "insurance",
     "securities", "investments", "investment", "management", "trust", "corp",
 }
-
-
 def _name_core_tokens(name):
     toks = re.findall(r"[a-z0-9&.-]+", (name or "").lower())
     while toks and toks[-1] in _NAME_SUFFIX:
         toks.pop()
     return toks
-
-
 def _company_keys(name):
     """(core_phrase, {keys}) used to confirm a headline really names this company.
     Keys are the full multi-word core (high precision) plus distinctive single tokens."""
@@ -277,8 +278,6 @@ def _company_keys(name):
         if len(tt) >= 6 or (len(toks) == 1 and len(tt) >= 4):
             keys.add(tt)
     return core, keys
-
-
 def _headline_about_company(headline, keys):
     if not keys:
         return False
@@ -290,8 +289,6 @@ def _headline_about_company(headline, keys):
         elif re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", h):
             return True
     return False
-
-
 def _activist_cue(headline):
     """Return a display label if the headline carries an activist cue, else None."""
     t = " " + (headline or "").lower() + " "
@@ -303,8 +300,6 @@ def _activist_cue(headline):
             return "Proxy contest" if "proxy" in c or "nominee" in c or "dissident" in c \
                 or "nominate" in c else "Activist campaign"
     return None
-
-
 def _activist_news_hit(ticker, name):
     """Most recent news headline that names BOTH an activist and this company, or None."""
     _, keys = _company_keys(name)
@@ -316,12 +311,8 @@ def _activist_news_hit(ticker, name):
             return {"title": n["headline"], "url": n["url"], "who": who,
                     "date": (n.get("published_at") or "")[:10]}
     return None
-
-
 def _pad_cik(cik):
     return str(cik).lstrip("0").zfill(10) if cik else cik
-
-
 def _quantiles(values):
     vals = sorted(v for v in values if v is not None)
     if len(vals) < MIN_PEERS:
@@ -330,8 +321,6 @@ def _quantiles(values):
         idx = min(len(vals) - 1, max(0, int(round(p * (len(vals) - 1)))))
         return vals[idx]
     return pct(0.25), pct(0.75), len(vals)
-
-
 def _pct_lo_hi(values):
     """5th / 95th percentile of a metric across a sector (tail anchors for severity)."""
     vals = sorted(v for v in values if v is not None)
@@ -341,12 +330,8 @@ def _pct_lo_hi(values):
         idx = min(len(vals) - 1, max(0, int(round(p * (len(vals) - 1)))))
         return vals[idx]
     return pct(0.05), pct(0.95)
-
-
 def _clamp(x):
     return max(0.0, min(1.0, x))
-
-
 def _depth_low(metric, r, t, e):
     """How deep below the bottom-quartile cutoff toward the sector floor (0..1)."""
     v = r.get(metric)
@@ -357,8 +342,6 @@ def _depth_low(metric, r, t, e):
     if lo is None or q1 <= lo:
         return 0.6
     return _clamp((q1 - v) / (q1 - lo))
-
-
 def _depth_high(metric, r, t, e):
     """How far above the top-quartile cutoff toward the sector ceiling (0..1)."""
     v = r.get(metric)
@@ -369,8 +352,6 @@ def _depth_high(metric, r, t, e):
     if hi is None or hi <= q3:
         return 0.6
     return _clamp((v - q3) / (hi - q3))
-
-
 def _severity(key, r, t, e):
     """Magnitude (0..1) of a triggered signal. Events/governance are binary (1.0);
     peer-relative and valuation/return signals scale by how extreme they are."""
@@ -440,8 +421,6 @@ def _severity(key, r, t, e):
             return 0.5
         return _clamp((med - st - 0.05) / 0.40)       # 5pts behind -> 0, 45pts behind -> 1
     return 1.0  # governance flags + insider_buying + event accelerants
-
-
 # Financials-tab peer context: each metric vs its sector, with a verdict that says what
 # the number MEANS for a pitch -- a vulnerability to attack ("bad"), idle capital / a cheap
 # entry an activist could exploit ("opp"), or in line ("mid"). Drives the meaning bars.
@@ -456,8 +435,6 @@ _FIN_METRICS = [
     ("cash_to_assets", "Cash / assets", "opp_high"),
     ("debt_to_assets", "Debt / assets", "opp_low"),
 ]
-
-
 def _fin_context(r, t, e):
     out = []
     for key, label, rule in _FIN_METRICS:
@@ -489,15 +466,17 @@ def _fin_context(r, t, e):
         out.append({"key": key, "label": label, "value": v, "cutoff": cutoff,
                     "pct": pct, "verdict": verdict, "n": n})
     return out
-
-
 def _vuln_score(trig, r, t, e):
     """0-VULN_MAX activist-target-profile index from the severity-weighted signal total.
-    Capped below 100 so it never implies a guaranteed campaign."""
+    Linear up to a knee, then a smooth soft-cap (so the strongest leads keep an order
+    instead of all clipping to the ceiling). Founder/super-voting control discounts the
+    score, since an activist campaign is rarely winnable there."""
     sev_total = sum(POINTS.get(k, 0) * _severity(k, r, t, e) for k in trig)
-    return min(VULN_MAX, int(round(100 * sev_total / VULN_SCALE)))
-
-
+    raw = 100 * sev_total / VULN_SCALE
+    v = _soft_cap(raw)
+    if "gov_dual" in trig:
+        v *= DUAL_CLASS_DISCOUNT
+    return int(round(v))
 def _fmt_metric(metric, v):
     if v is None:
         return "n/a"
@@ -508,8 +487,6 @@ def _fmt_metric(metric, v):
     if metric in PCT_METRICS:
         return f"{v * 100:.1f}%"
     return f"{v:.2f}"
-
-
 def _money(v):
     if v is None:
         return "n/a"
@@ -523,8 +500,6 @@ def _money(v):
     if a >= 1e3:
         return f"${v / 1e3:.0f}K"
     return f"${v:.0f}"
-
-
 def _source_url(cik, accn):
     try:
         ci = int(cik)
@@ -534,8 +509,6 @@ def _source_url(cik, accn):
         nod = str(accn).replace("-", "")
         return f"https://www.sec.gov/Archives/edgar/data/{ci}/{nod}/{accn}-index.htm"
     return f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ci}&type=10-K"
-
-
 def _period_label(raw):
     lbl = raw.get("period_label")
     if lbl:
@@ -547,14 +520,14 @@ def _period_label(raw):
     if end:
         return f"FY{str(end)[:4]}"
     return ""
-
-
 def _tsr_evidence(key, r):
     if key == "weak_tsr_1y":
-        metric, bench, span, src = "tsr_1y", r.get("_spy_1y"), "past year", "Finnhub (price return)"
+        metric, bench, span = "tsr_1y", r.get("_spy_1y"), "past year"
+        src = "Finnhub (price return, excl. dividends)"
         period = "trailing 1 yr"
     else:
-        metric, bench, span, src = "tsr_3y", r.get("_spy_3y"), "past 3 years", "Twelve Data (monthly closes)"
+        metric, bench, span = "tsr_3y", r.get("_spy_3y"), "past 3 years"
+        src = "Twelve Data (price return, monthly closes, excl. dividends)"
         period = "trailing 3 yr"
     ret = r.get(metric)
     if bench is not None and ret is not None:
@@ -568,15 +541,11 @@ def _tsr_evidence(key, r):
         ctx = f"lagged the broader market over the {span}"
     return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric(metric, ret),
             "context": ctx, "inputs": "", "period": period, "source": src, "url": None}
-
-
 def _gov_evidence(key, r):
     return {"key": key, "label": LABELS.get(key, key), "value": "",
             "context": GOV_META.get(key, ""), "inputs": "",
             "period": (f"proxy {r.get('_gov_date')}" if r.get("_gov_date") else "DEF 14A"),
             "source": "SEC DEF 14A", "url": r.get("_gov_url")}
-
-
 def _insider_evidence(key, r):
     ins = r.get("_insider") or {}
     buy, sell = ins.get("buy_value") or 0, ins.get("sell_value") or 0
@@ -595,8 +564,6 @@ def _insider_evidence(key, r):
     return {"key": key, "label": LABELS.get(key, key), "value": val,
             "context": ctx, "inputs": "", "period": f"trailing {win} days",
             "source": "SEC Form 4", "url": ins.get("top_url")}
-
-
 def _vote_evidence(key, r):
     v = r.get("_votes") or {}
     sop = v.get("say_on_pay")
@@ -608,8 +575,6 @@ def _vote_evidence(key, r):
     return {"key": key, "label": LABELS.get(key, key), "value": pct, "context": ctx,
             "inputs": "", "period": (f"meeting {mtg}" if mtg else "annual meeting"),
             "source": "SEC 8-K Item 5.07", "url": v.get("url")}
-
-
 def _comp_evidence(key, r):
     c = r.get("_comp") or {}
     pct = c.get("pct_change")
@@ -628,8 +593,6 @@ def _comp_evidence(key, r):
     return {"key": key, "label": LABELS.get(key, key), "value": val, "context": ctx,
             "inputs": inputs, "period": (f"proxy {r.get('_gov_date')}" if r.get("_gov_date") else "DEF 14A"),
             "source": "SEC DEF 14A", "url": r.get("_gov_url")}
-
-
 def _reaction_evidence(key, r):
     rc = r.get("_reaction") or {}
     move, bench, abn = rc.get("move"), rc.get("bench_move"), rc.get("abnormal")
@@ -645,8 +608,6 @@ def _reaction_evidence(key, r):
             "inputs": (f"close on {ed} vs prior trading day, less the S&P's same-day move"),
             "period": (f"8-K filed {rc.get('filed_at')}" if rc.get("filed_at") else "recent 8-K"),
             "source": "SEC 8-K + Twelve Data", "url": rc.get("url")}
-
-
 def _median(xs):
     xs = sorted(x for x in xs if x is not None)
     n = len(xs)
@@ -654,8 +615,6 @@ def _median(xs):
         return None
     m = n // 2
     return xs[m] if n % 2 else (xs[m - 1] + xs[m]) / 2.0
-
-
 def _peer_analysis(r, peer_ciks, rec_by_cik):
     """Build the company-vs-self-selected-peers comparison (for the Peer Analysis tab and
     the lags_own_peers signal). Only peers we also cover (have a rec for) are included."""
@@ -682,8 +641,6 @@ def _peer_analysis(r, peer_ciks, rec_by_cik):
     n_tsr = len([p for p in peers if p["tsr_1y"] is not None])
     return {"self": self_obj, "peers": peers, "median": med, "n": len(peers),
             "n_tsr": n_tsr, "rank": rank, "rank_of": len(rated)}
-
-
 def _peer_evidence(key, r):
     pa = r.get("_peers") or {}
     med = (pa.get("median") or {}).get("tsr_1y")
@@ -702,8 +659,6 @@ def _peer_evidence(key, r):
             "inputs": "self-selected compensation peer group (DEF 14A) vs 1-yr total return",
             "period": "trailing 1 yr", "source": "SEC DEF 14A + Finnhub",
             "url": r.get("_gov_url")}
-
-
 def _struct_evidence(key, r, t):
     if key in ("weak_tsr_1y", "weak_tsr_3y"):
         return _tsr_evidence(key, r)
@@ -714,7 +669,6 @@ def _struct_evidence(key, r, t):
     q1, q3, n = t.get(metric, (None, None, 0))
     raw = r.get("raw") or {}
     sector_label = raw.get("sector_desc") or "sector"
-
     # peer context
     if key == "cheap_abs":
         ctx = "trades below 1.5x book value"
@@ -728,7 +682,6 @@ def _struct_evidence(key, r, t):
                if q3 is not None else f"top quartile of {sector_label} peers")
     else:
         ctx = ""
-
     # underlying math
     inputs = ""
     if key in INPUTS_META:
@@ -764,21 +717,16 @@ def _struct_evidence(key, r, t):
             inputs = (f"EV {_money(ev)} (mkt cap {_money(mc)} + debt {_money(debt or 0)} "
                       f"− cash {_money(cash or 0)}) ÷ EBITDA {_money(ebitda)} "
                       f"— EBITDA = operating income + D&A (SEC XBRL)")
-
     url = _source_url(r.get("cik"), raw.get("source_accn")) if source == "SEC XBRL" else None
     return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric(metric, v),
             "context": ctx, "inputs": inputs, "period": _period_label(raw),
             "source": source, "url": url}
-
-
 def _event_evidence(key, ev):
     item = ev.get(key)
     return {"key": key, "label": LABELS.get(key, key), "value": "",
             "context": (item["title"] if item else ""), "inputs": "", "period": "",
             "source": EVENT_SOURCE.get(key, "EDGAR"),
             "url": (item["url"] if item else None)}
-
-
 def _event_signals(cik, ticker, name):
     triggered = set()
     top = None
@@ -802,12 +750,9 @@ def _event_signals(cik, ticker, name):
         # Strict: a headline that names a known activist AND this specific company.
         activist = _activist_news_hit(ticker, name)
     return triggered, top, ev, activist
-
-
 def recompute_all():
     funds = database.get_all_fundamentals()
     companies = {_pad_cik(c["cik"]): c for c in database.get_companies()}
-
     recs = []
     for f in funds:
         cik = _pad_cik(f["cik"])
@@ -828,7 +773,6 @@ def recompute_all():
         gw, ta = raw.get("goodwill"), raw.get("total_assets")
         if gw is not None and ta:
             goodwill_to_assets = gw / ta
-
         recs.append({
             "cik": cik, "ticker": f.get("ticker"),
             "sector": f.get("sector") or "??",
@@ -841,13 +785,11 @@ def recompute_all():
             "ev_ebitda": ev_ebitda, "goodwill_to_assets": goodwill_to_assets,
             "name": comp.get("name") or f.get("ticker"), "raw": raw,
         })
-
     # Drop delisted / deregistered / long-dormant names so they can't be pitched,
     # and keep them out of the peer benchmarks too.
     recs = [r for r in recs if not r.get("raw", {}).get("inactive")]
     # Index by (padded) CIK so a company can be compared against its self-selected peers.
     rec_by_cik = {r["cik"]: r for r in recs}
-
     try:
         spy_1y = float(database.get_meta("spy_1y"))
     except (TypeError, ValueError):
@@ -866,7 +808,6 @@ def recompute_all():
     reactions = database.get_all_exec_reactions()
     aflags = database.get_all_activist_flags()
     manual = database.get_manual_situations()   # partner overrides (always win)
-
     metrics = ["pb_ratio", "ev_ebitda", "goodwill_to_assets", "operating_margin",
                "tsr_1y", "tsr_3y", "roa", "revenue_growth", "sga_pct",
                "cash_to_assets", "debt_to_assets"]
@@ -878,7 +819,6 @@ def recompute_all():
     # Sector tail anchors (5th/95th pct) used to scale each signal's severity.
     ext = {sec: {m: _pct_lo_hi([x.get(m) for x in rows]) for m in metrics}
            for sec, rows in by_sector.items()}
-
     rows = []
     for r in recs:
         t = th.get(r["sector"], {})
@@ -887,17 +827,14 @@ def recompute_all():
         r["_spy_3y"] = spy_3y
         r["_spy_5y"] = spy_5y
         trig = []
-
         def low(metric):
             q1, _, _ = t.get(metric, (None, None, 0))
             v = r.get(metric)
             return q1 is not None and v is not None and v <= q1
-
         def high(metric):
             _, q3, _ = t.get(metric, (None, None, 0))
             v = r.get(metric)
             return q3 is not None and v is not None and v >= q3
-
         if r.get("pb_ratio") is not None and 0 < r["pb_ratio"] < 1.5:
             trig.append("cheap_abs")
         elif r.get("pb_ratio") is not None and r["pb_ratio"] > 0 and low("pb_ratio"):
@@ -924,7 +861,6 @@ def recompute_all():
             trig.append("cash_hoard")
         if low("debt_to_assets"):
             trig.append("underlevered")
-
         # Governance red flags (from DEF 14A; only present for parsed names).
         g = gov.get(r["cik"]) or {}
         r["_gov_url"] = g.get("proxy_url")
@@ -935,7 +871,6 @@ def recompute_all():
             trig.append("gov_poison")
         if g.get("dual_class"):
             trig.append("gov_dual")
-
         # CEO pay-for-performance: pay rose while the stock lagged the market.
         comp = None
         if g.get("comp_json"):
@@ -950,7 +885,6 @@ def recompute_all():
             lags = (tsr is not None and (tsr < 0 or (spy_1y is not None and (tsr - spy_1y) <= TSR_LAG_1Y)))
             if pc is not None and pc >= COMP_RISE_FLOOR and lags:
                 trig.append("overpaid_ceo")
-
         # Self-selected proxy peer group: does the company trail the peers it chose itself?
         peers_list = []
         if g.get("peers_json"):
@@ -964,14 +898,12 @@ def recompute_all():
             pmed = (pa.get("median") or {}).get("tsr_1y")
             if pmed is not None and r.get("tsr_1y") is not None and r["tsr_1y"] <= pmed - PEER_LAG:
                 trig.append("lags_own_peers")
-
         # Exec-change stock reaction: the stock dropped (vs the S&P) on a leadership 8-K.
         rxn = reactions.get(r["cik"]) or {}
         r["_reaction"] = rxn
         abn = rxn.get("abnormal")
         if abn is not None and abn <= REACTION_DROP_FLOOR:
             trig.append("exec_reaction_drop")
-
         # Insider activity (Form 4; only present for parsed names).
         ins = ins_all.get(r["cik"]) or {}
         r["_insider"] = ins
@@ -981,23 +913,19 @@ def recompute_all():
             trig.append("insider_selling")
         elif nb >= 1 and buy_v > sell_v and buy_v > 0:
             trig.append("insider_buying")
-
         # Shareholder-vote discontent (8-K 5.07; only present for parsed names).
         vrow = votes_all.get(r["cik"]) or {}
         r["_votes"] = vrow
         sop = vrow.get("say_on_pay")
         if sop is not None and sop < SAY_ON_PAY_FLAG:
             trig.append("weak_vote_support")
-
         struct = sum(STRUCT_POINTS[s] for s in trig)
         events, top, ev, activist = _event_signals(r["cik"], r["ticker"], r["name"])
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
-
         aflag = aflags.get(r["cik"])
         man = manual.get(r["cik"]) or {}
         man_status = man.get("status")
-
         # Decide whether this name is an ACTIVE SITUATION and at what confidence tier:
         #   confirmed -> authoritative SEC activist filing (13D / contested proxy)
         #   reported  -> a news headline naming a known activist AND this company
@@ -1020,10 +948,8 @@ def recompute_all():
                 is_active, tier = True, "reported"
             else:
                 is_active, tier = False, ""
-
         # 0-100 absolute vulnerability, weighted by how severe each signal is.
         vuln = _vuln_score(trig, r, t, e)
-
         evidence = []
         if aflag:
             evidence.append({
@@ -1047,7 +973,6 @@ def recompute_all():
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
                 evidence.append(_event_evidence(key, ev))
-
         # Headline item + situation metadata for the Active Situations card.
         if aflag:
             item = {"title": f"{r['name']} — {aflag.get('label')}", "url": aflag.get("url")}
@@ -1071,7 +996,6 @@ def recompute_all():
         if man_status == "active":
             smeta["manual"] = True
             smeta["manual_note"] = man.get("note") or ""
-
         rows.append({
             "cik": r["cik"], "ticker": r["ticker"], "company": r["name"],
             "market_cap": r.get("market_cap"), "score": total, "vuln": vuln,
@@ -1087,7 +1011,6 @@ def recompute_all():
             "peer_analysis": r.get("_peers") or {},
             "first_flagged": database.now_iso()[:10],
         })
-
     # Rank by the 0-100 vulnerability (tie-break on raw signal count, then size).
     rows.sort(key=lambda r: (r["vuln"], r["score"], r["market_cap"] or 0), reverse=True)
     database.replace_scores(rows)
