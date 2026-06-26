@@ -223,6 +223,9 @@ KNOWN_FUNDS = [
     "mantle ridge", "inclusive capital", "saba capital", "h partners",
     "cruiser capital", "irenic", "barington", "d.e. shaw", "blue harbour", "marcato",
     "glenview", "hestia", "bluebell", "soroban", "kimmeridge", "impactive", "scopia",
+    # added after the June 2026 audit (names the screen had missed, e.g. Lynrock/Teradata)
+    "lynrock lake", "lynrock", "browning west", "ananym", "caligan", "kanen",
+    "gatemore", "vision one", "white tale", "jeffrey smith",
 ]
 # Explicit campaign cues (no fund named, but unambiguous activist language). We keep
 # these tight: weak phrases like "director nominees" appear in routine *defensive* proxy
@@ -240,7 +243,8 @@ _FUND_DISPLAY = {
     "land & buildings": "Land & Buildings", "land and buildings": "Land & Buildings",
     "pershing square": "Pershing Square", "ackman": "Pershing Square (Ackman)",
     "nelson peltz": "Trian (Peltz)", "trian": "Trian", "starboard": "Starboard",
-    "starboard value": "Starboard",
+    "starboard value": "Starboard", "lynrock lake": "Lynrock Lake", "lynrock": "Lynrock Lake",
+    "browning west": "Browning West", "ananym": "Ananym Capital", "caligan": "Caligan Partners",
 }
 # Corporate suffixes stripped from a company name to find its distinctive core.
 _NAME_SUFFIX = {"inc", "incorporated", "corp", "corporation", "co", "company",
