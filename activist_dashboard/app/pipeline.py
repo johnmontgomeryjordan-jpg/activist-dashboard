@@ -214,6 +214,26 @@ def _latest_shares(facts):
     return None
 
 
+def _annual_growth(rev_f):
+    """Year-over-year revenue growth from FULL-YEAR (10-K) periods (~365 days), keyed by
+    fiscal-year-end. Stable for lumpy-revenue companies where a single quarter's YoY
+    misleads (milestone-based biotech, licensing transitions) -- that quarterly comparison
+    made real double-digit growers look flat or negative. None if <2 annual periods."""
+    by_year = {}
+    for e in rev_f:
+        if 350 <= e["days"] <= 380 and e.get("end"):
+            yr = e["end"][:4]
+            if yr not in by_year or e["end"] > by_year[yr]["end"]:
+                by_year[yr] = e
+    yrs = sorted(by_year, reverse=True)
+    if len(yrs) >= 2:
+        cur, prior = by_year[yrs[0]]["val"], by_year[yrs[1]]["val"]
+        if prior and prior > 0:
+            g = (cur - prior) / prior
+            return g if -10 < g < 10 else None
+    return None
+
+
 def _extract(facts):
     """Return (metrics, raw). Signals are computed from the company's MOST RECENT
     reporting period (latest 10-Q year-to-date), falling back to the latest annual
@@ -264,8 +284,11 @@ def _extract(facts):
             return None
         return r
 
-    growth = None
-    if rev is not None and rev_prior and rev_prior > 0:
+    # Revenue growth: prefer full-year (10-K) YoY — a single quarter's YoY is misleading for
+    # lumpy-revenue names and made real double-digit growers (e.g. SDGR) read as flat/negative.
+    # Fall back to the period-over-prior-year figure only when two annual periods aren't there.
+    growth = _annual_growth(rev_f)
+    if growth is None and rev is not None and rev_prior and rev_prior > 0:
         g = (rev - rev_prior) / rev_prior
         growth = g if -10 < g < 10 else None
 
