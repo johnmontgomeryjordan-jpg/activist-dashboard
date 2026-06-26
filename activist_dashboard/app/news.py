@@ -1,17 +1,25 @@
 """
-Financial news ingestion.
+Financial news ingestion for the broad early-warning feed.
 
-Two complementary sources:
-  * THEMATIC feed (NewsAPI) -- broad activist / distress / governance headlines for
-    the dashboard, restricted to financial outlets and matched to the universe.
-  * COMPANY news (Finnhub, free tier) -- per-ticker news for the names that matter
-    (shortlist / active situations / watchlist), so each company's detail view and
-    its event score are driven by real, company-specific news.
+Providers (set via NEWS_PROVIDER):
+  - "gdelt"   -> GDELT 2.0 DOC API. Free, no key, real-time (~15 min), commercial-OK.
+                 This is the recommended source: it fixes NewsAPI's 24-hour delay and
+                 non-commercial license at zero cost. (Default.)
+  - "newsapi" -> NewsAPI.org (legacy; free tier is 24h-delayed + non-commercial).
+  - "gnews"   -> GNews (legacy alternative).
 
-Relevance is enforced locally (keyword sets + cue-gated price verbs), noise is
-dropped (law-firm/forensic solicitations, PR awards/associations, macro reports,
-academic, sports, crypto, entertainment), and repeats are de-duplicated on read.
-We only store the headline, source, date, and a link out -- never article text.
+Per-company news does NOT come through here -- that runs on Finnhub's per-symbol
+company-news endpoint (see news pipeline). This module powers the firm-wide feed
+and the daily brief.
+
+Relevance strategy (tuned for "distressed / activist-attracting" public-company news):
+  1. Ask the source to match distress/activist terms in the HEADLINE.
+  2. Re-check each headline locally against DISTRESS_KEYWORDS.
+  3. Drop noise: academic journals, sports, govt share sales, crypto promos,
+     and law-firm "deadline alert" solicitations.
+  4. De-duplicate the same story from multiple outlets.
+
+We only store/display headline, source, date, and a link out -- never article text.
 """
 import hashlib
 import os
@@ -23,7 +31,7 @@ from . import config, database
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 GNEWS_URL = "https://gnews.io/api/v4/search"
-FINNHUB_URL = "https://finnhub.io/api/v1/company-news"
+GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
 # Financial outlets only (NewsAPI 'domains' filter). Override via NEWS_DOMAINS env.
 DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatch.com,"
@@ -32,17 +40,27 @@ DEFAULT_DOMAINS = ("reuters.com,bloomberg.com,wsj.com,ft.com,cnbc.com,marketwatc
                    "businesswire.com,globenewswire.com,prnewswire.com,nasdaq.com")
 NEWS_DOMAINS = os.getenv("NEWS_DOMAINS", DEFAULT_DOMAINS)
 
-# Sent to the API; matched against the headline only. Kept under NewsAPI's 500-char
-# query limit. Covers price moves, distress, activist funds/terms, proxy advisors,
-# executive changes, and strategic-review/campaign language.
-QUERY = ('"profit warning" OR "guidance cut" OR "earnings miss" OR "misses estimates" '
-         'OR activist OR "proxy fight" OR "proxy contest" OR "short seller" '
-         'OR "strategic review" OR "strategic alternatives" OR restructuring OR impairment OR downgraded '
-         'OR plunges OR tumbles OR slides OR slips OR falls OR drops OR sinks OR slumps '
-         'OR "steps down" OR resigns OR "interim CEO" OR "Glass Lewis" OR "13D" '
-         'OR "board seat" OR Starboard OR Icahn OR Ancora OR "Jana Partners" OR "Elliott Management"')
+# Sent to NewsAPI/GNews; matched against the headline only.
+QUERY = ('"profit warning" OR "guidance cut" OR "cuts guidance" OR "lowers guidance" '
+         'OR "earnings miss" OR "misses estimates" OR "activist investor" OR "proxy fight" '
+         'OR "short seller" OR "strategic review" OR "explores sale" OR restructuring '
+         'OR impairment OR "write-down" OR downgraded OR "profit warning" OR selloff '
+         'OR plunges OR tumbles OR "steps down"')
 
-# A headline must contain at least one of these (substring) to be kept.
+# Sent to GDELT. GDELT's full-text engine is sensitive to very long boolean
+# strings, so this is a tighter, high-signal set of quoted phrases. Each phrase
+# is finance-specific enough to keep political/other "activist" noise out, and
+# the local DISTRESS_KEYWORDS re-check below is the second gate.
+GDELT_QUERY = os.getenv(
+    "GDELT_QUERY",
+    '("activist investor" OR "proxy fight" OR "proxy battle" OR "short seller" '
+    'OR "profit warning" OR "cuts guidance" OR "lowers guidance" OR "earnings miss" '
+    'OR "strategic review" OR "explores sale" OR "goodwill impairment") sourcelang:english',
+)
+# How far back GDELT looks each pull (its feed is real-time; we keep a few days).
+GDELT_TIMESPAN = os.getenv("GDELT_TIMESPAN", "3d")
+
+# A headline must contain at least one of these to be kept.
 DISTRESS_KEYWORDS = [
     "activist", "proxy fight", "proxy battle", "short seller", "short-seller",
     "shareholder", "profit warning", "guidance cut", "cuts guidance",
@@ -50,82 +68,20 @@ DISTRESS_KEYWORDS = [
     "cuts forecast", "slashes", "earnings miss", "misses estimates",
     "misses expectations", "falls short", "disappointing", "disappoints",
     "write-down", "writedown", "impairment", "restructuring", "layoff",
-    "job cuts", "strategic review", "strategic alternatives", "explores sale",
-    "exploring sale", "considering sale", "explore alternatives", "exploring alternatives",
-    "steps down", "stepping down", "ousted", "to resign",
-    "downgrade", "downgraded", "warns",
+    "job cuts", "strategic review", "explores sale", "exploring sale",
+    "considering sale", "steps down", "stepping down", "ousted", "to resign",
+    "plunge", "plunges", "tumble", "tumbles", "slump", "slumps", "sinks",
+    "plummets", "sell-off", "selloff", "downgrade", "downgraded", "warns",
     "weak guidance", "turnaround", "scraps", "halts", "slashed",
-]
-# NOTE: generic price verbs (sink/plunge/tumble/slump/plummet/selloff) are NOT in
-# the list above on purpose -- they run through the cue-gated MOVE_PATTERN below so
-# headlines like "Sinks Navy Infrastructure" don't leak in without a finance cue.
-
-# Extra accept-terms for the activist / proxy / executive-change buckets. Kept as
-# precise phrases (no bare "iss"/"stake") so we don't reintroduce noise.
-EXTRA_KEYWORDS = [
-    # activist funds + campaign mechanics
-    "proxy contest", "13d", "schedule 13d", "board seat", "board seats",
-    "director nominee", "nominates", "builds stake", "raises stake", "takes stake",
-    "boosts stake", "elliott management", "starboard", "trian", "jana partners",
-    "third point", "carl icahn", "icahn", "nelson peltz", "valueact", "value act",
-    "engine no", "ancora", "politan", "sachem head", "legion partners",
-    # proxy advisors
-    "glass lewis", "proxy advisor", "proxy adviser",
-    "institutional shareholder services", "iss recommends", "iss advises",
-    "iss backs", "recommends against", "withhold vote", "withhold votes",
-    # executive changes
-    "resigns", "resigned", "steps aside", "departs", "departure",
-    "interim ceo", "interim cfo", "names ceo", "new ceo", "appoints ceo",
-    "names new chief", "leadership change", "management shake", "shake-up",
-    "shakeup", "reshuffle", "ousts", "exits as ceo", "exits as cfo",
-]
-
-# Negative price-move verbs, matched as whole words (so "slideshow", "shortfall",
-# "backdrop", "landslide" do NOT match). Captures the gentler headline style:
-# "Apple shares slide", "Nasdaq slips", "Tesla stock drops".
-MOVE_PATTERN = re.compile(
-    r"\b("
-    r"slid|slide|slides|slip|slips|slipped|"
-    r"fall|falls|fell|drop|drops|dropped|"
-    r"dip|dips|dipped|sink|sinks|sank|"
-    r"slump|slumps|slumped|decline|declines|declined|"
-    r"retreat|retreats|retreated|"
-    r"plunge|plunges|tumble|tumbles|plummet|plummets|sell-?off"
-    r")\b"
-)
-
-# A bare price-move verb only counts as relevant if the headline ALSO contains one
-# of these market cues -- otherwise "set drops", "sinks navy", "Talent falls 12%"
-# (non-financial) leak in. Distress / activist / exec keywords don't need a cue.
-FINANCE_CUES = [
-    "shares", "stock", "nasdaq", "s&p", " dow ", "dow jones", "wall street",
-    " market", "earnings", "guidance", "revenue", "profit", "quarter", "forecast",
-    "outlook", "valuation", "premarket", "pre-market", "after-hours", "investor",
-    "dividend", "buyback", "analyst", "price target", "bond yield", "shareholder",
-    " etf", " ipo", " shr ", "market cap", "valuation",
 ]
 
 # Drop if the headline contains any of these (noise / off-topic).
 EXCLUDE_PATTERNS = [
-    # law-firm solicitations / forensic-short reports
+    # law-firm solicitations
     "deadline alert", "investor alert", "class action", "law firm", "lead plaintiff",
     "rosen law", "pomerantz", "bragar", "kessler", "levi & korsinsky", "schall law",
     "robbins", "securities fraud", "reminds investors", "encourages investors",
     "investigation on behalf", "notifies investors", "shareholder rights",
-    "hagens berman", "forensic report", "forensic analysis", "investor rights",
-    "class period", "investigates", "investigating whether", "lawsuit",
-    # PR fluff: awards, certifications, rankings, associations, speaking gigs
-    "award winner", "award winners", "wins award", "honored with", "honoree",
-    "certification", "certified", "best places to work", "great place to work",
-    "top workplaces", "fastest-growing", "association of", "advisors announces",
-    "named one of", "named a top", "recognized as", "ranked no.",
-    "to present at", "to speak at", "will present at", "investor conference",
-    "conference call", "webcast", "award for",
-    # macro reports / rankings / surveys (non-company press releases)
-    "report card", "report cards", "scorecard", "top marks", "earns top",
-    "nation divided", "survey", "study reveals", "report reveals", "survey reveals",
-    "reveal a", "reveals a", "rankings", "best states", "best cities",
-    "most affordable", "state of the", "index reveals",
     # academic / health journals
     "plos", "journal", "study", "accumulation", "glycation", "renal", "peer-review",
     "clinical study", "examination population", "doi.org",
@@ -134,11 +90,8 @@ EXCLUDE_PATTERNS = [
     "nba", " nfl ", " mlb ", " afc ", " cfc ", "midfielder", "striker",
     # govt / non-US share sales
     "crore", " ofs ", "nlc india", " sebi ", "lakh", "disinvestment", " rs ",
-    # crypto promo / price noise
-    "airdrop", "memecoin", "presale", "token sale", "bitcoin", "ethereum",
-    # entertainment / box office / music charts
-    "box office", "box-office", "weekend debut", "ticket sales",
-    "album", "albums", "billboard", "climate activist",
+    # crypto promo
+    "airdrop", "memecoin", "presale", "token sale",
 ]
 
 
@@ -156,23 +109,77 @@ def is_relevant(title):
         return False
     if any(bad in t for bad in EXCLUDE_PATTERNS):
         return False
-    if any(kw in t for kw in DISTRESS_KEYWORDS):
-        return True
-    if any(kw in t for kw in EXTRA_KEYWORDS):
-        return True
-    if MOVE_PATTERN.search(t) and any(cue in t for cue in FINANCE_CUES):
-        return True
-    return False
+    return any(kw in t for kw in DISTRESS_KEYWORDS)
 
 
-def fetch_headlines(limit=100):
+def fetch_headlines(limit=40):
+    provider = (config.NEWS_PROVIDER or "").lower()
+    if provider == "gdelt":
+        return _fetch_gdelt(limit)
+    # Legacy providers below require an API key.
     if not config.NEWS_API_KEY:
         return []
-    if config.NEWS_PROVIDER == "gnews":
+    if provider == "gnews":
         return _fetch_gnews(limit)
     return _fetch_newsapi(limit)
 
 
+# --------------------------------------------------------------------------- #
+# GDELT 2.0 DOC API (default)                                                  #
+# --------------------------------------------------------------------------- #
+def _fetch_gdelt(limit):
+    params = {
+        "query": GDELT_QUERY,
+        "mode": "ArtList",
+        "format": "json",
+        "maxrecords": min(max(int(limit), 1), 250),
+        "sort": "DateDesc",
+        "timespan": GDELT_TIMESPAN,
+    }
+    try:
+        r = requests.get(
+            GDELT_URL, params=params, timeout=25,
+            headers={"User-Agent": "activist-dashboard/1.0 (+internal research tool)"},
+        )
+        r.raise_for_status()
+        # GDELT returns HTML (not JSON) when a query is malformed/empty; that
+        # raises ValueError here and we fail closed to an empty list.
+        data = r.json()
+    except (requests.RequestException, ValueError):
+        return []
+    return _normalize_gdelt(data.get("articles", []) or [])
+
+
+def _gdelt_date(s):
+    """GDELT seendate '20260625T120000Z' -> ISO '2026-06-25T12:00:00Z'."""
+    s = (s or "").strip()
+    m = re.match(r"(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z", s)
+    if not m:
+        return s
+    y, mo, d, h, mi, se = m.groups()
+    return f"{y}-{mo}-{d}T{h}:{mi}:{se}Z"
+
+
+def _normalize_gdelt(articles):
+    out = []
+    for a in articles:
+        url = a.get("url") or ""
+        title = a.get("title") or ""
+        if not url or not is_relevant(title):
+            continue
+        out.append({
+            "id": _hash(url),
+            "headline": title,
+            "source": a.get("domain") or "",
+            "published_at": _gdelt_date(a.get("seendate")),
+            "url": url,
+        })
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Legacy providers (NewsAPI / GNews)                                           #
+# --------------------------------------------------------------------------- #
 def _fetch_newsapi(limit):
     params = {
         "q": QUERY,
@@ -223,59 +230,6 @@ def _normalize(articles):
     return out
 
 
-def fetch_company_news(ticker, key, days=21):
-    """Per-company news from Finnhub (free tier), filtered to our relevance rules."""
-    from datetime import datetime, timedelta
-    to = datetime.utcnow().date()
-    frm = to - timedelta(days=days)
-    try:
-        r = requests.get(FINNHUB_URL, params={
-            "symbol": ticker, "from": frm.isoformat(), "to": to.isoformat(), "token": key
-        }, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-    except (requests.RequestException, ValueError):
-        return []
-    if not isinstance(data, list):
-        return []
-    out = []
-    for a in data:
-        head = a.get("headline") or ""
-        url = a.get("url") or ""
-        if not head or not url or not is_relevant(head):
-            continue
-        ts = a.get("datetime")
-        try:
-            published = datetime.utcfromtimestamp(ts).isoformat() if ts else ""
-        except (ValueError, OSError, TypeError):
-            published = ""
-        out.append({"id": _hash(url), "headline": head,
-                    "source": a.get("source") or "Finnhub",
-                    "published_at": published, "url": url})
-    return out
-
-
-def refresh_company_news(tickers, key, days=21):
-    """Fetch + store recent relevant news for each ticker (shortlist / watchlist).
-    Finnhub free tier allows 60 calls/min, so a ~30-name set is well within budget."""
-    if not key:
-        return 0
-    import time
-    seen, kept = set(), 0
-    for tk in tickers:
-        tk = (tk or "").strip().upper()
-        if not tk or tk in seen:
-            continue
-        seen.add(tk)
-        for a in fetch_company_news(tk, key, days):
-            a["matched_tickers"] = tk
-            database.upsert_news(a)
-            kept += 1
-        time.sleep(0.25)
-    _prune_stored()
-    return kept
-
-
 def _match_tickers(headline, companies):
     text = headline.lower()
     matched = []
@@ -307,7 +261,8 @@ def _prune_stored():
         return 0
 
 
-def ingest(companies, limit=100):
+def ingest(companies, limit=40):
+    provider = (config.NEWS_PROVIDER or "newsapi").lower()
     articles = fetch_headlines(limit)
     seen, kept = set(), 0
     for a in articles:
@@ -318,5 +273,9 @@ def ingest(companies, limit=100):
         a["matched_tickers"] = ",".join(_match_tickers(a["headline"], companies))
         database.upsert_news(a)
         kept += 1
-    _prune_stored()
+    pruned = _prune_stored()
+    # Visible in the deploy logs so you can confirm the feed is live each run,
+    # which provider served it, and how much survived the relevance filter.
+    print(f"[news] provider={provider} fetched={len(articles)} kept={kept} "
+          f"pruned={pruned}", flush=True)
     return kept
