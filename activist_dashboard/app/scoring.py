@@ -81,12 +81,14 @@ FOUNDER_CONTROLLED = set(filter(None, os.getenv(
     "FOUNDER_CONTROLLED",
     "COIN,IAC,GOOGL,GOOG,META,FOXA,FOX,NWSA,NWS,PARA,PARAA,DELL,F,NKE,UAA,UA,EL"
 ).replace(" ", "").upper().split(",")))
-# Viability gate: an unprofitable but fast-growing company is a growth bet, not a cheap
-# underperformer — "cheap + low margin" misreads it (that's why SDGR/INSP topped the board).
-# When a name loses money on operations AND is still growing revenue briskly, discount it so
-# value/quality signals it doesn't really exhibit don't push it to the top.
-GROWTH_GATE = 0.10          # revenue growing at least this fast (YoY)
-GROWTH_DISCOUNT = 0.6       # score multiplier when unprofitable + growing
+# Deep cash-burn gate: a name losing money heavily on operations — a clinical/platform
+# biotech burning R&D, say — isn't a fixable-margin value target; its deeply negative
+# margin/ROA reflect the business model, not an inefficiency an activist can unlock, so we
+# discount it. This is deliberately NOT triggered by a merely thin or slightly-negative
+# margin: a bloated-SG&A, near-breakeven grower (e.g. Inspire, whose SG&A is ~74% of revenue)
+# IS a legitimate margin-expansion target and must stay on the board.
+DEEP_BURN_MARGIN = -0.25    # operating margin at/below this = structural cash burn
+BURN_DISCOUNT = 0.6         # score multiplier for deep cash-burners
 # De-correlation: signals driven by the SAME underlying fact — a depressed share price —
 # shouldn't each add full weight. Cap the combined severity-weighted contribution of the
 # valuation cluster and the return cluster so one beaten-down price counts once (with size),
@@ -491,12 +493,13 @@ def _fin_context(r, t, e):
         out.append({"key": key, "label": label, "value": v, "cutoff": cutoff,
                     "pct": pct, "verdict": verdict, "n": n})
     return out
-def _is_growth_stage(r):
-    """Unprofitable on operations but still growing revenue briskly -> a growth bet, not a
-    cheap underperformer. The value/quality signals misfire on these, so we discount them."""
+def _is_cash_burner(r):
+    """Deeply unprofitable on operations -> a structural cash burner (clinical/platform
+    biotech, etc.) where 'low margin / low ROA' reflect the business model, not a fixable
+    inefficiency. Discounted. A merely thin or slightly-negative margin is NOT caught — that
+    is a genuine margin-expansion target and stays on the board."""
     om = r.get("operating_margin")
-    g = r.get("revenue_growth")
-    return (om is not None and om < 0) and (g is not None and g >= GROWTH_GATE)
+    return om is not None and om <= DEEP_BURN_MARGIN
 
 
 def _vuln_score(trig, r, t, e):
@@ -515,8 +518,8 @@ def _vuln_score(trig, r, t, e):
     tk = (r.get("ticker") or "").upper()
     if "gov_dual" in trig or tk in FOUNDER_CONTROLLED:
         v *= DUAL_CLASS_DISCOUNT
-    if _is_growth_stage(r):
-        v *= GROWTH_DISCOUNT
+    if _is_cash_burner(r):
+        v *= BURN_DISCOUNT
     return int(round(v))
 def _fmt_metric(metric, v):
     if v is None:
