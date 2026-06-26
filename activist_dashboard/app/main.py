@@ -17,7 +17,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from . import config, database, pipeline, emailer, scoring
+from . import config, database, pipeline, emailer, scoring, spotlight
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -483,6 +483,15 @@ async def api_unsubscribe(request: Request):
     return {"ok": True, "message": f"Unsubscribed {email}."}
 
 
+@app.get("/api/lead")
+def api_lead():
+    """Backend-chosen lead of the day (locked per day, no-repeat rotation). The site and
+    the emailed pitch kit both read this, so they always feature the same name."""
+    rows = database.get_scores(limit=80)
+    lead = spotlight.todays_lead(rows, database)
+    return {"cik": (lead.get("cik") if lead else None)}
+
+
 @app.get("/api/feedback")
 def api_feedback_list():
     return {"feedback": database.get_feedback(limit=50)}
@@ -520,7 +529,7 @@ def api_run_enrichment():
                          ("contacts", pipeline.refresh_contacts),
                          ("ir-contacts", pipeline.refresh_ir_contacts),
                          ("exec-reactions", pipeline.refresh_exec_reactions),
-                         ("long-tsr", pipeline.refresh_long_tsr),
+                         ("long-tsr", lambda: pipeline.refresh_long_tsr(force=True)),
                          ("prices", pipeline.refresh_prices),
                          ("ai-thesis", pipeline.refresh_ai_thesis)):
             try:
