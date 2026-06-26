@@ -38,7 +38,7 @@ from datetime import datetime
 
 from . import (config, database, universe, edgar, news, scoring, emailer,
                governance, insider, activist, earnings, votes, fmp, twelvedata,
-               contacts, reaction, longtsr, aithesis)
+               contacts, reaction, longtsr, aithesis, spotlight)
 
 _UNIVERSE = None
 
@@ -781,6 +781,34 @@ def refresh_long_tsr(force=False):
     return done
 
 
+def refresh_lead_data():
+    """Guarantee TODAY'S lead-of-the-day has complete market data — its price chart and
+    multi-year TSR — even if the rotation landed on a name outside the TD_TOP set that the
+    bulk pulls cover. Cheap (~2 Twelve Data calls), and force-fetched (bypasses the caches)
+    so the centerpiece profile is never missing data."""
+    key = twelvedata.key()
+    if not key:
+        return 0
+    rows = database.get_scores(limit=80)
+    lead = spotlight.todays_lead(rows, database)
+    if not lead or not lead.get("ticker"):
+        print("[lead-data] no lead resolved; skipping")
+        return 0
+    cik, tk = lead["cik"], lead["ticker"]
+    try:
+        twelvedata.refresh_prices({cik: tk}, database)        # price chart for the lead
+    except Exception:
+        traceback.print_exc()
+    try:
+        r = longtsr.fetch([tk], key).get(tk)                  # multi-year TSR for the lead
+        if r and (r.get("3y") is not None or r.get("5y") is not None):
+            database.set_company_market(_unpad(cik), tsr_3y=r.get("3y"), tsr_5y=r.get("5y"))
+    except Exception:
+        traceback.print_exc()
+    print(f"[lead-data] ensured chart + multi-year TSR for lead {tk}")
+    return 1
+
+
 # Exec-change 8-K signals we measure a market reaction for (from edgar classification).
 _EXEC_SIGNALS = ("ceo_departure", "leadership_change")
 
@@ -944,6 +972,7 @@ def daily_rescore_and_digest():
     refresh_exec_reactions()
     refresh_long_tsr()
     refresh_prices()
+    refresh_lead_data()
     refresh_enrichment()
     refresh_ai_thesis()
     return emailer.send_digest()
@@ -966,6 +995,7 @@ def startup_full_refresh():
     refresh_exec_reactions()       # before refresh_prices: protect event-signal credits
     refresh_long_tsr()
     refresh_prices()
+    refresh_lead_data()
     refresh_enrichment()
     refresh_ai_thesis()
 
