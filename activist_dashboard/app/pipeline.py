@@ -279,8 +279,20 @@ def _extract(facts):
     goodwill = _instant(facts, _GOODWILL)
     shares = _latest_shares(facts)
 
-    # EBITDA = operating income + D&A (over the SAME period). Used for EV/EBITDA.
-    ebitda = (opinc + dep) if (opinc is not None and dep is not None) else None
+    # EBITDA = operating income + D&A. For EV/EBITDA (EV is a point-in-time figure) this MUST
+    # be an annual number — using a single quarter's EBITDA against full EV inflated the
+    # multiple ~4x (the 200x+ readings). Prefer the latest FULL YEAR (10-K) op income + D&A;
+    # fall back to annualizing the current period.
+    fy_opinc = _annual_latest(op_f)
+    fy_dep = _annual_latest(dep_f)
+    if fy_opinc is not None and fy_dep is not None:
+        ebitda = fy_opinc + fy_dep
+    elif opinc is not None and dep is not None:
+        ebitda = opinc + dep
+        if p_days and p_days < 350:
+            ebitda = ebitda * 365.0 / p_days
+    else:
+        ebitda = None
 
     # annualize a partial-year net income so ROA is comparable across fiscal positions
     ni_ann = ni
