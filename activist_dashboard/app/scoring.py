@@ -856,6 +856,10 @@ def recompute_all():
             ev = mcap + (raw.get("debt") or 0) - (raw.get("cash") or 0)
             if ev > 0:
                 ev_ebitda = ev / ebitda
+                # A multiple this high means EBITDA is negligible relative to EV — the ratio
+                # isn't a meaningful valuation read (it just produces "219x"). Null it.
+                if ev_ebitda > 75:
+                    ev_ebitda = None
         goodwill_to_assets = None
         gw, ta = raw.get("goodwill"), raw.get("total_assets")
         if gw is not None and ta:
