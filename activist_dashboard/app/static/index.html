@@ -363,6 +363,7 @@
     <button class="navtab" id="nt-watchlist" onclick="showView('watchlist')">Watchlist <span class="navcount" id="navWatch"></span></button>
     <button class="navtab" id="nt-feed" onclick="showView('feed')">Live feed</button>
     <button class="navtab" id="nt-about" onclick="showView('about')">How it works</button>
+    <button class="navtab" id="nt-admin" onclick="showView('admin')" style="margin-left:auto;color:var(--dim);" title="Data operations — uses API credits">Admin</button>
   </div>
 </nav>
 
@@ -387,7 +388,6 @@
 <div class="wrap page" id="page-dashboard" style="display:none;">
   <div class="toolbar">
     <button id="refreshBtn" onclick="manualRefresh()">↻ Refresh</button>
-    <button class="ghost" id="enrichBtn" onclick="runEnrichment()" title="Re-pull insider, votes, activist &amp; earnings data on demand">⟳ Run enrichment now</button>
     <button class="ghost" onclick="exportCsv()">⤓ Export CSV</button>
     <span class="updated" id="updated"></span>
   </div>
@@ -449,8 +449,7 @@
   <p class="hint">An activist has already shown up at these. Grouped by how sure we are: <b style="color:var(--hot)">Confirmed</b> (an SEC filing is on record), <b style="color:var(--warn)">Reported</b> (named in the press — confirm before relying on it), and <b style="color:var(--accent)">Manual</b> (tagged by your team). Likely too late to pitch proactively — but a fresh 13D can be an urgent defense lead.</p>
   <div class="as-toolbar">
     <button class="primary" onclick="openSituationAdd()">+ Add a company</button>
-    <button class="ghost" id="sweepBtn" onclick="fullSweep()" title="Re-scan all ~1,489 companies' SEC filings now (~10 min). Adds new situations and clears stale ones.">↻ Re-sweep SEC filings</button>
-    <span class="hint2">Pull in a situation we didn't auto-detect, remove a false positive with <b>Manage</b>, or force a fresh full SEC sweep.</span>
+    <span class="hint2">Pull in a situation we didn't auto-detect, or remove a false positive with <b>Manage</b>. (The full SEC re-sweep lives on the <b>Admin</b> tab.)</span>
   </div>
   <div id="activeSit"><div class="empty">Loading…</div></div>
 </div>
@@ -833,6 +832,30 @@
     </div>
     <h3 style="margin-top:22px;">Recent notes</h3>
     <div id="fbList"><div class="empty">Loading…</div></div>
+  </div>
+</div>
+
+<!-- ADMIN (data operations — kept off the main pages so casual users don't trigger heavy jobs) -->
+<div class="wrap page" id="page-admin" style="display:none;">
+  <h2 class="sec">Admin · data operations</h2>
+  <p class="hint">These actions trigger heavy data pulls that consume limited daily API credits
+  (market data, multi-year returns, the AI thesis) and SEC bandwidth. They run automatically on
+  the 6:00 AM build, so you rarely need them by hand — use them only when you specifically need
+  fresh data right now, and avoid running them repeatedly in a day.</p>
+  <div class="card">
+    <h3 style="margin:0 0 4px;">Run enrichment now</h3>
+    <p class="hint" style="margin:0 0 12px;">Re-pulls market cap, valuation, governance, insider,
+    votes, multi-year returns, contacts, and the AI thesis for the tracked names — about 2 minutes,
+    and it uses Twelve Data + Anthropic credits.</p>
+    <button class="ghost" id="enrichBtn" onclick="runEnrichment()">⟳ Run enrichment now</button>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 4px;">Re-sweep SEC filings</h3>
+    <p class="hint" style="margin:0 0 12px;">Re-scans all ~1,489 companies' SEC filings for activist
+    13D / contested-proxy activity (~10 minutes). Adds newly-found active situations and clears stale
+    ones. Leave the app deployed while it runs.</p>
+    <button class="ghost" id="sweepBtn" onclick="fullSweep()">↻ Re-sweep SEC filings</button>
+    <span class="msg" id="adminMsg" style="margin-left:10px;"></span>
   </div>
 </div>
 
