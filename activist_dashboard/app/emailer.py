@@ -14,6 +14,11 @@ and the top overnight headlines and filings.
 """
 import html
 import json
+import smtplib
+import ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formataddr
 
 import requests
 
@@ -21,6 +26,8 @@ from . import config, database, spotlight
 
 RESEND_URL = "https://api.resend.com/emails"
 SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
+GMAIL_SMTP_HOST = "smtp.gmail.com"
+GMAIL_SMTP_PORT = 587
 
 _BAND = [(75, "Severe"), (50, "High"), (25, "Elevated"), (0, "Moderate")]
 
@@ -172,11 +179,45 @@ def _send_sendgrid(to_email, subject, html_body):
     return r.status_code in (200, 202), r.text
 
 
+def _send_gmail(to_email, subject, html_body):
+    """Send via Gmail SMTP using an App Password. No domain/DNS setup required."""
+    user = config.GMAIL_USER
+    pw = config.GMAIL_APP_PASSWORD
+    if not user or not pw:
+        return False, "GMAIL_USER / GMAIL_APP_PASSWORD not set"
+    # From address: prefer an explicit EMAIL_FROM, but Gmail will rewrite the
+    # envelope sender to the authenticated account anyway, so fall back to it.
+    from_addr = config.EMAIL_FROM
+    if not from_addr or from_addr == "digest@example.com":
+        from_addr = user
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = formataddr((config.EMAIL_FROM_NAME, from_addr))
+    msg["To"] = to_email
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(GMAIL_SMTP_HOST, GMAIL_SMTP_PORT, timeout=20) as s:
+            s.starttls(context=ctx)
+            s.login(user, pw)
+            s.sendmail(user, [to_email], msg.as_string())
+        return True, "ok"
+    except Exception as e:  # noqa: BLE001 - surface any SMTP/auth error in the log
+        return False, str(e)
+
+
 def send_one(to_email, subject, html_body):
-    if not config.EMAIL_API_KEY:
+    provider = config.EMAIL_PROVIDER
+    # Gmail uses an App Password (GMAIL_APP_PASSWORD), not EMAIL_API_KEY.
+    if provider == "gmail":
+        if not config.GMAIL_APP_PASSWORD:
+            print(f"[email] (disabled) would send '{subject}' to {to_email}")
+            return False
+        ok, msg = _send_gmail(to_email, subject, html_body)
+    elif not config.EMAIL_API_KEY:
         print(f"[email] (disabled) would send '{subject}' to {to_email}")
         return False
-    if config.EMAIL_PROVIDER == "sendgrid":
+    elif provider == "sendgrid":
         ok, msg = _send_sendgrid(to_email, subject, html_body)
     else:
         ok, msg = _send_resend(to_email, subject, html_body)
