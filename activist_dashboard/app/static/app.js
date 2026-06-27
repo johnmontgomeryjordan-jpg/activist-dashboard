@@ -19,7 +19,7 @@ let CURRENT_VIEW="pitchkit", CURRENT_CIK=null, CURRENT_DATA=null, CURRENT_TAB="o
 function regInfo(c){ if(c && c.cik) COMPANY_INFO[c.cik]={ticker:c.ticker, company:c.company}; }
 
 /* ===== View routing ===== */
-const VIEWS=["pitchkit","dashboard","active","watchlist","feed","about","company"];
+const VIEWS=["pitchkit","dashboard","active","watchlist","feed","about","admin","company"];
 function showView(name){
   VIEWS.forEach(v=>{ const p=document.getElementById("page-"+v); if(p) p.style.display = v===name?"block":"none"; });
   document.querySelectorAll(".navtab").forEach(b=>b.classList.remove("active"));
