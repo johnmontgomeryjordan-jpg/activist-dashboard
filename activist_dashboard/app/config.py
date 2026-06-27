@@ -26,11 +26,24 @@ NEWS_PROVIDER = os.getenv("NEWS_PROVIDER", "newsapi").lower()
 NEWS_API_KEY = os.getenv("NEWS_API_KEY", "")
 
 # --- Email -------------------------------------------------------------------
-# Which provider to use: "resend" or "sendgrid". Leave blank to disable email.
+# Which provider to use: "gmail", "resend", or "sendgrid". Leave blank to disable.
+#   * gmail    -> sends through your own Gmail via SMTP. No domain/DNS setup needed:
+#                 turn on 2-Step Verification, generate a 16-digit App Password, and
+#                 put it in GMAIL_APP_PASSWORD below. Sends to anyone (~500 recipients/
+#                 day on a free @gmail.com; ~2,000/day on Google Workspace).
+#   * resend   -> needs a verified sending domain to reach anyone but the account owner.
+#   * sendgrid -> free up to 100 emails/day.
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "resend").lower()
 EMAIL_API_KEY = os.getenv("EMAIL_API_KEY", "")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "digest@example.com")
 EMAIL_FROM_NAME = os.getenv("EMAIL_FROM_NAME", "Activist Vulnerability Dashboard")
+# --- Gmail SMTP (only used when EMAIL_PROVIDER=gmail) -------------------------
+# GMAIL_USER is the full Gmail address you send from (e.g. you@gmail.com).
+# GMAIL_APP_PASSWORD is the 16-digit App Password from your Google account
+# (Security -> 2-Step Verification -> App passwords). NOT your normal password.
+# If EMAIL_FROM is left at its default, the Gmail sender falls back to GMAIL_USER.
+GMAIL_USER = os.getenv("GMAIL_USER", "")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
 # Public base URL of the dashboard (used for links in the emailed pitch kit).
 SITE_URL = os.getenv("SITE_URL", "https://activist-dashboard.onrender.com")
 
