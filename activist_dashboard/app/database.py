@@ -123,8 +123,10 @@ CREATE TABLE IF NOT EXISTS situation_audit (
 
 @contextmanager
 def get_conn():
-    conn = sqlite3.connect(config.DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")     # readers + writer don't block each other
+    conn.execute("PRAGMA busy_timeout=10000")   # wait up to 10s for a lock instead of erroring
     try:
         yield conn
         conn.commit()
