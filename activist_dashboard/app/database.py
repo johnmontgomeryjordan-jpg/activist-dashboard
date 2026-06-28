@@ -338,10 +338,20 @@ def _dedup_news(rows, limit):
     return out
 
 
-def recent_news(limit=40):
+def recent_news(limit=40, relevant_only=False):
+    """Most-recent stored headlines, de-duplicated. When relevant_only is set, only
+    headlines that pass the broad-feed relevance filter (news.is_relevant) are returned
+    -- used for the curated 'Top headlines' panels and the emailed pitch kit, so routine
+    per-company items (earnings dates, product launches, insider option exercises) don't
+    surface there. The Live feed and company-profile news tabs leave relevant_only=False
+    to keep full coverage."""
+    fetch = limit * (8 if relevant_only else 3)
     with get_conn() as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM news ORDER BY published_at DESC LIMIT ?", (limit * 3,))]
+            "SELECT * FROM news ORDER BY published_at DESC LIMIT ?", (fetch,))]
+    if relevant_only:
+        from . import news  # local import avoids a circular import at module load
+        rows = [r for r in rows if news.is_relevant(r.get("headline") or "")]
     return _dedup_news(rows, limit)
 
 
