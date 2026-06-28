@@ -234,7 +234,7 @@ def send_digest():
         return 0
     rows = database.get_scores(limit=80)
     lead = spotlight.todays_lead(rows, database)
-    headlines = database.recent_news(limit=6)
+    headlines = database.recent_news(limit=6, relevant_only=True)  # curated, no routine clutter
     filings = database.recent_filings(limit=5)
     body = build_digest_html(lead, rows, headlines, filings)
     subject = "FGS — Daily Pitch Kit"
