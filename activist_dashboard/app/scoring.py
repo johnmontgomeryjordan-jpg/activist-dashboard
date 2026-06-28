@@ -938,6 +938,13 @@ def recompute_all():
             and (_opi / _rev) > -0.05 and (_ni / _rev) < -0.10
         )
         _distorted = r["_gaap_profitable"] or _charge_distorted
+        # Banks / insurers / brokers (SIC 60-64) hold cash & investments as regulatory
+        # reserves / float, run structurally high leverage, and don't report an industrial
+        # "operating margin" / "SG&A" / EBITDA. Those balance-sheet & income-statement signals
+        # aren't activist levers there (TRUP's $384M "idle cash" is claims reserves), so we
+        # suppress them for financials. P/B discount, price underperformance, ROA-vs-peers,
+        # goodwill, governance and events stay valid and still fire.
+        _is_financial = (r.get("sector") or "") in ("60", "61", "62", "63", "64")
         trig = []
         def low(metric):
             q1, _, _ = t.get(metric, (None, None, 0))
@@ -951,11 +958,13 @@ def recompute_all():
             trig.append("cheap_abs")
         elif r.get("pb_ratio") is not None and r["pb_ratio"] > 0 and low("pb_ratio"):
             trig.append("cheap_pb")
-        if r.get("ev_ebitda") is not None and r["ev_ebitda"] > 0 and low("ev_ebitda"):
+        if (r.get("ev_ebitda") is not None and r["ev_ebitda"] > 0 and low("ev_ebitda")
+                and not _is_financial):
             trig.append("cheap_ev_ebitda")
         if r.get("goodwill_to_assets") is not None and high("goodwill_to_assets"):
             trig.append("high_goodwill")
-        if low("operating_margin") and not (_distorted and (r.get("operating_margin") or 0) < 0):
+        if (low("operating_margin") and not _is_financial
+                and not (_distorted and (r.get("operating_margin") or 0) < 0)):
             trig.append("low_margin")
         if (r.get("tsr_1y") is not None and spy_1y is not None
                 and (r["tsr_1y"] - spy_1y) <= TSR_LAG_1Y):
@@ -965,18 +974,24 @@ def recompute_all():
             trig.append("weak_tsr_3y")
         # Fallen-quality / strategic-alternatives: a viable business that de-rated sharply
         # (down >=30% over the year) — a sale / take-private / brand-reset candidate the
-        # value/distress signals miss. Excludes cash-burners (falling knives, already discounted).
-        if r.get("tsr_1y") is not None and r["tsr_1y"] <= STRATEGIC_DROP and not _is_cash_burner(r):
+        # value/distress signals miss. Excludes cash-burners (falling knives, already discounted)
+        # AND still-hyper-growth names (rev growth > 20%): a sharp pullback on a fast grower is
+        # multiple compression on a business the market still backs (Axon, AeroVironment,
+        # Inspire), not a sale setup. Mature de-raters (TRUP, Lululemon-type) still fire;
+        # unknown growth still fires (don't drop a possible target on missing data).
+        _hyper_growth = (r.get("revenue_growth") is not None and r["revenue_growth"] > 0.20)
+        if (r.get("tsr_1y") is not None and r["tsr_1y"] <= STRATEGIC_DROP
+                and not _is_cash_burner(r) and not _hyper_growth):
             trig.append("strategic_review")
         if low("roa") and not (_distorted and (r.get("roa") or 0) < 0):
             trig.append("low_roa")
         if r.get("revenue_growth") is not None and (r["revenue_growth"] < 0 or low("revenue_growth")):
             trig.append("weak_growth")
-        if high("sga_pct"):
+        if high("sga_pct") and not _is_financial:
             trig.append("high_sga")
-        if high("cash_to_assets"):
+        if high("cash_to_assets") and not _is_financial:
             trig.append("cash_hoard")
-        if low("debt_to_assets"):
+        if low("debt_to_assets") and not _is_financial:
             trig.append("underlevered")
         # Governance red flags (from DEF 14A; only present for parsed names).
         g = gov.get(r["cik"]) or {}
