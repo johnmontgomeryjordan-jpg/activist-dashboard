@@ -922,9 +922,22 @@ def recompute_all():
         # discontinued-ops divestiture) distorting the quarter — not real distress. We don't
         # let those distressed signals fire in that case (this is the Gibraltar fix: a company
         # that earned $3.25/share shouldn't carry a "negative margin / loses money" thesis).
-        _ani = (r.get("raw") or {}).get("annual_net_income")
+        _raw = r.get("raw") or {}
+        _ani = _raw.get("annual_net_income")
         r["_gaap_profitable"] = (_ani is not None and _ani > 0)
-        _distorted = r["_gaap_profitable"]
+        # A one-time BELOW-THE-LINE charge (goodwill impairment, divestiture loss) presents as
+        # an operating business that is roughly breakeven-or-better while the bottom line is
+        # deeply negative. Annualizing such a quarter into ROA (Gibraltar's -$277M phantom
+        # loss) — or reading it as "loses money" — is a distortion, not real distress. This
+        # catches the case the annual-NI test misses: when the charge dragged the most recent
+        # full year negative too. A genuine cash-burner has a deeply NEGATIVE *operating*
+        # margin as well, so it won't qualify here and its ROA/margin signals still fire.
+        _rev = _raw.get("revenue"); _opi = _raw.get("operating_income"); _ni = _raw.get("net_income")
+        _charge_distorted = bool(
+            _rev and _rev > 0 and _opi is not None and _ni is not None
+            and (_opi / _rev) > -0.05 and (_ni / _rev) < -0.10
+        )
+        _distorted = r["_gaap_profitable"] or _charge_distorted
         trig = []
         def low(metric):
             q1, _, _ = t.get(metric, (None, None, 0))
