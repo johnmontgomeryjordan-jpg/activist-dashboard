@@ -92,7 +92,11 @@ def index():
 
 @app.get("/api/feed")
 def api_feed():
+    # `news` is the full feed (drives the Live feed page); `news_top` is the
+    # relevance-curated subset (drives the pitch-kit + dashboard Top-headlines panels,
+    # so routine per-company items don't leak into them).
     return {"news": database.recent_news(limit=25),
+            "news_top": database.recent_news(limit=12, relevant_only=True),
             "filings": database.recent_filings(limit=25)}
 
 
