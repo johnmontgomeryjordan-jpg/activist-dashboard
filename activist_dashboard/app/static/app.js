@@ -243,7 +243,7 @@ function newsItemRow(n){
 }
 function renderTopNews(){
   const el=document.getElementById("topNews"); if(!el) return;
-  const news=FEED.news||[];
+  const news=FEED.news_top||FEED.news||[];   // curated subset (falls back to full feed)
   el.innerHTML = news.length ? toplineNews(news).map(newsItemRow).join("") : `<div class="empty">No headlines yet.</div>`;
 }
 
@@ -288,7 +288,7 @@ function renderTicker(news){
 }
 async function loadFeed(){
   try{ const d=await (await fetch("/api/feed")).json();
-    FEED={news:d.news||[], filings:d.filings||[]};
+    FEED={news:d.news||[], news_top:d.news_top||d.news||[], filings:d.filings||[]};
     renderTopNews();
     NEWS_GROUPS={}; CATS.forEach(([k])=>NEWS_GROUPS[k]=[]);
     FEED.news.forEach(n=>{ (NEWS_GROUPS[newsCategory(n.headline)] ||= []).push(n); });
@@ -675,7 +675,7 @@ async function renderPitchKit(){
         <span class="vchip ${i.cls}">${c.vuln==null?"—":c.vuln}</span>
         <div class="nr-co">${esc(c.company)}<div class="meta">${esc(c.ticker||"")}${hook?" · "+esc(hook):""}</div></div></div>`; }).join("")||`<div class="empty">—</div>`; }
   const nEl=document.getElementById("pkNews");
-  if(nEl){ const news=(FEED.news||[]).slice()
+  if(nEl){ const news=(FEED.news_top||FEED.news||[]).slice()
       .sort((a,b)=>(NEWS_RANK[newsCategory(a.headline)]??9)-(NEWS_RANK[newsCategory(b.headline)]??9)).slice(0,5);
     nEl.innerHTML=news.length?news.map(newsItemRow).join(""):`<div class="empty">No headlines yet.</div>`; }
   const fEl=document.getElementById("pkFilings");
