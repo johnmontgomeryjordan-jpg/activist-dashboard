@@ -12,11 +12,14 @@ Relevance strategy for the BROAD feed:
   1. Query distress/activist terms (GDELT is broad, so we query each term and merge).
   2. Re-check each headline locally against DISTRESS_KEYWORDS.
   3. Drop noise: academic journals, sports, govt share sales, crypto promos,
-     law-firm "deadline alert" solicitations.
+     law-firm "deadline alert" solicitations, routine insider Form-4 reports,
+     retail stock-tip clickbait, and political/non-corporate items.
   4. De-duplicate the same story from multiple outlets.
 
 Per-company headlines are NOT relevance-filtered (any recent news about a tracked
-company is useful context) and are NOT pruned by the broad-feed prune.
+company is useful context) and are NOT pruned by the broad-feed prune. They ARE
+passed through the noise filter, so routine insider-transaction reports and promo
+clickbait don't clutter the profile or leak into the global headline panels.
 
 We only store/display headline, source, date, and a link out -- never article text.
 """
@@ -110,6 +113,10 @@ DISTRESS_KEYWORDS = [
 ]
 
 # Drop if the headline contains any of these (noise / off-topic).
+# NOTE: _is_noise() runs BEFORE the activist-capture check in refresh_company_news(),
+# so every term here must be one that could NOT appear in a genuine activist/distress
+# headline we'd want to keep. Keep additions specific (e.g. "options exercise",
+# not the bare word "exercise") to avoid suppressing real news.
 EXCLUDE_PATTERNS = [
     # law-firm solicitations
     "deadline alert", "investor alert", "class action", "law firm", "lead plaintiff",
@@ -122,19 +129,27 @@ EXCLUDE_PATTERNS = [
     # sports
     "premier league", "west ham", "wycombe", "f.c.", " fc ", "footbal", "soccer",
     "nba", " nfl ", " mlb ", " afc ", " cfc ", "midfielder", "striker",
+    " coach ", "head coach", "world cup", " wc exit", "olympic", "tournament",
+    "quarterback", "touchdown", " league ",
     # govt / non-US share sales
     "crore", " ofs ", "nlc india", " sebi ", "lakh", "disinvestment", " rs ",
-    # crypto promo
-    "airdrop", "memecoin", "presale", "token sale",
+    # crypto price/promo (not a company distress signal)
+    "airdrop", "memecoin", "presale", "token sale", "bitcoin", " crypto", "ethereum",
+    "stablecoin", "dogecoin", "solana",
+    # routine insider Form-4 transaction reports (Benzinga format) — not activist/distress
+    "options exercise", "exercises options", "realizes $",
     # analyst / retail-promo noise (chart setups, "is it a buy", target-price clickbait)
-    "breakout", "momentum", "stocks to buy", "best stocks", "top stocks",
+    "breakout", "momentum", "stocks to buy", "stock to buy", "best stocks", "top stocks",
     "stock a buy", "a buy before", "buy before", "should you buy", "should i buy",
     "is it time to buy", "time to buy", "price target", "chartmill", "zacks",
     "motley fool", "here's why", "this stock", "magnificent seven",
     "dividend aristocrat", "dividend king", "best dividend", "to watch",
+    "undervalued", "deep value", "value investors", "turnaround stock",
+    "long-term investors", "could reward", "better stock", "to buy now",
     # political / non-corporate "ousted/steps down/fight" false positives
     "worker party", "workers' party", "party chief", "cadres", "prime minister",
-    "parliament", "general election", "lawmaker",
+    "parliament", "general election", "lawmaker", "republican", "democrat",
+    "communist", " gop ", "senator", "congress", "white house", "governor",
 ]
 
 
@@ -369,10 +384,12 @@ def _match_tickers(headline, companies):
 
 
 def _prune_stored():
-    """Re-check the BROAD-feed headlines against the current filter and delete any that
-    no longer qualify (cleans out old noise when the filter tightens). Per-company news
-    (rows tagged with a ticker) is NEVER relevance-pruned — only aged out. Everything
-    older than 21 days is dropped to keep the table fresh."""
+    """Re-check stored headlines against the current filter and delete any that no longer
+    qualify (cleans out old noise when the filter tightens). Per-company news (rows tagged
+    with a ticker) is re-checked against the NOISE filter too — so newly-added
+    EXCLUDE_PATTERNS retroactively clear old promo/insider clutter — but is NOT
+    relevance-pruned, only aged out. Everything older than 21 days is dropped to keep the
+    table fresh (activist-naming headlines get a longer retention window)."""
     cutoff = (datetime.utcnow() - timedelta(days=21)).isoformat()
     act_cutoff = (datetime.utcnow() - timedelta(days=ACTIVIST_RETAIN_DAYS)).isoformat()
     try:
@@ -383,11 +400,16 @@ def _prune_stored():
             for r in rows:
                 tagged = (r["matched_tickers"] or "").strip()
                 pub = r["published_at"] or ""
+                head = r["headline"]
+                act = _names_activist(head)
                 # Activist-naming headlines get the long retention window so they can keep a
                 # name routed to Active Situations; everything else ages out at 21 days.
-                too_old = pub < (act_cutoff if _names_activist(r["headline"]) else cutoff)
-                # broad-feed rows (no ticker) must stay relevant; company rows only age out
-                if too_old or (not tagged and not is_relevant(r["headline"])):
+                too_old = pub < (act_cutoff if act else cutoff)
+                # Noise is dropped from BOTH feeds (clears old clutter when the filter
+                # tightens), but never an activist-naming headline. Broad-feed rows (no
+                # ticker) must additionally stay relevant.
+                is_noise = _is_noise(head) and not act
+                if too_old or is_noise or (not tagged and not is_relevant(head)):
                     drop.append(r["id"])
             conn.executemany("DELETE FROM news WHERE id=?", [(i,) for i in drop])
         return len(drop)
