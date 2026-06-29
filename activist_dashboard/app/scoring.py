@@ -963,8 +963,18 @@ def recompute_all():
             trig.append("cheap_ev_ebitda")
         if r.get("goodwill_to_assets") is not None and high("goodwill_to_assets"):
             trig.append("high_goodwill")
+        # Operational-improvement levers (margin, SG&A, ROA) only make sense for a company that
+        # is actually PROFITABLE — you expand a thin-but-positive margin by cutting costs; you
+        # can't cost-cut your way out of a loss. A NEGATIVE margin/ROA is growth reinvestment
+        # (SBC/R&D), acquisition amortization (AVAV/BlueHalo), or genuine distress — not a clean
+        # "margin turnaround" activist thesis, and is already captured by other signals
+        # (cash-burner discount, strategic_review, the de-rate). Requiring the metric to be
+        # POSITIVE-but-below-peer kills the false "margin turnaround" theses on money-losing
+        # growth/software/medtech names (CERT, AVAV, SolarEdge, Tandem) while keeping the real
+        # value targets (Kohl's, Advance Auto — profitable, thin margins). Subsumes the earlier
+        # charge-distortion guard for these signals.
         if (low("operating_margin") and not _is_financial
-                and not (_distorted and (r.get("operating_margin") or 0) < 0)):
+                and (r.get("operating_margin") or 0) > 0):
             trig.append("low_margin")
         if (r.get("tsr_1y") is not None and spy_1y is not None
                 and (r["tsr_1y"] - spy_1y) <= TSR_LAG_1Y):
@@ -983,11 +993,11 @@ def recompute_all():
         if (r.get("tsr_1y") is not None and r["tsr_1y"] <= STRATEGIC_DROP
                 and not _is_cash_burner(r) and not _hyper_growth):
             trig.append("strategic_review")
-        if low("roa") and not (_distorted and (r.get("roa") or 0) < 0):
+        if low("roa") and (r.get("roa") or 0) > 0:    # profitable-but-low return (see low_margin note)
             trig.append("low_roa")
         if r.get("revenue_growth") is not None and (r["revenue_growth"] < 0 or low("revenue_growth")):
             trig.append("weak_growth")
-        if high("sga_pct") and not _is_financial:
+        if high("sga_pct") and not _is_financial and (r.get("operating_margin") or 0) > 0:
             trig.append("high_sga")
         if high("cash_to_assets") and not _is_financial:
             trig.append("cash_hoard")
@@ -1058,9 +1068,18 @@ def recompute_all():
         aflag = aflags.get(r["cik"])
         man = manual.get(r["cik"]) or {}
         man_status = man.get("status")
+        # An EXEMPT SOLICITATION (Rule 14a-6(g) notice / PX14A6G) is filed by a shareholder who
+        # is NOT running a full proxy — sometimes a serious activist (HoldCo at Comerica), but
+        # often an ESG/gadfly filer. It's less authoritative than a 13D or a contested proxy, so
+        # we keep the name visible but at the lower "reported" tier (confirm before relying)
+        # rather than "confirmed". 13D / contested-proxy flags stay "confirmed".
+        _exempt = aflag is not None and (
+            "exempt solicitation" in (aflag.get("label") or "").lower()
+            or (aflag.get("form") or "").upper().replace(" ", "") == "PX14A6G")
+        _aflag_tier = "reported" if _exempt else "confirmed"
         # Decide whether this name is an ACTIVE SITUATION and at what confidence tier:
         #   confirmed -> authoritative SEC activist filing (13D / contested proxy)
-        #   reported  -> a news headline naming a known activist AND this company
+        #   reported  -> a news headline naming a known activist, OR an exempt solicitation
         #   manual    -> a partner tagged it by hand
         # A manual override ALWAYS wins: "active" forces it on (even with no auto signal),
         # "exclude" suppresses a false-positive auto-detection.
@@ -1070,12 +1089,12 @@ def recompute_all():
             is_active, tier = False, ""
         elif man_status == "active":
             is_active = True
-            tier = "confirmed" if aflag else ("reported" if activist else "manual")
+            tier = _aflag_tier if aflag else ("reported" if activist else "manual")
         else:
             if total < LEAD_FLOOR and not aflag and not activist:
                 continue
             if aflag:
-                is_active, tier = True, "confirmed"
+                is_active, tier = True, _aflag_tier
             elif activist:
                 is_active, tier = True, "reported"
             else:
