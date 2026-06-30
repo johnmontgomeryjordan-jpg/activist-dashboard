@@ -148,7 +148,7 @@ LABELS = {
     "layoffs": "recent layoffs / restructuring",
     "leadership_change": "recent leadership change",
     "results_update": "recent results",
-    "news_negative": "negative activist headline",
+    "news_negative": "negative press headline",
     "gov_classified": "classified / staggered board",
     "gov_poison": "poison pill / rights plan",
     "gov_dual": "dual-class / super-voting stock",
@@ -486,6 +486,23 @@ _FIN_METRICS = [
 ]
 def _fin_context(r, t, e):
     out = []
+    # Mirror the trigger guards so the Financials tab matches the evidence cards (don't paint a
+    # red "vulnerability" / gold "opportunity" the scorer deliberately suppressed): financials
+    # (SIC 60-64), strong multi-year outperformers, and the profitability rule (margin/ROA/SG&A
+    # levers only apply to a profitable company).
+    _fin = (r.get("sector") or "") in ("60", "61", "62", "63", "64")
+    _g3 = ((r.get("tsr_3y") - r.get("_spy_3y")) if (r.get("tsr_3y") is not None and r.get("_spy_3y") is not None) else None)
+    _g5 = ((r.get("tsr_5y") - r.get("_spy_5y")) if (r.get("tsr_5y") is not None and r.get("_spy_5y") is not None) else None)
+    _outperf = (_g3 is not None and _g3 >= 0.25) or (_g5 is not None and _g5 >= 0.40 and _g3 is not None and _g3 >= 0)
+    _om_pos = (r.get("operating_margin") or 0) > 0
+    _suppress = {
+        "operating_margin": _fin or _outperf or not _om_pos,
+        "roa": (r.get("roa") or 0) <= 0,
+        "sga_pct": _fin or _outperf or not _om_pos,
+        "cash_to_assets": _fin or _outperf,
+        "debt_to_assets": _fin or _outperf,
+        "ev_ebitda": _fin,
+    }
     for key, label, rule in _FIN_METRICS:
         v = r.get(key)
         if v is None:
@@ -512,6 +529,10 @@ def _fin_context(r, t, e):
             cutoff = q3
             if q3 is not None and v >= q3:
                 verdict = "opp"
+        # If the matching scored signal was suppressed (financial / outperformer / not
+        # profitable), don't show this metric as a red/gold activist lever — keep it "in line".
+        if verdict in ("bad", "opp") and _suppress.get(key):
+            verdict = "mid"
         out.append({"key": key, "label": label, "value": v, "cutoff": cutoff,
                     "pct": pct, "verdict": verdict, "n": n})
     return out
@@ -829,11 +850,18 @@ def _event_signals(cik, ticker, name):
                     top = {"title": f"{f['company']} — {f['title']}", "url": f["url"]}
     if ticker:
         nws = database.news_for_ticker_in_window(ticker, config.SCORE_WINDOW_DAYS)
-        if nws:
+        # Fire only on a genuinely NEGATIVE / distress headline — not just any recent company
+        # news. Per-company news is stored UNFILTERED (conference transcripts, "Top movers"
+        # columns, bullish analyst notes), so taking nws[0] mislabeled benign items as a
+        # "negative headline" on nearly every profile. Reuse the broad-feed distress filter and
+        # surface the first headline that actually qualifies.
+        from . import news as _news   # local import avoids a circular import at module load
+        neg = next((n for n in nws if _news.is_relevant(n.get("headline"))), None)
+        if neg:
             triggered.add("news_negative")
-            ev.setdefault("news_negative", {"title": nws[0]["headline"], "url": nws[0]["url"]})
+            ev.setdefault("news_negative", {"title": neg["headline"], "url": neg["url"]})
             if top is None:
-                top = {"title": nws[0]["headline"], "url": nws[0]["url"]}
+                top = {"title": neg["headline"], "url": neg["url"]}
         # Strict: a headline that names a known activist AND this specific company.
         activist = _activist_news_hit(ticker, name)
     return triggered, top, ev, activist
@@ -945,6 +973,24 @@ def recompute_all():
         # suppress them for financials. P/B discount, price underperformance, ROA-vs-peers,
         # goodwill, governance and events stay valid and still fire.
         _is_financial = (r.get("sector") or "") in ("60", "61", "62", "63", "64")
+        # A STRONG MULTI-YEAR OUTPERFORMER (beat the S&P by >=25 pts over 3yr or >=40 pts over
+        # 5yr) fails the screen's core premise — "sustained underperformer." A 1-yr pullback on
+        # a multi-year market-beater (Axon: +138%/3yr, +163%/5yr, P/E ~200) is profit-taking,
+        # not an activist campaign setup, and its low operating margin / high SG&A / cash are
+        # growth-investment characteristics the market rewards — not levers. So for these names
+        # we suppress the soft value/operating/balance-sheet signals and strategic_review, while
+        # still letting governance, say-on-pay, insider and events through (real even on a winner
+        # that stumbled). Fallen angels (INSP -150pts/3yr) and laggards (TRUP, Kohl's) are NOT
+        # outperformers, so they keep all their signals.
+        # Anchor on the 3-YEAR gap (the current multi-year trend). A 5-yr-alone test would wrongly
+        # rescue a fallen angel that still carries an OLD 5-yr gain but has since collapsed (TMDX:
+        # 5yr +36pts yet 3yr -83pts and 1yr -67pts — a current target, not a winner). Axon beats
+        # it on 3yr (+74); TMDX fails on 3yr regardless of its stale 5yr number. The 5-yr gap is
+        # only a secondary confirm (a name must ALSO be at least flat-to-market over 3yr).
+        _g3 = ((r.get("tsr_3y") - spy_3y) if (r.get("tsr_3y") is not None and spy_3y is not None) else None)
+        _g5 = ((r.get("tsr_5y") - spy_5y) if (r.get("tsr_5y") is not None and spy_5y is not None) else None)
+        _strong_outperformer = (_g3 is not None and _g3 >= 0.25) or (
+            _g5 is not None and _g5 >= 0.40 and _g3 is not None and _g3 >= 0)
         trig = []
         def low(metric):
             q1, _, _ = t.get(metric, (None, None, 0))
@@ -973,7 +1019,7 @@ def recompute_all():
         # growth/software/medtech names (CERT, AVAV, SolarEdge, Tandem) while keeping the real
         # value targets (Kohl's, Advance Auto — profitable, thin margins). Subsumes the earlier
         # charge-distortion guard for these signals.
-        if (low("operating_margin") and not _is_financial
+        if (low("operating_margin") and not _is_financial and not _strong_outperformer
                 and (r.get("operating_margin") or 0) > 0):
             trig.append("low_margin")
         if (r.get("tsr_1y") is not None and spy_1y is not None
@@ -991,17 +1037,18 @@ def recompute_all():
         # unknown growth still fires (don't drop a possible target on missing data).
         _hyper_growth = (r.get("revenue_growth") is not None and r["revenue_growth"] > 0.20)
         if (r.get("tsr_1y") is not None and r["tsr_1y"] <= STRATEGIC_DROP
-                and not _is_cash_burner(r) and not _hyper_growth):
+                and not _is_cash_burner(r) and not _hyper_growth and not _strong_outperformer):
             trig.append("strategic_review")
         if low("roa") and (r.get("roa") or 0) > 0:    # profitable-but-low return (see low_margin note)
             trig.append("low_roa")
         if r.get("revenue_growth") is not None and (r["revenue_growth"] < 0 or low("revenue_growth")):
             trig.append("weak_growth")
-        if high("sga_pct") and not _is_financial and (r.get("operating_margin") or 0) > 0:
+        if (high("sga_pct") and not _is_financial and not _strong_outperformer
+                and (r.get("operating_margin") or 0) > 0):
             trig.append("high_sga")
-        if high("cash_to_assets") and not _is_financial:
+        if high("cash_to_assets") and not _is_financial and not _strong_outperformer:
             trig.append("cash_hoard")
-        if low("debt_to_assets") and not _is_financial:
+        if low("debt_to_assets") and not _is_financial and not _strong_outperformer:
             trig.append("underlevered")
         # Governance red flags (from DEF 14A; only present for parsed names).
         g = gov.get(r["cik"]) or {}
