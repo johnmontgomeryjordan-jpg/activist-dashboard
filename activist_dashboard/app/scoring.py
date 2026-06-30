@@ -856,7 +856,12 @@ def _event_signals(cik, ticker, name):
         # "negative headline" on nearly every profile. Reuse the broad-feed distress filter and
         # surface the first headline that actually qualifies.
         from . import news as _news   # local import avoids a circular import at module load
-        neg = next((n for n in nws if _news.is_relevant(n.get("headline"))), None)
+        # Must be (a) genuinely negative/distress AND (b) actually ABOUT this company — Finnhub's
+        # per-ticker feed returns tangential roundups ("Toll Brothers upgraded, Lennar downgraded"
+        # tagged to Ingredion). Reuse the same name-match the activist path uses.
+        _, _keys = _company_keys(name)
+        neg = next((n for n in nws if _news.is_relevant(n.get("headline"))
+                    and _headline_about_company(n.get("headline"), _keys)), None)
         if neg:
             triggered.add("news_negative")
             ev.setdefault("news_negative", {"title": neg["headline"], "url": neg["url"]})
