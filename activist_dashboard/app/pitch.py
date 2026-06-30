@@ -105,6 +105,27 @@ def _catalyst_sentence(trig):
     return ""
 
 
+def _acq_rerate(r, trig):
+    """Recent transformative acquisition the market has re-rated lower: a goodwill-heavy
+    balance sheet + very high revenue growth (the tell of a big DEAL, not organic growth —
+    organic growers carry little goodwill) + a sharp 1-yr de-rate. The AVAV/BlueHalo pattern,
+    where the deal compressed margins, ballooned goodwill, and the stock fell hard."""
+    g = r.get("revenue_growth")
+    t1 = r.get("tsr_1y")
+    return ("high_goodwill" in trig
+            and g is not None and g > 0.50
+            and ((t1 is not None and t1 <= -0.20) or "weak_tsr_1y" in trig))
+
+
+def _acq_rerate_point(r):
+    pct = _pct(r.get("goodwill_to_assets"))
+    d = _drop(r.get("tsr_1y"))
+    lead = f"De-rated {d} over the past year" if d else "Sharply de-rated"
+    gw = f" (goodwill now {pct} of assets)" if pct else ""
+    return (f"{lead} since a large, goodwill-heavy acquisition{gw} — the market re-rating a "
+            f"deal it views as value-destructive, a ready-made 'reverse the M&A' angle.")
+
+
 def _perf_phrase(r, trig):
     """The headline weakness, picked by what's most striking."""
     drop = _drop(r.get("tsr_1y"))
@@ -179,6 +200,9 @@ def _thesis(r, trig):
         s2 = "A clear match for the profile activists target."
 
     parts = [s1]
+    if _acq_rerate(r, trig):
+        parts.append("The sharp de-rating since a large, goodwill-heavy acquisition reads as "
+                     "the market's verdict on a value-destructive deal.")
     if extra:
         parts.append(extra)
     parts.append(s2)
@@ -295,8 +319,13 @@ def build_pitch(r, trig):
     """r: the scoring rec (name, raw, metrics, tsr, _spy_1y...). trig: firing signal keys.
     Returns {thesis, points, archetype}. Pure + deterministic."""
     trig = list(trig or [])
+    pts = _points(r, trig)
+    if _acq_rerate(r, trig):
+        # Lead with the acquisition-rerate point and drop a plain goodwill point to avoid dup.
+        pts = [p for p in pts if "goodwill" not in p.lower()]
+        pts = ([_acq_rerate_point(r)] + pts)[:3]
     return {
         "thesis": _thesis(r, trig),
-        "points": _points(r, trig),
+        "points": pts,
         "archetype": _archetype(trig),
     }
