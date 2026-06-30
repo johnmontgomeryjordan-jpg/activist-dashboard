@@ -150,6 +150,12 @@ EXCLUDE_PATTERNS = [
     "worker party", "workers' party", "party chief", "cadres", "prime minister",
     "parliament", "general election", "lawmaker", "republican", "democrat",
     "communist", " gop ", "senator", "congress", "white house", "governor",
+    # foreign government / military / politics (non-US-corporate; "defence" is the British
+    # spelling, so it reliably flags UK/foreign items, e.g. "UK Defence Spending ... Army Chief Warns")
+    "defence", "army chief", "royal navy", "warships", "labour party", "ministry of",
+    "defense spending", "military spending",
+    # entertainment / gaming studios (often private; not corporate distress, e.g. a "Games CEO steps down")
+    "video game", "game studio", "games ceo", "game developer", "gaming studio",
 ]
 
 
