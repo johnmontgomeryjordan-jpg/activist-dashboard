@@ -101,14 +101,24 @@ def _get(sess, url):
 
 
 def _usd(facts, tags):
+    """USD unit series for the first of `tags` that has data — but, when several tags carry
+    data, prefer the one whose data is MOST RECENT. Companies switch XBRL concepts over time
+    (e.g. 'Revenues' -> 'RevenueFromContractWithCustomerExcludingAssessedTax'); returning the
+    first tag with *any* data froze names like TMDX on a stale 2022 series under an abandoned
+    tag. Ties (same latest end-date) fall back to the given preference order."""
     g = facts.get("facts", {}).get("us-gaap", {})
+    best, best_end = [], ""
     for t in tags:
         node = g.get(t)
-        if node:
-            u = node.get("units", {}).get("USD")
-            if u:
-                return u
-    return []
+        if not node:
+            continue
+        u = node.get("units", {}).get("USD")
+        if not u:
+            continue
+        mx = max((e.get("end") or "") for e in u)
+        if mx > best_end:                  # strictly newer wins; equal -> keep earlier (preferred) tag
+            best, best_end = u, mx
+    return best
 
 
 def _pd(s):
