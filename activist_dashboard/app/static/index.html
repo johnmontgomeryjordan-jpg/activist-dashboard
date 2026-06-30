@@ -558,14 +558,49 @@
     <b>Shareholder support</b> — weak say-on-pay vote at the last annual meeting.<br>
     <b>Insider activity</b> — a cluster of open-market insider selling (Form 4).<br>
     <b>Event catalysts</b> — recent CEO/exec departure, earnings miss, impairment, layoffs,
-    leadership change, a negative activist headline, or a sharp stock drop on a leadership-change 8-K.</p>
+    leadership change, a negative press headline, or a sharp stock drop on a leadership-change 8-K.</p>
     <p>Every signal on a company's profile carries an <b>evidence card</b> with the underlying number,
     the SEC math behind it, the peer cutoff, the period, and a link to the source filing.</p>
 
+    <h3>Sanity checks &amp; guards</h3>
+    <p>Raw peer-percentile signals can be misleading on their own, so each is filtered through a set of
+    guards that ask "is this actually an activist lever, or an accounting artifact?" These keep the score
+    honest and the thesis credible:</p>
+    <ul>
+      <li><b>Profitability gate</b> — the operating-improvement signals (low margin, bloated SG&amp;A,
+        low return on assets) only fire for a company that is actually <b>profitable</b>. You expand a
+        thin-but-positive margin by cutting costs; you can't cost-cut your way out of a loss. A negative
+        margin is reinvestment, amortization, or distress — captured by other signals, not a "margin
+        turnaround."</li>
+      <li><b>One-time-charge guard</b> — a goodwill impairment or divestiture can crush a single quarter
+        (operating income near break-even, but the bottom line deeply negative). The screen detects that
+        below-the-line distortion and suppresses the false "loses money" signals.</li>
+      <li><b>Bank &amp; insurer carve-out</b> — for financials, cash and investments are regulatory
+        reserves / float, leverage is structural, and there's no industrial "operating margin" or EBITDA,
+        so those signals are turned off. What still applies — and is what real bank activists use — is the
+        discount to (tangible) book, price underperformance, return-on-assets vs. peers, M&amp;A history,
+        and governance.</li>
+      <li><b>Multi-year-winner guard</b> — a stock that has <b>beaten</b> the market over three years isn't
+        a "sustained underperformer." A one-year dip on a multi-year winner is profit-taking, not a campaign
+        setup, so its soft value / operating / balance-sheet signals and the sale-candidate flag are
+        suppressed (it keeps governance, pay and event flags, which apply even to winners).</li>
+      <li><b>Actionability discounts</b> — founder- or dual-class-controlled companies (where insiders
+        control the vote) and deep cash-burners (falling knives) are discounted, since a campaign is far
+        harder or the value is already impaired.</li>
+      <li><b>Headline precision</b> — a "negative press headline" must be both genuinely negative/distress
+        <em>and</em> actually name the company, so routine items (conference transcripts, "top movers"
+        columns, articles about other companies) don't get flagged.</li>
+      <li><b>Most-recent data</b> — fundamentals always read the company's current SEC filing, even when a
+        company has switched the XBRL tags it reports under (which previously could freeze a name on
+        years-old figures).</li>
+    </ul>
+
     <h3>Active situations (already engaged)</h3>
     <p>When an activist has <b>already</b> shown up, the name moves off the proactive shortlist into
-    Active Situations at one of three confidence tiers: <b>Confirmed</b> (an SEC 13D or contested-proxy
-    filing on record), <b>Reported</b> (a known activist named in the press alongside the company), or
+    Active Situations at one of three confidence tiers: <b>Confirmed</b> (an authoritative SEC filing on
+    record — a 13D, a contested proxy, or dissident soliciting materials), <b>Reported</b> (a known
+    activist named in the press alongside the company, <em>or</em> an exempt solicitation — these are
+    sometimes a serious activist but often an ESG/gadfly filer, so they're held at lower confidence), or
     <b>Manual</b> (tagged by a team member). These are tracked for awareness — they're usually past the
     point of a proactive pitch, though a fresh filing can be an urgent defense lead.</p>
 
@@ -579,7 +614,8 @@
       <li><b>Finnhub</b> — market cap, price-to-book, P/E, 1-yr return, earnings calendar, insider sentiment.</li>
       <li><b>Twelve Data</b> — daily price history and multi-year (3/5-yr) price returns.</li>
       <li><b>Financial Modeling Prep</b> — company profile and IR/contact details.</li>
-      <li><b>News API</b> — activist / distress headlines, grouped on the Live feed.</li>
+      <li><b>GDELT</b> (free, real-time global news) — broad activist / distress headlines for the Live
+        feed; <b>Finnhub company-news</b> — per-company headlines shown on each profile.</li>
       <li><b>Claude (Haiku)</b> — re-voices the thesis prose, strictly limited to the facts above.</li>
     </ul>
 
@@ -723,6 +759,23 @@
     or the board is already acting. And an activist can target a name that <em>doesn't</em> screen, driven
     by a catalyst or thesis the data can't capture. Fit is a strong prior, not a forecast.</p>
 
+    <h3>It can't tell "fixable" from "broken" or "in decline"</h3>
+    <p>The screen sees that a company is cheap and underperforming; it can't see <em>why</em>. Three flavors
+    look identical in the numbers but are very different in reality, and need your judgment:</p>
+    <ul>
+      <li><b>Catastrophe / litigation overhang.</b> A name can screen cheap because of a massive lawsuit or
+        contingent liability, not fixable underperformance — e.g. a utility buried in wildfire-tort
+        liability. That's a distressed/special-situation play, not an activist campaign.</li>
+      <li><b>Accounting / litigation catalyst.</b> A restatement or securities class action can drive a
+        de-rate and governance flags without an activist in sight — the story is the accounting, not a
+        campaign (yet).</li>
+      <li><b>Secular decline.</b> A "fallen angel" can be a falling knife — a quality business whose
+        end-market is in structural decline (e.g. a device maker facing a new drug class). Activists often
+        avoid these, which is part of why a strong profile can sit without a campaign.</li>
+    </ul>
+    <p>In each case the rating is doing its job (the profile <em>is</em> a match) — but the qualitative read
+    is yours. Planned roadmap signals would flag the first two automatically.</p>
+
     <h3>Point-in-time accounting can distort a quarter</h3>
     <p>Fundamentals come from the most recent quarterly filing. A one-time event — an impairment, a
     restructuring charge, a legal settlement — can crush a single quarter's margin or return on assets and
@@ -814,6 +867,31 @@
       <li><b>Beyond internal use.</b> Commercially-licensed data is also what would let the tool move past
         an internal-only setting down the road.</li>
     </ul>
+
+    <h3>Planned new signals (deeper coverage)</h3>
+    <p>These came out of our lead-quality audits and would close the remaining judgment-call gaps:</p>
+    <ul>
+      <li><b>Litigation / contingent-liability overhang.</b> Flag names that are cheap because of a major
+        lawsuit or large reserve (e.g. a utility with wildfire-tort liability) so they read as distressed
+        / special-situations, not clean activist leads — addressing the biggest "fixable vs. catastrophe"
+        gap under Limitations.</li>
+      <li><b>Restatement / material-weakness signal.</b> Detect 8-K Item 4.02 ("non-reliance on previously
+        issued financials") and material-weakness disclosures — one of the strongest activist catalysts,
+        currently uncaptured.</li>
+      <li><b>Measured acquisition reaction.</b> An event study on the actual stock move when a deal is
+        announced (8-K Item 1.01/2.01), upgrading today's <em>inferred</em> "de-rated since a goodwill-heavy
+        acquisition" to a measured "the market dropped the stock X% on the announcement."</li>
+      <li><b>Bank-specific signal pack.</b> Price-to-tangible-book, excess capital vs. a target CET1 ratio,
+        and the efficiency ratio — the metrics real bank activists use — so banks are scored on what
+        actually applies to them rather than just being carved out.</li>
+      <li><b>Secular-threat / quality-de-rater nuance.</b> Distinguish a fallen-but-viable business from one
+        whose end-market is in structural decline (a multi-year-high de-rate plus an end-market signal), so
+        "falling knives" are flagged as such.</li>
+      <li><b>Consistency &amp; coverage tidy-ups.</b> Extend the multi-year-winner guard to the
+        return-on-assets signal; and tighten news auto-routing so a known activist named in the press
+        reliably moves a name into Active Situations.</li>
+    </ul>
+
     <p class="gov-note">The single highest-leverage upgrade is professional market data — it removes the
     free-tier limits behind most of what's described under Limitations.</p>
   </div>
