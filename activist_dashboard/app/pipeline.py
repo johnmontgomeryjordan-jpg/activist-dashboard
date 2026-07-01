@@ -228,7 +228,12 @@ def _annual_growth(rev_f):
     """Year-over-year revenue growth from FULL-YEAR (10-K) periods (~365 days), keyed by
     fiscal-year-end. Stable for lumpy-revenue companies where a single quarter's YoY
     misleads (milestone-based biotech, licensing transitions) -- that quarterly comparison
-    made real double-digit growers look flat or negative. None if <2 annual periods."""
+    made real double-digit growers look flat or negative.
+
+    Returns (growth, cur_val, prior_val, cur_end, prior_end) so the evidence card can show
+    the SAME two figures the percentage was computed from (they were previously drawn from
+    the latest QUARTERLY period, which contradicted this annual %). All-None if <2 annual
+    periods."""
     by_year = {}
     for e in rev_f:
         if 350 <= e["days"] <= 380 and e.get("end"):
@@ -237,11 +242,13 @@ def _annual_growth(rev_f):
                 by_year[yr] = e
     yrs = sorted(by_year, reverse=True)
     if len(yrs) >= 2:
-        cur, prior = by_year[yrs[0]]["val"], by_year[yrs[1]]["val"]
+        ce, pe = by_year[yrs[0]], by_year[yrs[1]]
+        cur, prior = ce["val"], pe["val"]
         if prior and prior > 0:
             g = (cur - prior) / prior
-            return g if -10 < g < 10 else None
-    return None
+            if -10 < g < 10:
+                return g, cur, prior, ce.get("end"), pe.get("end")
+    return None, None, None, None, None
 
 
 def _annual_latest(flows):
@@ -329,10 +336,17 @@ def _extract(facts):
     # Revenue growth: prefer full-year (10-K) YoY — a single quarter's YoY is misleading for
     # lumpy-revenue names and made real double-digit growers (e.g. SDGR) read as flat/negative.
     # Fall back to the period-over-prior-year figure only when two annual periods aren't there.
-    growth = _annual_growth(rev_f)
+    # Also capture the exact (current, prior) pair the % was computed from + a period label, so
+    # the evidence card shows numbers that MATCH the headline % (previously it showed the latest
+    # quarter's revenue vs prior-year quarter — a different basis that contradicted an annual %).
+    growth, g_cur, g_prior, g_cur_end, _g_prior_end = _annual_growth(rev_f)
+    g_period = _period_label(g_cur_end, 365) if g_cur_end else None      # e.g. "FY2025"
     if growth is None and rev is not None and rev_prior and rev_prior > 0:
         g = (rev - rev_prior) / rev_prior
         growth = g if -10 < g < 10 else None
+        if growth is not None:                          # fell back to the quarterly pair
+            g_cur, g_prior = rev, rev_prior
+            g_period = _period_label(p_end, p_days) if p_end else None
 
     # Most recent FULL-YEAR net income — the profitability sanity check. A GAAP-profitable
     # year means a negative latest-period margin/ROA is almost certainly a one-time charge
@@ -349,6 +363,8 @@ def _extract(facts):
     }
     raw = {
         "revenue": rev, "revenue_prior": rev_prior, "operating_income": opinc,
+        "revenue_growth_cur": g_cur, "revenue_growth_prior": g_prior,
+        "revenue_growth_period": g_period,
         "sga": sga, "net_income": ni, "net_income_ann": ni_ann,
         "annual_net_income": annual_ni,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
