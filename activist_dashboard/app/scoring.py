@@ -777,6 +777,7 @@ def _struct_evidence(key, r, t):
     q1, q3, n = t.get(metric, (None, None, 0))
     raw = r.get("raw") or {}
     sector_label = raw.get("sector_desc") or "sector"
+    period_override = None
     # peer context
     if key == "cheap_abs":
         ctx = "trades below 1.5x book value"
@@ -806,7 +807,15 @@ def _struct_evidence(key, r, t):
             nlbl = "net income (annualized)" if (raw.get("period_days") or 999) < 350 else "net income"
             inputs = f"{nlbl} {_money(ni)} ÷ total assets {_money(ta)}"
     elif key == "weak_growth":
-        a, b = raw.get("revenue"), raw.get("revenue_prior")
+        # Show the SAME (current, prior) pair the growth % was computed from. The rating uses
+        # a full-year (10-K) YoY, so the old quarterly revenue/prior pair contradicted it
+        # (e.g. AAP: -5.4% headline shown next to $2.61B vs $2.58B = +1.2%). Fall back to the
+        # legacy quarterly pair only if the annual pair isn't stored.
+        a = raw.get("revenue_growth_cur"); b = raw.get("revenue_growth_prior")
+        if a is None or b is None:
+            a, b = raw.get("revenue"), raw.get("revenue_prior")
+        else:
+            period_override = raw.get("revenue_growth_period")   # match the % basis (e.g. "FY2025")
         if a is not None and b is not None:
             inputs = f"revenue {_money(a)} vs prior-year {_money(b)}"
     elif key in ("cheap_abs", "cheap_pb"):
@@ -827,7 +836,7 @@ def _struct_evidence(key, r, t):
                       f"— EBITDA = operating income + D&A (SEC XBRL)")
     url = _source_url(r.get("cik"), raw.get("source_accn")) if source == "SEC XBRL" else None
     return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric(metric, v),
-            "context": ctx, "inputs": inputs, "period": _period_label(raw),
+            "context": ctx, "inputs": inputs, "period": period_override or _period_label(raw),
             "source": source, "url": url}
 def _event_evidence(key, ev):
     item = ev.get(key)
