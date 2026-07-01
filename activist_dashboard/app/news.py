@@ -146,6 +146,12 @@ EXCLUDE_PATTERNS = [
     "dividend aristocrat", "dividend king", "best dividend", "to watch",
     "undervalued", "deep value", "value investors", "turnaround stock",
     "long-term investors", "could reward", "better stock", "to buy now",
+    # analyst buy/hold/sell-rating OPINION pieces (SeekingAlpha/Fool genre). These trip a
+    # distress keyword like "turnaround" or "downgrade" but are an author's rating, not a
+    # company event — e.g. "Turnaround Is Improving, But Still Too Early To Buy".
+    "too early to buy", "too soon to buy", "early to buy", "still too early",
+    "not a buy", "is a buy", "a buy?", "still a buy", "worth buying",
+    "buy rating", "hold rating", "sell rating", "reiterates", "initiates coverage",
     # political / non-corporate "ousted/steps down/fight" false positives
     "worker party", "workers' party", "party chief", "cadres", "prime minister",
     "parliament", "general election", "lawmaker", "republican", "democrat",
