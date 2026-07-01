@@ -712,6 +712,11 @@ def _median(xs):
         return None
     m = n // 2
     return xs[m] if n % 2 else (xs[m - 1] + xs[m]) / 2.0
+# Minimum number of names (company + peers) that must have 1-yr TSR before we report a peer
+# rank — below this a "rank" is just the company alone ("1 of 1") and reads as false precision.
+PEER_RANK_MIN = 3
+
+
 def _peer_analysis(r, peer_ciks, rec_by_cik):
     """Build the company-vs-self-selected-peers comparison (for the Peer Analysis tab and
     the lags_own_peers signal). Only peers we also cover (have a rec for) are included."""
@@ -736,8 +741,15 @@ def _peer_analysis(r, peer_ciks, rec_by_cik):
     rated.sort(key=lambda x: x[1], reverse=True)
     rank = next((i + 1 for i, (tk, _v) in enumerate(rated) if tk == self_obj["ticker"]), None)
     n_tsr = len([p for p in peers if p["tsr_1y"] is not None])
+    # A rank is only meaningful when enough of the named peers actually have return data. Proxy
+    # peers are often outside our enriched set, so with just the company itself the rank reads a
+    # misleading "1 of 1". Below PEER_RANK_MIN ranked names, drop the rank so the UI shows the
+    # plain "compensation peer group … versus the metrics we track" copy instead of a false rank.
+    rank_of = len(rated)
+    if rank_of < PEER_RANK_MIN:
+        rank, rank_of = None, None
     return {"self": self_obj, "peers": peers, "median": med, "n": len(peers),
-            "n_tsr": n_tsr, "rank": rank, "rank_of": len(rated)}
+            "n_tsr": n_tsr, "rank": rank, "rank_of": rank_of}
 def _peer_evidence(key, r):
     pa = r.get("_peers") or {}
     med = (pa.get("median") or {}).get("tsr_1y")
