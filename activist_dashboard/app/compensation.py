@@ -143,12 +143,22 @@ def _parse_sct(table_html):
     if e_tot <= 0:
         return None
     pct = (l_tot - e_tot) / e_tot
+    # CEO-transition detection. The pay-rise % is only meaningful for ONE CEO across the window.
+    # If the CEO changed, the earliest year is the new CEO's partial/first year, so a normal ramp
+    # reads as a huge false "pay rose" (Signet: a ~3-month stub of $2.8M vs the first full year of
+    # $12.0M = 333%). Flag it (two independent tells, scanned over the whole table) so scoring can
+    # suppress the signal rather than pitch a transition as a pay-for-performance abuse.
+    body = rows[header_at + 1:]
+    former_ceo = any(_CEO_TITLE.search(" ".join(c)) and _SKIP_CEO.search(" ".join(c)) for c in body)
+    row_years = [int(m.group(0)) for c in body for m in [_YEAR.search(" ".join(c))] if m]
+    ceo_started_late = bool(row_years) and earliest > min(row_years)
     return {
         "ceo_name": ceo_name,
         "years": [{"year": y, "total": pairs[y]} for y in years],
         "earliest_year": earliest, "earliest_total": e_tot,
         "latest_year": latest, "latest_total": l_tot,
         "pct_change": pct,
+        "ceo_transition": bool(former_ceo or ceo_started_late),
     }
 
 
