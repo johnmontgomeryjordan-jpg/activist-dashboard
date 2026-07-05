@@ -74,8 +74,15 @@ _ASSETS = ["Assets"]
 _EQUITY = ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]
 _CASH = ["CashAndCashEquivalentsAtCarryingValue"]
 _STI = ["ShortTermInvestments"]
-_DEBT_LT = ["LongTermDebtNoncurrent", "LongTermDebt"]
-_DEBT_CUR = ["LongTermDebtCurrent", "DebtCurrent"]
+# Funded debt. Prefer a single TOTAL tag — per US-GAAP, "LongTermDebt" already INCLUDES the
+# current maturities — otherwise sum the noncurrent + current components (first tag available in
+# each list). The old code read only _DEBT_LT[:1] ("LongTermDebtNoncurrent") + "LongTermDebtCurrent",
+# so a company filing its debt under "LongTermDebt" (BLDR — the $408.9M was just the current
+# portion) or a capital-lease tag was badly under-captured → a false "under-levered" signal AND an
+# understated EV/EBITDA. See _total_debt().
+_DEBT_TOTAL = ["LongTermDebt", "DebtLongtermAndShorttermCombinedAmount"]
+_DEBT_NONCUR = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"]
+_DEBT_CUR = ["LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent", "DebtCurrent"]
 _SHARES = ["EntityCommonStockSharesOutstanding"]
 _DEP = ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet",
         "DepreciationAndAmortization"]                       # cash-flow D&A -> EBITDA
@@ -164,6 +171,32 @@ def _instant(facts, tags):
         return None
     rows.sort(key=lambda x: x[0], reverse=True)
     return rows[0][1]
+
+
+def _first_instant(facts, tags):
+    """Point-in-time value of the FIRST tag (in preference order) that has data — NOT a
+    recency-pick across tags, because these are ALTERNATE spellings of the same line item and
+    picking 'the newest' could mix concepts."""
+    for t in tags:
+        v = _instant(facts, [t])
+        if v is not None:
+            return v
+    return None
+
+
+def _total_debt(facts):
+    """Total funded debt, robust to how a company tags it. Prefer a single total tag
+    ("LongTermDebt" per US-GAAP already includes current maturities); otherwise sum the
+    noncurrent + current components. Fixes the under-capture that produced false 'under-levered'
+    signals (BLDR $408.9M, SIG $0) and understated EV."""
+    total = _first_instant(facts, _DEBT_TOTAL)
+    if total is not None:
+        return total
+    nc = _first_instant(facts, _DEBT_NONCUR)
+    cur = _first_instant(facts, _DEBT_CUR)
+    if nc is None and cur is None:
+        return None
+    return (nc or 0) + (cur or 0)
 
 
 def _latest_period(flows):
@@ -291,8 +324,7 @@ def _extract(facts):
     equity = _instant(facts, _EQUITY)
     cash_c = _instant(facts, _CASH[:1]); sti = _instant(facts, _STI)
     cash = (cash_c or 0) + (sti or 0) if (cash_c is not None or sti is not None) else None
-    dlt = _instant(facts, _DEBT_LT[:1]); dcur = _instant(facts, _DEBT_CUR[:1])
-    debt = (dlt or 0) + (dcur or 0) if (dlt is not None or dcur is not None) else None
+    debt = _total_debt(facts)
     goodwill = _instant(facts, _GOODWILL)
     shares = _latest_shares(facts)
 
