@@ -167,6 +167,10 @@ INSIDER_KEYS = ("insider_selling", "insider_buying")
 # this fraction -- well under the ~90%+ norm, a recognized pre-activism warning.
 VOTE_KEYS = ("weak_vote_support",)
 SAY_ON_PAY_FLAG = 0.75
+# Floor for a believable say-on-pay result. A parsed value below this is a mis-parse, not a real
+# vote (failed say-on-pay votes cluster ~40-60%; nothing lands near 0%). Guards against any
+# already-stored garbage 0% rows so they never fire the signal, even before votes.py re-parses.
+SAY_ON_PAY_MIN = 0.20
 # CEO pay-for-performance (from DEF 14A Summary Comp Table). Fires when total CEO comp
 # rose while the stock lagged — its own evidence card with the pay trajectory.
 COMP_KEYS = ("overpaid_ceo",)
@@ -1132,7 +1136,7 @@ def recompute_all():
         vrow = votes_all.get(r["cik"]) or {}
         r["_votes"] = vrow
         sop = vrow.get("say_on_pay")
-        if sop is not None and sop < SAY_ON_PAY_FLAG:
+        if sop is not None and SAY_ON_PAY_MIN <= sop < SAY_ON_PAY_FLAG:
             trig.append("weak_vote_support")
         struct = sum(STRUCT_POINTS[s] for s in trig)
         events, top, ev, activist = _event_signals(r["cik"], r["ticker"], r["name"])
