@@ -1102,7 +1102,9 @@ def recompute_all():
             pc = comp.get("pct_change")
             tsr = r.get("tsr_1y")
             lags = (tsr is not None and (tsr < 0 or (spy_1y is not None and (tsr - spy_1y) <= TSR_LAG_1Y)))
-            if pc is not None and pc >= COMP_RISE_FLOOR and lags:
+            # Suppress across a CEO change: the % then compares a new CEO's partial first year to a
+            # full year (a ramp, not a raise) — e.g. Signet's false "pay rose 333%". See compensation.py.
+            if pc is not None and pc >= COMP_RISE_FLOOR and lags and not comp.get("ceo_transition"):
                 trig.append("overpaid_ceo")
         # Self-selected proxy peer group: does the company trail the peers it chose itself?
         peers_list = []
