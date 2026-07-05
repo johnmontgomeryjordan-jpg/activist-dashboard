@@ -29,7 +29,19 @@ WINDOW_DAYS = 420          # one annual-meeting cycle (+ slack)
 _session = requests.Session()
 _session.headers.update(HEADERS)
 _TAG = re.compile(r"<[^>]+>")
-_NUM = re.compile(r"\d[\d,]{3,}")   # comma-grouped vote tallies
+# A real vote tally in an 8-K 5.07 is ALWAYS comma-grouped (e.g. "123,456,789"). Requiring a
+# comma is what stops the old bug: the bare-number regex matched "2026" (the meeting year, which
+# sits right next to the say-on-pay phrase) as a "vote count", then paired it with a real share
+# tally -> 2026 / 300,000,000 ≈ 0% "support". A comma-grouped pattern can't match a plain year.
+_TALLY = re.compile(r"\d{1,3}(?:,\d{3})+")
+# Label-anchored For/Against: tie each tally to its column label so we don't grab arbitrary
+# numbers. Allow a little non-digit slack between the label and its number.
+_FOR = re.compile(r"\bfor\b[^\d]{0,25}?(\d{1,3}(?:,\d{3})+)")
+_AGAINST = re.compile(r"\bagainst\b[^\d]{0,25}?(\d{1,3}(?:,\d{3})+)")
+# A real say-on-pay "For" essentially never falls below ~20%, even when the vote FAILS (failed
+# say-on-pay votes cluster around 40-60%). A parsed value below this means we anchored on the
+# wrong numbers, so we treat it as UNPARSED (None) rather than emit a false near-0% signal.
+MIN_PLAUSIBLE_SOP = 0.20
 
 # Phrases that identify the advisory say-on-pay proposal (lowercased).
 SOP_PHRASES = [
@@ -92,32 +104,56 @@ def _latest_507(cik10, start, end):
     return None
 
 
+def _iter_positions(low):
+    """Every position where a say-on-pay phrase appears, in document order. The phrase is often
+    mentioned in the narrative intro BEFORE the results table, so we can't just take the first
+    hit — we try each until one yields a plausible For/Against pair (usually the table row)."""
+    seen = set()
+    for p in SOP_PHRASES:
+        start = 0
+        while True:
+            i = low.find(p, start)
+            if i == -1:
+                break
+            seen.add(i)
+            start = i + 1
+    return sorted(seen)
+
+
+def _for_against(window):
+    """(for, against) vote tallies from a window. Prefer label-anchored numbers ("For 12,345,678
+    … Against 234,567"); fall back to the first two comma-grouped tallies (a flattened
+    For/Against/Abstain row). Returns None if two tallies can't be found."""
+    fm, am = _FOR.search(window), _AGAINST.search(window)
+    if fm and am:
+        return int(fm.group(1).replace(",", "")), int(am.group(1).replace(",", ""))
+    tallies = [int(t.replace(",", "")) for t in _TALLY.findall(window)]
+    if len(tallies) >= 2:
+        return tallies[0], tallies[1]
+    return None
+
+
 def parse_say_on_pay(html):
-    """Return (approval_fraction, meeting_date) from an 8-K 5.07, or (None, None).
-    approval = For / (For + Against) on the advisory executive-compensation vote."""
+    """Return (approval_fraction, meeting_date) from an 8-K 5.07, or (None, meeting).
+    approval = For / (For + Against) on the advisory executive-compensation vote. Returns None
+    for approval when no PLAUSIBLE say-on-pay tally is found — never a garbage near-0% value."""
     text = _TAG.sub(" ", html or "")
     low = text.lower()
-    pos = -1
-    for p in SOP_PHRASES:
-        i = low.find(p)
-        if i != -1 and (pos == -1 or i < pos):
-            pos = i
-    if pos == -1:
-        return None, None
-    window = low[pos:pos + 700]
-    nums = [int(m.group().replace(",", "")) for m in _NUM.finditer(window)]
-    nums = [n for n in nums if n > 1000]          # ignore proposal numbers, etc.
-    if len(nums) < 2:
-        return None, None
-    for_v, against_v = nums[0], nums[1]
-    denom = for_v + against_v
-    if denom <= 0:
-        return None, None
-    approval = for_v / denom
-    if not (0 < approval <= 1):
-        return None, None
     m = _HELD.search(text)
-    return approval, (m.group(1) if m else None)
+    meeting = m.group(1) if m else None
+    for pos in _iter_positions(low):
+        fa = _for_against(low[pos:pos + 1200])
+        if not fa:
+            continue
+        for_v, against_v = fa
+        denom = for_v + against_v
+        if denom <= 0:
+            continue
+        approval = for_v / denom
+        # Only accept a plausible result; skip mis-anchored parses (e.g. a year read as a tally).
+        if MIN_PLAUSIBLE_SOP <= approval <= 1.0:
+            return approval, meeting
+    return None, meeting
 
 
 def refresh_votes(ciks, window_days=WINDOW_DAYS):
