@@ -173,29 +173,48 @@ def _instant(facts, tags):
     return rows[0][1]
 
 
-def _first_instant(facts, tags):
-    """Point-in-time value of the FIRST tag (in preference order) that has data — NOT a
-    recency-pick across tags, because these are ALTERNATE spellings of the same line item and
-    picking 'the newest' could mix concepts."""
-    for t in tags:
-        v = _instant(facts, [t])
-        if v is not None:
-            return v
-    return None
+def _instant_dated(facts, tag):
+    """(latest_end, val) for a single balance-sheet tag, or (None, None)."""
+    rows = [(e["end"], e["val"]) for e in _usd(facts, [tag])
+            if e.get("val") is not None and e.get("end")
+            and (not e.get("start") or e.get("start") == e.get("end"))]
+    if not rows:
+        return None, None
+    rows.sort(key=lambda x: x[0], reverse=True)
+    return rows[0]
 
 
 def _total_debt(facts):
-    """Total funded debt, robust to how a company tags it. Prefer a single total tag
-    ("LongTermDebt" per US-GAAP already includes current maturities); otherwise sum the
-    noncurrent + current components. Fixes the under-capture that produced false 'under-levered'
-    signals (BLDR $408.9M, SIG $0) and understated EV."""
-    total = _first_instant(facts, _DEBT_TOTAL)
+    """Total funded debt, RECENCY-AWARE and robust to tag switches. Companies abandon XBRL tags
+    over time: BLDR's "LongTermDebt" froze at 2015 ($408.9M) while it now reports debt under
+    "LongTermDebtAndCapitalLeaseObligations" (2026 = $4.6B). Preferring a total tag blindly (v1)
+    reintroduced the #95 stale-tag trap and kept BLDR at a false $408.9M. So: read every candidate
+    debt tag's latest (date, value), find the company's most recent balance-sheet date, and build
+    debt ONLY from tags reporting at that date — a single total tag if present, else noncurrent +
+    current components. Fixes the under-capture behind false 'under-levered' signals + understated EV."""
+    dated = {}                                   # tag -> (end_date, value)
+    for t in _DEBT_TOTAL + _DEBT_NONCUR + _DEBT_CUR:
+        ed, v = _instant_dated(facts, t)
+        if ed is not None and v is not None:
+            dated[t] = (ed, v)
+    if not dated:
+        return None
+    latest = max(ed for ed, _v in dated.values())
+
+    def at_latest(tags):                         # first tag (in preference order) reporting at `latest`
+        for t in tags:
+            if t in dated and dated[t][0] == latest:
+                return dated[t][1]
+        return None
+
+    total = at_latest(_DEBT_TOTAL)
     if total is not None:
         return total
-    nc = _first_instant(facts, _DEBT_NONCUR)
-    cur = _first_instant(facts, _DEBT_CUR)
+    nc = at_latest(_DEBT_NONCUR)
+    cur = at_latest(_DEBT_CUR)
     if nc is None and cur is None:
-        return None
+        # nothing from our known tags at the latest date — use the most recent value we do have
+        return max(dated.values(), key=lambda ev: ev[0])[1]
     return (nc or 0) + (cur or 0)
 
 
