@@ -833,7 +833,12 @@ def _struct_evidence(key, r, t):
             ni = raw.get("net_income")
         ta = raw.get("total_assets")
         if ni is not None and ta is not None:
-            nlbl = "net income (annualized)" if (raw.get("period_days") or 999) < 350 else "net income"
+            if raw.get("margin_basis") == "ttm":
+                nlbl = "net income (trailing 12 mo)"
+            elif (raw.get("period_days") or 999) < 350:
+                nlbl = "net income (annualized)"
+            else:
+                nlbl = "net income"
             inputs = f"{nlbl} {_money(ni)} ÷ total assets {_money(ta)}"
     elif key == "weak_growth":
         # Show the SAME (current, prior) pair the growth % was computed from. The rating uses
@@ -847,7 +852,9 @@ def _struct_evidence(key, r, t):
             period_override = raw.get("revenue_growth_period")   # match the % basis (e.g. "FY2025")
         if a is not None and b is not None:
             inputs = f"revenue {_money(a)} vs prior-year {_money(b)}"
-    elif key in ("cheap_abs", "cheap_pb"):
+    if key in ("low_margin", "high_sga", "low_roa"):
+        period_override = raw.get("margin_label")   # "trailing 12 mo to May 2026" (TTM basis)
+    if key in ("cheap_abs", "cheap_pb"):
         be = raw.get("book_equity")
         inputs = ("price ÷ book value " + _money(be) +
                   " — price from Alpha Vantage, book value from SEC 10-K"
