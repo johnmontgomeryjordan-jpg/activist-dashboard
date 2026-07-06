@@ -19,6 +19,10 @@ import requests
 
 API_URL = "https://api.anthropic.com/v1/messages"
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+# Bump when _SYSTEM / _prompt changes so cached re-voicings are invalidated and every name
+# re-voices under the new rules (the hash keys on draft content, not the prompt, so without
+# this a prompt change would only reach names whose facts also happened to change).
+_PROMPT_VERSION = 2
 
 _SYSTEM = (
     "You are a senior analyst at a shareholder-activism DEFENSE advisory firm. You turn an "
@@ -28,6 +32,11 @@ _SYSTEM = (
     "- Use ONLY the facts, numbers, percentages, dollar figures, names and dates present in "
     "the draft. NEVER introduce any figure or claim not in the draft.\n"
     "- Do not exaggerate, soften, or add hype words ('massive', 'huge', 'incredible').\n"
+    "- Preserve the EXACT financial term attached to every figure; never rename one metric as "
+    "another. In particular: a return the draft calls a 'price return' is NOT a 'total return'; "
+    "a 'peer cutoff' or 'bottom-quartile' threshold is NOT a 'median' or 'average'; keep terms "
+    "like 'operating margin', 'return on assets', 'debt-to-assets' verbatim. If unsure what a "
+    "figure is, use the draft's own wording rather than substituting a different term.\n"
     "- Be concrete and tight. Plain professional English.\n"
     "- Return STRICT JSON only, no preamble, no code fences."
 )
@@ -42,7 +51,7 @@ def model():
 
 
 def facts_hash(name, pitch, facts):
-    payload = {"n": name, "t": (pitch or {}).get("thesis"),
+    payload = {"v": _PROMPT_VERSION, "n": name, "t": (pitch or {}).get("thesis"),
                "p": (pitch or {}).get("points"), "f": facts}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
