@@ -87,6 +87,8 @@ _SHARES = ["EntityCommonStockSharesOutstanding"]
 _DEP = ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet",
         "DepreciationAndAmortization"]                       # cash-flow D&A -> EBITDA
 _GOODWILL = ["Goodwill"]                                     # balance-sheet goodwill -> M&A
+_OP_LEASE_NC = ["OperatingLeaseLiabilityNoncurrent"]        # ASC 842 operating-lease liability:
+_OP_LEASE_CUR = ["OperatingLeaseLiabilityCurrent"]          # a mall retailer's real leverage
 
 
 def _pad(cik):
@@ -345,6 +347,8 @@ def _extract(facts):
     cash = (cash_c or 0) + (sti or 0) if (cash_c is not None or sti is not None) else None
     debt = _total_debt(facts)
     goodwill = _instant(facts, _GOODWILL)
+    _ol_nc = _instant(facts, _OP_LEASE_NC); _ol_cur = _instant(facts, _OP_LEASE_CUR)
+    op_lease = ((_ol_nc or 0) + (_ol_cur or 0)) if (_ol_nc is not None or _ol_cur is not None) else None
     shares = _latest_shares(facts)
 
     # EBITDA = operating income + D&A. For EV/EBITDA (EV is a point-in-time figure) this MUST
@@ -419,7 +423,7 @@ def _extract(facts):
         "sga": sga, "net_income": ni, "net_income_ann": ni_ann,
         "annual_net_income": annual_ni,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
-        "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill,
+        "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill, "operating_lease": op_lease,
         "period_end": p_end, "period_days": p_days,
         "period_label": _period_label(p_end, p_days) if p_end else None,
         "source_accn": p_accn,
