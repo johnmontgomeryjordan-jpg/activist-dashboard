@@ -1,7 +1,14 @@
 /* ===== Formatting helpers ===== */
 const fmtCap = n => { if(n==null) return "—";
   if(n>=1e12) return "$"+(n/1e12).toFixed(2)+"T"; if(n>=1e9) return "$"+(n/1e9).toFixed(1)+"B";
-  if(n>=1e6) return "$"+(n/1e6).toFixed(0)+"M"; return "$"+n; };
+  if(n>=1e6) return "$"+(n/1e6).toFixed(0)+"M"; if(n>=1e3) return "$"+(n/1e3).toFixed(0)+"K";
+  return "$"+Math.round(n).toLocaleString(); };   // sub-$1M: round + group (was raw "$"+n -> "$528474.17999")
+// Light phone formatter: format the common US 10-digit case; leave international/odd formats
+// untouched (don't mangle a number we can't confidently parse, e.g. a UK "442073179700").
+const fmtPhone = p => { if(!p) return p; const d=(""+p).replace(/\D/g,"");
+  if(d.length===10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  if(d.length===11&&d[0]==="1") return `+1 (${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+  return p; };
 const fmtPct = n => n==null? "—" : (n*100).toFixed(1)+"%";
 const fmtNum = n => n==null? "—" : (typeof n==="number"? n.toLocaleString(undefined,{maximumFractionDigits:2}) : n);
 const fmtDate = s => { if(!s) return ""; try{return new Date(s).toLocaleDateString(undefined,{month:"short",day:"numeric"});}catch(e){return s;} };
@@ -126,7 +133,7 @@ function priceChart(series, last){
       <polygon points="${pad},${h-pad} ${pts} ${w-pad},${h-pad}" fill="${col}" opacity="0.08"/>
       <polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>
     <div style="display:flex;justify-content:space-between;color:var(--muted);font-size:11.5px;margin-top:4px;">
-      <span>${series.length} trading days</span><span>last <b style="color:var(--text)">$${fmtNum(last)}</b></span><span>range $${fmtNum(mn)} – $${fmtNum(mx)}</span></div></div>`;
+      <span>${series.length} trading days</span><span>last <b style="color:var(--text)">$${fmtNum(last)}</b></span><span>close range $${fmtNum(mn)} – $${fmtNum(mx)}</span></div></div>`;
 }
 function weekChip(ch){
   if(ch==null) return ` <span class="chg new" title="newly tracked">new</span>`;
@@ -567,7 +574,7 @@ function pitchStrip(d){
   const ctRow=(label,name,email,phone)=>{
     if(!name&&!email&&!phone) return "";
     const init=name?name.trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase():label.slice(0,2).toUpperCase();
-    const det=[email?`<div class="em">${esc(email)}</div>`:"",phone?`<div class="ph">${esc(phone)}</div>`:""].join("");
+    const det=[email?`<div class="em">${esc(email)}</div>`:"",phone?`<div class="ph">${esc(fmtPhone(phone))}</div>`:""].join("");
     return `<div class="ctc"><div class="av">${esc(init)}</div><div><div class="nm">${esc(name||label)}</div><div class="rl">${esc(label)}</div></div><div class="det">${det}</div></div>`;
   };
   const irRow=ctRow("Investor Relations",ct.ir_name,ct.ir_email,ct.ir_phone);
@@ -838,7 +845,7 @@ function renderTab(){
     const contactsHtml = hasContacts
       ? `<div class="ins-grid" style="grid-template-columns:1fr 1fr;max-width:560px;">
           ${ct.ceo?kvMini("CEO", esc(ct.ceo)):""}
-          ${ct.phone?kvMini("Phone", esc(ct.phone)):""}
+          ${ct.phone?kvMini("Phone", esc(fmtPhone(ct.phone))):""}
           ${addr?kvMini("Headquarters", esc(addr)):""}
           ${ct.employees?kvMini("Employees", ct.employees.toLocaleString()):""}
           ${ct.ipo?kvMini("IPO", esc(ct.ipo)):""}</div>
