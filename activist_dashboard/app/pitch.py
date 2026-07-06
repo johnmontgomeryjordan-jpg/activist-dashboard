@@ -242,7 +242,7 @@ def _point(key, r):
     if key == "weak_tsr_3y":
         t3 = r.get("tsr_3y"); sp = r.get("_spy_3y")
         if t3 is not None and sp is not None:
-            return (f"Total return of {t3 * 100:+.0f}% over three years vs the S&P's "
+            return (f"Price return of {t3 * 100:+.0f}% over three years vs the S&P's "
                     f"{sp * 100:+.0f}% — a structural, multi-year underperformer, not a one-year blip.")
         return "Has trailed the market for years — a structural underperformer, not a one-year blip."
     if key in ("cheap_abs", "cheap_pb"):
