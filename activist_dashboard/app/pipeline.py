@@ -316,6 +316,15 @@ def _annual_latest(flows):
     return ann[0]["val"]
 
 
+def _ttm_from(annual_v, interim_v, prior_v):
+    """Trailing-twelve-month value = latest full year + this fiscal year's interim (YTD) − the
+    prior-year same interim. None unless all three parts are present (caller then falls back to
+    the reporting-period figure). Rolls a seasonal quarter into a full, comparable year."""
+    if annual_v is None or interim_v is None or prior_v is None:
+        return None
+    return annual_v + interim_v - prior_v
+
+
 def _extract(facts):
     """Return (metrics, raw). Signals are computed from the company's MOST RECENT
     reporting period (latest 10-Q year-to-date), falling back to the latest annual
@@ -371,6 +380,31 @@ def _extract(facts):
     if ni is not None and p_days and p_days < 350:
         ni_ann = ni * 365.0 / p_days
 
+    # --- TTM (trailing-twelve-month) basis for the operating-performance signals -------------
+    # A single fiscal quarter is seasonally distorted (a jeweler's post-holiday Q1 trough, a
+    # builder's winter Q1), so margin / SG&A / ROA are rated on the trailing YEAR instead:
+    #   TTM = latest full year (10-K) + THIS interim (YTD) − prior-year same interim.
+    # Every part is pulled for the SAME reporting period, so numerator and denominator can't
+    # drift apart. Revenue-growth (annual) and EV/EBITDA (annual) already sidestep the quarter;
+    # this puts margin/ROA/SG&A on the same honest footing. Falls back to the reporting-period
+    # figures (annualized ROA) when the base is already a full year or a clean TTM isn't available.
+    _is_interim = p_days is not None and p_days < 350
+    if _is_interim:
+        t_rev = _ttm_from(_annual_latest(rev_f), rev, rev_prior)
+        t_opinc = _ttm_from(_annual_latest(op_f), opinc, _prior_year(op_f, p_end, p_days))
+        t_sga = _ttm_from(_annual_latest(sga_f), sga, _prior_year(sga_f, p_end, p_days))
+        t_ni = _ttm_from(_annual_latest(ni_f), ni, _prior_year(ni_f, p_end, p_days))
+    else:
+        t_rev = t_opinc = t_sga = t_ni = None
+    if _is_interim and t_rev and t_rev > 0 and t_opinc is not None:
+        m_rev, m_opinc, m_sga, m_ni = t_rev, t_opinc, t_sga, t_ni
+        m_label = ("trailing 12 mo to " + _pd(p_end).strftime("%b %Y")) if _pd(p_end) else "trailing 12 mo"
+        m_basis = "ttm"
+    else:                                   # base already a full year, or no clean TTM available
+        m_rev, m_opinc, m_sga, m_ni = rev, opinc, sga, ni_ann
+        m_label = _period_label(p_end, p_days) if p_end else None
+        m_basis = "period"
+
     def ratio(n, d, lo=None, hi=None):
         if n is None or not d or d <= 0:
             return None
@@ -409,18 +443,19 @@ def _extract(facts):
     annual_ni = _annual_latest(ni_f)
 
     metrics = {
-        "revenue": rev, "revenue_growth": growth,
-        "operating_margin": ratio_cap(opinc, rev, -5, 5), "sga_pct": ratio(sga, rev, 0, 5),
-        "roa": ratio_cap(ni_ann, assets, -5, 5),
+        "revenue": m_rev, "revenue_growth": growth,
+        "operating_margin": ratio_cap(m_opinc, m_rev, -5, 5), "sga_pct": ratio(m_sga, m_rev, 0, 5),
+        "roa": ratio_cap(m_ni, assets, -5, 5),
         "cash_to_assets": ratio(cash, assets, 0, 1),
         "debt_to_assets": ratio(debt, assets, 0, 5),
         "shares": shares, "book_equity": equity,
     }
     raw = {
-        "revenue": rev, "revenue_prior": rev_prior, "operating_income": opinc,
+        "revenue": m_rev, "revenue_prior": rev_prior, "operating_income": m_opinc,
         "revenue_growth_cur": g_cur, "revenue_growth_prior": g_prior,
         "revenue_growth_period": g_period,
-        "sga": sga, "net_income": ni, "net_income_ann": ni_ann,
+        "sga": m_sga, "net_income": ni, "net_income_ann": m_ni,
+        "margin_label": m_label, "margin_basis": m_basis,
         "annual_net_income": annual_ni,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
         "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill, "operating_lease": op_lease,
