@@ -176,6 +176,11 @@ SAY_ON_PAY_MIN = 0.20
 COMP_KEYS = ("overpaid_ceo",)
 # Fire when comp rose at least this much over the SCT window (cumulative).
 COMP_RISE_FLOOR = 0.05
+# A pay "rise" this large alongside a recent CEO-change 8-K is almost certainly a new-CEO ramp
+# (partial stub year -> first full year), not a real raise. Used as a scoring-side guard that
+# catches the Signet 333% case even when the proxy was parsed/cached BEFORE compensation.py's
+# ceo_transition flag existed (parse-time fixes don't touch cached rows; scoring guards do).
+COMP_RAMP_SUSPECT = 1.0
 # Exec-change stock reaction (the 1-day abnormal move vs S&P on a leadership-change 8-K).
 REACTION_KEYS = ("exec_reaction_drop",)
 # Fire when the stock fell at least this much MORE than the market on the announcement day.
@@ -1103,8 +1108,17 @@ def recompute_all():
             tsr = r.get("tsr_1y")
             lags = (tsr is not None and (tsr < 0 or (spy_1y is not None and (tsr - spy_1y) <= TSR_LAG_1Y)))
             # Suppress across a CEO change: the % then compares a new CEO's partial first year to a
-            # full year (a ramp, not a raise) — e.g. Signet's false "pay rose 333%". See compensation.py.
-            if pc is not None and pc >= COMP_RISE_FLOOR and lags and not comp.get("ceo_transition"):
+            # full year (a ramp, not a raise) — e.g. Signet's false "pay rose 333%". Two guards:
+            #  (a) the proxy itself flagged a transition (compensation.py) — precise, but only present
+            #      once the proxy is RE-parsed with that code; cached comp rows won't have it.
+            #  (b) scoring-side fallback for those cached rows: a big jump (>= COMP_RAMP_SUSPECT)
+            #      coinciding with a recent CEO-change 8-K in the window.
+            _ceo_change = any(
+                s.strip() in ("ceo_departure", "leadership_change")
+                for f in database.filings_in_window(_pad_cik(r["cik"]), config.SCORE_WINDOW_DAYS)
+                for s in (f.get("signals") or "").split(","))
+            _transition = comp.get("ceo_transition") or (_ceo_change and (pc or 0) >= COMP_RAMP_SUSPECT)
+            if pc is not None and pc >= COMP_RISE_FLOOR and lags and not _transition:
                 trig.append("overpaid_ceo")
         # Self-selected proxy peer group: does the company trail the peers it chose itself?
         peers_list = []
