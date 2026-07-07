@@ -43,8 +43,8 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2,
                  "lags_own_peers": 2, "strategic_review": 3}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
-                "layoffs": 1, "leadership_change": 1, "results_update": 0,
-                "news_negative": 1}
+                "restatement": 2, "layoffs": 1, "leadership_change": 1,
+                "results_update": 0, "news_negative": 1}
 POINTS = {**STRUCT_POINTS, **EVENT_POINTS}
 # The 0-100 number is an ABSOLUTE "activist-target profile" index, NOT a probability of
 # a campaign. Each triggered signal contributes its point weight scaled by *how severe*
@@ -145,6 +145,7 @@ LABELS = {
     "ceo_departure": "recent CEO/exec departure",
     "earnings_miss": "recent earnings miss / guidance cut",
     "impairment": "recent impairment / write-down",
+    "restatement": "financial restatement / non-reliance",
     "layoffs": "recent layoffs / restructuring",
     "leadership_change": "recent leadership change",
     "results_update": "recent results",
@@ -228,7 +229,8 @@ INPUTS_META = {
     "high_goodwill": ("goodwill", "total_assets", "goodwill {a} ÷ total assets {b}"),
 }
 EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
-                "impairment": "SEC 8-K", "layoffs": "SEC 8-K",
+                "impairment": "SEC 8-K", "restatement": "SEC 8-K Item 4.02",
+                "layoffs": "SEC 8-K",
                 "leadership_change": "SEC 8-K", "results_update": "SEC 8-K",
                 "news_negative": "News"}
 # A news headline only counts as an "active situation" when it BOTH (a) names an activist
