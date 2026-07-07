@@ -40,7 +40,9 @@ DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
 # Bump to force a one-time re-parse of every cached proxy (proxies are otherwise parsed once and
 # cached by accession, so a detector change wouldn't reach already-parsed names — e.g. Uber's
 # false flags would persist). This re-run also backfills compensation's ceo_transition flag.
-GOV_PARSER_VERSION = "2"
+# v3: header-anchored negation for "What We Do / What We Don't Do" governance-highlights tables
+#     (v2's 80-char window missed the distant column header, so Uber/CrowdStrike stayed flagged).
+GOV_PARSER_VERSION = "3"
 
 
 def _pad(cik):
@@ -108,14 +110,44 @@ _NEG = re.compile(
     r"are\s+not|was\s+not|were\s+not|no\s+longer|absence\s+of)\b")
 
 
+# Modern proxies summarize governance in a "What We Do / What We Don't Do" (a.k.a. governance-
+# highlights) table. After detagging, the ✓/✗ icons vanish and the items under "What We Don't Do"
+# read as bare noun phrases — "Have a stockholder rights plan (poison pill)  Have a classified
+# board" — with NO local negation word; the only cue is the distant column header. The 80-char
+# window (below) can't see it, so we ALSO anchor each match to the nearest preceding highlights
+# header: if the closest one (within the same table) is a "What We Don't Do", the provision is being
+# advertised as ABSENT. Note "do\b"/"do(?!\s*n)" won't match inside "don't"/"do not".
+_DONT_HDR = re.compile(r"what we do\s*n")        # "what we don't do" / "what we do not do"
+_DO_HDR = re.compile(r"what we do(?!\s*n)")       # positive column
+_HDR_SPAN = 1600                                  # keep it to the same table, not a page away
+
+
+def _in_dont_column(text, pos):
+    """True if `pos` sits under a 'What We Don't Do' highlights header with no intervening
+    'What We Do' reset — i.e. the phrase is in the list of provisions the company does NOT have."""
+    dont = None
+    for m in _DONT_HDR.finditer(text, 0, pos):
+        dont = m.start()
+    if dont is None or pos - dont > _HDR_SPAN:
+        return False
+    do = None
+    for m in _DO_HDR.finditer(text, 0, pos):
+        do = m.start()
+    return do is None or do <= dont              # no positive header sits between the two
+
+
 def _present(text, phrases):
-    """True only if a phrase appears (a) as a WHOLE word — so 'classified board' can't match
-    inside 'declassified board' — and (b) NOT negated in the ~80 chars before it — so 'No poison
-    pill' / 'we do not maintain a rights plan' don't count as the provision being in place."""
+    """True only if a phrase appears (a) as a WHOLE word — so 'classified board' can't match inside
+    'declassified board' — and it is not being advertised as ABSENT, either (b) via a local negation
+    in the ~120 chars before it ('No poison pill', 'we do not maintain a rights plan') or (c) because
+    it falls under a 'What We Don't Do' governance-highlights column."""
     for p in phrases:
         for m in re.finditer(r"\b" + re.escape(p), text):   # leading word boundary
-            if not _NEG.search(text[max(0, m.start() - 80):m.start()]):
-                return True
+            if _NEG.search(text[max(0, m.start() - 120):m.start()]):
+                continue
+            if _in_dont_column(text, m.start()):
+                continue
+            return True
     return False
 
 
