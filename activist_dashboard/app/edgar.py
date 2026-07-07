@@ -10,9 +10,11 @@ text to confirm the signal, instead of trusting the item code alone:
   * Item 2.02 (results of operations): tag "earnings_miss" only if the text shows
     a miss / guidance cut; otherwise "results_update" (note only, 0 points).
 
-Item 2.06 (impairment) and 2.05 (restructuring/exit costs) are specific enough to
-trust by code. Text is fetched only for NEW 5.02/2.02 filings (skip already-stored
-ones), so the extra requests stay bounded.
+Item 2.06 (impairment), 2.05 (restructuring/exit costs), and 4.02 (non-reliance on
+previously issued financials — i.e. a restatement) are specific enough to trust by
+code: 4.02 is filed ONLY for a non-reliance/restatement event, so no text confirm is
+needed. Text is fetched only for NEW 5.02/2.02 filings (skip already-stored ones), so
+the extra requests stay bounded.
 """
 import re
 import time
@@ -27,13 +29,18 @@ ARCHIVE_BASE = "https://www.sec.gov/Archives/edgar/data"
 FORMS = {"8-K", "10-K", "10-Q"}
 
 # Bump this string to force a one-time re-classification of stored filings.
-CLASSIFIER_VERSION = "2026-06-08-text-confirm"
+# 2026-07-07: added Item 4.02 (restatement / non-reliance) — the re-classification pass
+# re-tags 8-Ks already in the window so existing non-reliance filings light up.
+CLASSIFIER_VERSION = "2026-07-07-item402-restatement"
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
 _TAG = re.compile(r"<[^>]+>")
 
-ITEM_DIRECT = {"2.06": "impairment", "2.05": "layoffs"}
+# Item codes trusted by code (no text confirm). 4.02 = Non-Reliance on Previously Issued
+# Financial Statements — a restatement/non-reliance event, one of the strongest accounting
+# catalysts activists key off (it forces board/audit-committee accountability).
+ITEM_DIRECT = {"2.06": "impairment", "2.05": "layoffs", "4.02": "restatement"}
 
 DEPART_TERMS = [
     "resign", "resignation", "step down", "stepping down", "stepped down",
@@ -106,6 +113,7 @@ PRETTY = {
     "results_update": "Results",
     "impairment": "Material impairment",
     "layoffs": "Restructuring / exit costs",
+    "restatement": "Restatement / non-reliance",
 }
 
 
