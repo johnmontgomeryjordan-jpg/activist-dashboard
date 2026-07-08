@@ -159,6 +159,14 @@ EXCLUDE_PATTERNS = [
     "too early to buy", "too soon to buy", "early to buy", "still too early",
     "not a buy", "is a buy", "a buy?", "still a buy", "worth buying",
     "buy rating", "hold rating", "sell rating", "reiterates", "initiates coverage",
+    # algorithmic stock-screener content (ChartMill "Caviar Cruise" / quality-screen genre) and
+    # bullish CEO/analyst thought-leadership — relevant-sounding but NOT a company event. These
+    # were showing on profiles: "Caviar Cruise Quality Screen Analysis", "A Quality Investment
+    # with Strong Margins and Cheap Valuation", and the "AeroVironment CEO warns global warfare
+    # faces a historic inflection point" macro comment that mis-fired the negative-headline signal.
+    "quality screen", "caviar cruise", "screen analysis", "value screen", "growth screen",
+    "stock screen", "quality investment", "quality stock", "inflection point",
+    "more bullish", "more bearish", "bull case", "bear case", "revolution makes",
     # political / non-corporate "ousted/steps down/fight" false positives
     "worker party", "workers' party", "party chief", "cadres", "prime minister",
     "parliament", "general election", "lawmaker", "republican", "democrat",
@@ -194,6 +202,40 @@ def is_relevant(title):
     if _is_noise(title):
         return False
     return any(kw in t for kw in DISTRESS_KEYWORDS)
+
+
+# --- Activist-relevance ranking for the daily-email "Top headlines" --------------------------
+# The on-site panels rank headlines client-side (app.js); the emailed pitch kit needs the same
+# server-side, so smart-money / activism items lead instead of generic market/distress noise.
+_RANK_OWNERSHIP = ("13g", "13f", "builds stake", "raises stake", "takes stake", "boosts stake",
+                   "new stake", "million stake", "takes a position", "new position",
+                   "acquires a stake", "hedge fund", "activist", "13d", "proxy fight",
+                   "proxy contest", "elliott", "starboard", "icahn", "ackman", "pershing square",
+                   "ancora", "jana", "third point", "trian", "valueact", "engaged capital")
+_RANK_STRATEGIC = ("strategic review", "explores sale", "exploring sale", "takeover", "buyout",
+                   "to acquire", "merger", "spin-off", "spinoff", "break up", "break-up", "sale of")
+_RANK_LEADERSHIP = ("steps down", "stepping down", "resigns", "ousted", "departs", "interim ceo",
+                    "new ceo", "names ceo", "leadership change", "shake-up", "shakeup")
+
+
+def relevance_rank(title):
+    """Activist-relevance bucket (lower = surfaced first): ownership/activism, then strategic
+    (M&A / sale), then leadership, then everything else."""
+    t = " " + _norm(title) + " "
+    if any(k in t for k in _RANK_OWNERSHIP):
+        return 0
+    if any(k in t for k in _RANK_STRATEGIC):
+        return 1
+    if any(k in t for k in _RANK_LEADERSHIP):
+        return 2
+    return 3
+
+
+def rank_relevant(rows, limit=6):
+    """Order stored headlines by activist-relevance, tie-broken by recency; trim to `limit`."""
+    ordered = sorted(rows, key=lambda r: r.get("published_at") or "", reverse=True)  # newest first
+    ordered.sort(key=lambda r: relevance_rank(r.get("headline") or ""))              # stable
+    return ordered[:limit]
 
 
 def fetch_headlines(limit=40):
