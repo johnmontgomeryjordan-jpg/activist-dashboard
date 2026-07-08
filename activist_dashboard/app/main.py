@@ -17,7 +17,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from . import config, database, pipeline, emailer, scoring, spotlight
+from . import config, database, pipeline, emailer, scoring, spotlight, universe
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -43,6 +43,13 @@ async def lifespan(app: FastAPI):
                       CronTrigger(hour=config.DIGEST_HOUR_ET, minute=0,
                                   timezone=config.TIMEZONE),
                       id="digest", replace_existing=True, max_instances=1)
+    # Weekly (Sun 05:00): refresh S&P 1500 membership from iShares. Fails safe --
+    # keeps the committed universe.csv on any fetch failure or sanity-gate rejection.
+    scheduler.add_job(universe.rebuild_universe_csv,
+                      CronTrigger(day_of_week="sun", hour=5, minute=0,
+                                  timezone=config.TIMEZONE),
+                      id="universe_rebuild", replace_existing=True,
+                      max_instances=1)
     scheduler.start()
     threading.Thread(target=_run_initial_refresh, daemon=True).start()
     yield
