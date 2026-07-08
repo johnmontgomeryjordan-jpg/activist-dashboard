@@ -239,14 +239,14 @@ function renderFresh(){
 }
 
 /* ===== Top headlines (dashboard) ===== */
-const NEWS_PRIORITY={activist:0,proxy:1,exec:2,movers:3,distress:4,market:5};
+const NEWS_PRIORITY={ownership:0,activist:0,proxy:1,exec:2,movers:3,distress:4,market:5};
 function toplineNews(news){
   return [...news].sort((a,b)=>(b.published_at||"").localeCompare(a.published_at||"")).slice(0,12)
     .sort((a,b)=>(NEWS_PRIORITY[newsCategory(a.headline)]-NEWS_PRIORITY[newsCategory(b.headline)])||(b.published_at||"").localeCompare(a.published_at||"")).slice(0,5);
 }
-function newsItemRow(n){
+function newsItemRow(n){ const cat=newsCategory(n.headline);
   return `<div class="item"><a href="${esc(n.url)}" target="_blank" rel="noopener">${esc(n.headline)}</a>
-    <div class="meta"><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div></div>`;
+    <div class="meta"><span class="tag cat-${cat}">${CAT_LABEL[cat]||"News"}</span><span class="tag">${esc(n.source)||"news"}</span><span>${fmtDate(n.published_at)}</span></div></div>`;
 }
 function renderTopNews(){
   const el=document.getElementById("topNews"); if(!el) return;
@@ -260,12 +260,17 @@ const CAT_ACTIVIST=["activist","proxy fight","proxy battle","proxy contest","13d
 const CAT_PROXY=["glass lewis","proxy advisor","proxy adviser","institutional shareholder services","iss recommends","iss advises","iss backs","recommends against","withhold vote","withhold votes"];
 const CAT_EXEC=["steps down","stepping down","steps aside","to resign","resigns","resigned","ousted","ousts","departs","departure","interim ceo","interim cfo","names ceo","new ceo","appoints ceo","names new chief","leadership change","management shake","shake-up","shakeup","reshuffle","exits as ceo","exits as cfo"];
 const CAT_MARKET=["nasdaq","s&p","dow jones"," dow ","wall street","stock market","stocks ","futures","treasury","global markets","indexes","indices"];
-const CATS=[["activist","Activist activity"],["proxy","Proxy advisors"],["exec","Executive changes"],["movers","Price movers"],["distress","Earnings & distress"],["market","Market"]];
+// Smart-money / ownership moves — a fund building (or taking) a position. The highest-value
+// corroboration for a proactive lead, so it gets its own top-priority bucket instead of falling
+// into "distress". 13D is left in CAT_ACTIVIST (it's an activist filing); passive 13G/13F land here.
+const CAT_OWNERSHIP=["13g","13f","builds stake","raises stake","takes stake","boosts stake","new stake","million stake","initiates a position","initiates position","new position","boosts its position","raises its position","increases its position","increased its position","adds to its position","adds to position","takes a position","acquires a stake","buys a stake","snaps up","scoops up","hedge fund"];
+const CATS=[["ownership","Ownership & stakes"],["activist","Activist activity"],["proxy","Proxy advisors"],["exec","Executive changes"],["movers","Price movers"],["distress","Earnings & distress"],["market","Market"]];
+const CAT_LABEL={ownership:"Ownership",activist:"Activist",proxy:"Proxy",exec:"Leadership",movers:"Price move",distress:"Distress",market:"Market"};
 const FILING_CATS=[["exec","Executive changes"],["earn","Earnings & guidance"],["impair","Impairments & write-downs"],["restr","Restructuring & layoffs"],["other","Other filings"]];
 const FILING_PRIORITY={exec:0,earn:1,impair:2,restr:3,other:4};
 let NEWS_GROUPS={}, FILING_GROUPS={};
 function newsCategory(h){ const t=" "+(h||"").toLowerCase()+" "; const has=a=>a.some(k=>t.includes(k));
-  if(has(CAT_PROXY)) return "proxy"; if(has(CAT_ACTIVIST)) return "activist"; if(has(CAT_EXEC)) return "exec";
+  if(has(CAT_PROXY)) return "proxy"; if(has(CAT_ACTIVIST)) return "activist"; if(has(CAT_OWNERSHIP)) return "ownership"; if(has(CAT_EXEC)) return "exec";
   const m=MOVE_RE.test(t); if(m&&has(CAT_MARKET)) return "market"; if(m) return "movers"; return "distress"; }
 function filingCategory(f){ const s=(f.signals||"").toLowerCase();
   if(/ceo_departure|leadership_change/.test(s)) return "exec"; if(/earnings_miss|results_update/.test(s)) return "earn";
@@ -618,7 +623,7 @@ function leadHook(c){
   try{ const p=typeof c.pitch==="string"?JSON.parse(c.pitch||"{}"):(c.pitch||{}); arch=ARCH_LABEL[p.archetype]||""; }catch(e){}
   return [arch,distinctiveSignal(c.signals)].filter(Boolean).join(" · ");
 }
-const NEWS_RANK={activist:0,exec:1,distress:2,proxy:3,movers:4,market:5};
+const NEWS_RANK={ownership:0,activist:0,exec:1,distress:2,proxy:3,movers:4,market:5};
 function pkPickLead(){
   const pool=(SHORTLIST||[]).filter(c=>!c.active_situation);
   if(!pool.length) return null;
@@ -860,7 +865,11 @@ function renderTab(){
   }
   else if(CURRENT_TAB==="filings"){
     const filings=(d.filings||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.company)} — ${esc(x.title)}</a><div class="meta"><span class="tag">${esc(x.form)}</span><span>${fmtDate(x.filed_at)}</span></div></div>`).join("")||`<div class="empty">No recent filings on record.</div>`;
-    const news=(d.news||[]).map(x=>`<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.headline)}</a><div class="meta"><span class="tag">${esc(x.source)||"news"}</span><span>${fmtDate(x.published_at)}</span></div></div>`).join("")||`<div class="empty">No recent matched news.</div>`;
+    const news=(d.news||[]).slice()
+      .sort((a,b)=>(b.published_at||"").localeCompare(a.published_at||""))
+      .sort((a,b)=>((NEWS_PRIORITY[newsCategory(a.headline)]??9)-(NEWS_PRIORITY[newsCategory(b.headline)]??9)))
+      .map(x=>{const cat=newsCategory(x.headline);
+        return `<div class="row2"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.headline)}</a><div class="meta"><span class="tag cat-${cat}">${CAT_LABEL[cat]||"News"}</span><span class="tag">${esc(x.source)||"news"}</span><span>${fmtDate(x.published_at)}</span></div></div>`;}).join("")||`<div class="empty">No recent matched news.</div>`;
     body.innerHTML=`<div class="mh3">Recent SEC filings</div><div class="dlist">${filings}</div>
       <div class="mh3">Recent news</div><div class="dlist">${news}</div>
       <div style="margin-top:16px;"><a class="extlink" href="${secUrl(d.cik)}" target="_blank" rel="noopener">All SEC filings on EDGAR ↗</a></div>`;
