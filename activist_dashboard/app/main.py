@@ -251,6 +251,20 @@ def api_shortlist_csv():
                     headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 
+def _gated_company_news(ticker, name, limit=10):
+    """Per-company news, filtered to items that actually name the company (reusing the
+    scoring name-matcher), so a ticker's Finnhub feed can't leak competitor/unrelated
+    roundups — e.g. an 'American Electric Power' or 'WaterBridge' headline surfacing under
+    Hawaiian Electric. Falls back to the ungated feed only when NOTHING name-matches, so a
+    thinly-covered name still shows something rather than an empty panel."""
+    if not ticker:
+        return []
+    rows = database.get_news_for_ticker(ticker, limit=limit * 3)
+    _, keys = scoring._company_keys(name or "")
+    gated = [n for n in rows if scoring._headline_about_company(n.get("headline"), keys)] if keys else []
+    return (gated if gated else rows)[:limit]
+
+
 @app.get("/api/company")
 def api_company(cik: str):
     """Full detail for one flagged company."""
@@ -450,7 +464,7 @@ def api_company(cik: str):
             "return_on_equity": _sec_ratio("net_income", "book_equity") if _sec_ratio("net_income", "book_equity") is not None else avf("ReturnOnEquityTTM"),
         },
         "filings": database.get_filings_by_cik(cik, limit=12),
-        "news": database.get_news_for_ticker(ticker, limit=10) if ticker else [],
+        "news": _gated_company_news(ticker, score.get("company")),
     }
 
 
