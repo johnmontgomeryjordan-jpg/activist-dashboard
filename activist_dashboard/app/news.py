@@ -131,6 +131,13 @@ EXCLUDE_PATTERNS = [
     "nba", " nfl ", " mlb ", " afc ", " cfc ", "midfielder", "striker",
     " coach ", "head coach", "world cup", " wc exit", "olympic", "tournament",
     "quarterback", "touchdown", " league ",
+    # sports staff / management (a "steps down"/"departs" that dodges the words above —
+    # e.g. "Xavi Valero steps down from Liverpool goalkeeper coaching role"). Kept sports-
+    # specific so a real corporate "CEO/CFO steps down" is never suppressed.
+    "goalkeeper", "goalkeeping", "coaching role", "coaching staff", "assistant coach",
+    "head coaching", "caretaker manager", "transfer window", "loan spell", "under-21",
+    "reserve team", "sporting director", "relegation", "rugby", "cricket", "wimbledon",
+    "grand prix", "formula 1", " pga ",
     # govt / non-US share sales
     "crore", " ofs ", "nlc india", " sebi ", "lakh", "disinvestment", " rs ",
     # crypto price/promo (not a company distress signal)
