@@ -239,7 +239,7 @@ function renderFresh(){
 }
 
 /* ===== Top headlines (dashboard) ===== */
-const NEWS_PRIORITY={ownership:0,activist:0,proxy:1,exec:2,movers:3,distress:4,market:5};
+const NEWS_PRIORITY={ownership:0,activist:0,proxy:1,exec:2,movers:3,distress:4,market:5,other:6};
 function toplineNews(news){
   return [...news].sort((a,b)=>(b.published_at||"").localeCompare(a.published_at||"")).slice(0,12)
     .sort((a,b)=>(NEWS_PRIORITY[newsCategory(a.headline)]-NEWS_PRIORITY[newsCategory(b.headline)])||(b.published_at||"").localeCompare(a.published_at||"")).slice(0,5);
@@ -264,14 +264,18 @@ const CAT_MARKET=["nasdaq","s&p","dow jones"," dow ","wall street","stock market
 // corroboration for a proactive lead, so it gets its own top-priority bucket instead of falling
 // into "distress". 13D is left in CAT_ACTIVIST (it's an activist filing); passive 13G/13F land here.
 const CAT_OWNERSHIP=["13g","13f","builds stake","raises stake","takes stake","boosts stake","new stake","million stake","initiates a position","initiates position","new position","boosts its position","raises its position","increases its position","increased its position","adds to its position","adds to position","takes a position","acquires a stake","buys a stake","snaps up","scoops up","hedge fund"];
-const CATS=[["ownership","Ownership & stakes"],["activist","Activist activity"],["proxy","Proxy advisors"],["exec","Executive changes"],["movers","Price movers"],["distress","Earnings & distress"],["market","Market"]];
-const CAT_LABEL={ownership:"Ownership",activist:"Activist",proxy:"Proxy",exec:"Leadership",movers:"Price move",distress:"Distress",market:"Market"};
+// Genuine company distress (earnings / guidance / impairment / legal). The catch-all is now
+// "other" (a neutral "News" chip) instead of "distress", so a benign per-company item — e.g. a
+// screener blurb or a neutral product note — isn't mislabelled "Distress".
+const CAT_DISTRESS=["guidance","profit warning","earnings miss","misses estimates","misses expectations","shortfall","downgrade","downgraded","impairment","write-down","writedown","restructuring","layoff","job cuts","warns","warned","disappoint","strategic review","explores sale","exploring sale","bankruptcy","default","investigation","lawsuit","probe","restatement","recall","cuts outlook","lowers outlook","cuts forecast","slashes","weak guidance","halts"];
+const CATS=[["ownership","Ownership & stakes"],["activist","Activist activity"],["proxy","Proxy advisors"],["exec","Executive changes"],["movers","Price movers"],["distress","Earnings & distress"],["market","Market"],["other","Other"]];
+const CAT_LABEL={ownership:"Ownership",activist:"Activist",proxy:"Proxy",exec:"Leadership",movers:"Price move",distress:"Distress",market:"Market",other:"News"};
 const FILING_CATS=[["exec","Executive changes"],["earn","Earnings & guidance"],["impair","Impairments & write-downs"],["restr","Restructuring & layoffs"],["other","Other filings"]];
 const FILING_PRIORITY={exec:0,earn:1,impair:2,restr:3,other:4};
 let NEWS_GROUPS={}, FILING_GROUPS={};
 function newsCategory(h){ const t=" "+(h||"").toLowerCase()+" "; const has=a=>a.some(k=>t.includes(k));
   if(has(CAT_PROXY)) return "proxy"; if(has(CAT_ACTIVIST)) return "activist"; if(has(CAT_OWNERSHIP)) return "ownership"; if(has(CAT_EXEC)) return "exec";
-  const m=MOVE_RE.test(t); if(m&&has(CAT_MARKET)) return "market"; if(m) return "movers"; return "distress"; }
+  const m=MOVE_RE.test(t); if(m&&has(CAT_MARKET)) return "market"; if(m) return "movers"; if(has(CAT_DISTRESS)) return "distress"; return "other"; }
 function filingCategory(f){ const s=(f.signals||"").toLowerCase();
   if(/ceo_departure|leadership_change/.test(s)) return "exec"; if(/earnings_miss|results_update/.test(s)) return "earn";
   if(/impairment/.test(s)) return "impair"; if(/layoff|restructuring/.test(s)) return "restr"; return "other"; }
@@ -623,7 +627,7 @@ function leadHook(c){
   try{ const p=typeof c.pitch==="string"?JSON.parse(c.pitch||"{}"):(c.pitch||{}); arch=ARCH_LABEL[p.archetype]||""; }catch(e){}
   return [arch,distinctiveSignal(c.signals)].filter(Boolean).join(" · ");
 }
-const NEWS_RANK={ownership:0,activist:0,exec:1,distress:2,proxy:3,movers:4,market:5};
+const NEWS_RANK={ownership:0,activist:0,exec:1,distress:2,proxy:3,movers:4,market:5,other:6};
 function pkPickLead(){
   const pool=(SHORTLIST||[]).filter(c=>!c.active_situation);
   if(!pool.length) return null;
