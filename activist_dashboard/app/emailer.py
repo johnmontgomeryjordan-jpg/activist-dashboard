@@ -22,7 +22,7 @@ from email.utils import formataddr
 
 import requests
 
-from . import config, database, spotlight
+from . import config, database, spotlight, news
 
 RESEND_URL = "https://api.resend.com/emails"
 SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
@@ -234,7 +234,9 @@ def send_digest():
         return 0
     rows = database.get_scores(limit=80)
     lead = spotlight.todays_lead(rows, database)
-    headlines = database.recent_news(limit=6, relevant_only=True)  # curated, no routine clutter
+    # Curated + ranked by activist-relevance (ownership/activism first), not just most-recent, so
+    # the email leads with smart-money / campaign items rather than generic market headlines.
+    headlines = news.rank_relevant(database.recent_news(limit=30, relevant_only=True), 6)
     filings = database.recent_filings(limit=5)
     body = build_digest_html(lead, rows, headlines, filings)
     subject = "FGS — Daily Pitch Kit"
