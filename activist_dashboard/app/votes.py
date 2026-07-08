@@ -29,19 +29,34 @@ WINDOW_DAYS = 420          # one annual-meeting cycle (+ slack)
 _session = requests.Session()
 _session.headers.update(HEADERS)
 _TAG = re.compile(r"<[^>]+>")
-# A real vote tally in an 8-K 5.07 is ALWAYS comma-grouped (e.g. "123,456,789"). Requiring a
-# comma is what stops the old bug: the bare-number regex matched "2026" (the meeting year, which
-# sits right next to the say-on-pay phrase) as a "vote count", then paired it with a real share
-# tally -> 2026 / 300,000,000 ≈ 0% "support". A comma-grouped pattern can't match a plain year.
-_TALLY = re.compile(r"\d{1,3}(?:,\d{3})+")
-# Label-anchored For/Against: tie each tally to its column label so we don't grab arbitrary
-# numbers. Allow a little non-digit slack between the label and its number.
-_FOR = re.compile(r"\bfor\b[^\d]{0,25}?(\d{1,3}(?:,\d{3})+)")
-_AGAINST = re.compile(r"\bagainst\b[^\d]{0,25}?(\d{1,3}(?:,\d{3})+)")
+# A genuine say-on-pay result is a For / Against / Abstain triple, each a comma-grouped tally
+# (e.g. "65,000,000"). Requiring all three (in order) is what separates the real vote from
+#   (a) the say-on-pay FREQUENCY proposal, which shares the "compensation of named executive
+#       officers" wording but reports 1-Year / 2-Year / 3-Year options, never For/Against, and
+#   (b) narrative prose that merely mentions "for" or "compensation".
+# This replaced a fragile "first For number, first Against number" read that anchored on the wrong
+# row and mis-scored Simply Good Foods at 50% when the real say-on-pay passed with 96.5%. Two
+# layouts survive de-tagging:
+#   interleaved:  "For 65,000,000 Against 2,400,000 Abstained 50,000"
+#   header+data:  "For Against Abstained Broker Non-Votes  65,000,000 2,400,000 50,000 4,000,000"
+_ROW_INTERLEAVED = re.compile(
+    r"\bfor\b[^\d]{0,20}(\d{1,3}(?:,\d{3})+)"
+    r"[^\d]{0,60}?\bagainst\b[^\d]{0,20}(\d{1,3}(?:,\d{3})+)"
+    r"[^\d]{0,80}?\babstain")
+_ROW_HEADER = re.compile(
+    r"\bfor\b[^\d]{0,20}\bagainst\b[^\d]{0,20}\babstain\w*[^\d]{0,80}?"
+    r"(\d{1,3}(?:,\d{3})+)[^\d]{0,20}(\d{1,3}(?:,\d{3})+)")
 # A real say-on-pay "For" essentially never falls below ~20%, even when the vote FAILS (failed
 # say-on-pay votes cluster around 40-60%). A parsed value below this means we anchored on the
 # wrong numbers, so we treat it as UNPARSED (None) rather than emit a false near-0% signal.
 MIN_PLAUSIBLE_SOP = 0.20
+# For + Against on a real S&P 1500 say-on-pay vote is in the millions of shares; a total far below
+# that means we anchored on small/wrong numbers, so reject it.
+MIN_VOTES = 1_000_000
+# Bump to force a one-time re-parse of cached votes when the parser changes. Votes are otherwise
+# cached by meeting accession, so a fix wouldn't reach a name until its NEXT annual meeting — e.g.
+# Simply Good Foods' mis-parsed 50% would linger for a year.
+VOTES_PARSER_VERSION = "2026-07-08-row-anchored"
 
 # Phrases that identify the advisory say-on-pay proposal (lowercased).
 SOP_PHRASES = [
@@ -54,6 +69,7 @@ SOP_PHRASES = [
     "advisory approval of the compensation",
     "compensation of our named executive officers",
     "compensation of the named executive officers",
+    "compensation of named executive officers",   # bare (e.g. Simply Good Foods' proposal title)
     "say-on-pay", "say on pay",
 ]
 _HELD = re.compile(r"held on\s+([A-Z][a-z]+ \d{1,2},? \d{4})")
@@ -121,33 +137,35 @@ def _iter_positions(low):
 
 
 def _for_against(window):
-    """(for, against) vote tallies from a window. Prefer label-anchored numbers ("For 12,345,678
-    … Against 234,567"); fall back to the first two comma-grouped tallies (a flattened
-    For/Against/Abstain row). Returns None if two tallies can't be found."""
-    fm, am = _FOR.search(window), _AGAINST.search(window)
-    if fm and am:
-        return int(fm.group(1).replace(",", "")), int(am.group(1).replace(",", ""))
-    tallies = [int(t.replace(",", "")) for t in _TALLY.findall(window)]
-    if len(tallies) >= 2:
-        return tallies[0], tallies[1]
-    return None
+    """(for, against) from a genuine say-on-pay result row, or None. Requires a For/Against/Abstain
+    structure (interleaved or header-then-data) so arbitrary numbers can't be grabbed."""
+    m = _ROW_INTERLEAVED.search(window) or _ROW_HEADER.search(window)
+    if not m:
+        return None
+    return int(m.group(1).replace(",", "")), int(m.group(2).replace(",", ""))
 
 
 def parse_say_on_pay(html):
     """Return (approval_fraction, meeting_date) from an 8-K 5.07, or (None, meeting).
-    approval = For / (For + Against) on the advisory executive-compensation vote. Returns None
-    for approval when no PLAUSIBLE say-on-pay tally is found — never a garbage near-0% value."""
+    approval = For / (For + Against) on the advisory executive-compensation vote. Anchors on the
+    real say-on-pay result row (For/Against/Abstain, millions of shares) and skips the say-on-pay
+    FREQUENCY proposal; returns None rather than a mis-anchored value."""
     text = _TAG.sub(" ", html or "")
     low = text.lower()
     m = _HELD.search(text)
     meeting = m.group(1) if m else None
     for pos in _iter_positions(low):
-        fa = _for_against(low[pos:pos + 1200])
+        # The say-on-pay FREQUENCY proposal reuses the "compensation of named executive officers"
+        # wording, but it reports 1-Year / 2-Year / 3-Year options with NO For/Against — so the
+        # structured row match below (which requires a For/Against/Abstain triple) can't anchor on
+        # it, and a window opened on the frequency proposal simply reads forward to the real
+        # say-on-pay result row.
+        fa = _for_against(low[pos:pos + 1500])
         if not fa:
             continue
         for_v, against_v = fa
         denom = for_v + against_v
-        if denom <= 0:
+        if denom < MIN_VOTES:          # anchored on small/wrong numbers, not a real company vote
             continue
         approval = for_v / denom
         # Only accept a plausible result; skip mis-anchored parses (e.g. a year read as a tally).
@@ -162,13 +180,17 @@ def refresh_votes(ciks, window_days=WINDOW_DAYS):
     from datetime import datetime, timedelta
     start = (datetime.utcnow() - timedelta(days=window_days)).date().isoformat()
     end = datetime.utcnow().date().isoformat()
+    # One-time full re-parse when the parser version changes (see VOTES_PARSER_VERSION): re-read
+    # even already-seen accessions, and overwrite any stale value (a corrected number, or None to
+    # clear a bad one) so a fixed parse reaches cached names immediately.
+    force = database.get_meta("votes_parser_version") != VOTES_PARSER_VERSION
     done = 0
     for cik in ciks:
         cik10 = _pad(cik)
         f = _latest_507(cik10, start, end); time.sleep(0.15)
         if not f or not f.get("accn"):
             continue
-        if database.votes_accn_seen(cik10, f["accn"]):
+        if (not force) and database.votes_accn_seen(cik10, f["accn"]):
             continue  # already parsed this meeting's filing
         nod = f["accn"].replace("-", "")
         url = f"{ARCHIVE}/{int(cik10)}/{nod}/{f['doc']}" if f.get("doc") else \
@@ -177,9 +199,14 @@ def refresh_votes(ciks, window_days=WINDOW_DAYS):
         if not r or not r.text:
             continue
         approval, meeting = parse_say_on_pay(r.text)
-        if approval is None:
+        if approval is None and not force:
             continue
+        # On a forced re-parse, store even None so a previously mis-parsed value is overwritten.
         database.upsert_votes(cik10, approval, None, None, meeting, f["accn"], url)
-        done += 1
-    print(f"[votes] parsed say-on-pay for {done} of {len(ciks)} names")
+        if approval is not None:
+            done += 1
+    if force:
+        database.set_meta("votes_parser_version", VOTES_PARSER_VERSION)
+    print(f"[votes] parsed say-on-pay for {done} of {len(ciks)} names"
+          + ("  (full re-parse: parser " + VOTES_PARSER_VERSION + ")" if force else ""))
     return done
