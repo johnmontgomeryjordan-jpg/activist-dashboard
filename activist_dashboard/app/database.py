@@ -299,6 +299,16 @@ def get_all_entities():
         return [dict(r) for r in conn.execute("SELECT * FROM entity ORDER BY ticker")]
 
 
+def get_entity_by_ticker(ticker):
+    """Entity-master row for a ticker (case-insensitive). Powers the debug lookup + U3 search."""
+    if not ticker:
+        return {}
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM entity WHERE UPPER(ticker)=UPPER(?)",
+                         (ticker,)).fetchone()
+        return dict(r) if r else {}
+
+
 def ticker_for_cusip(cusip):
     """Resolve a CUSIP to a ticker: the FTD/OpenFIGI cusip_map first, then entity."""
     if not cusip:
@@ -334,6 +344,26 @@ def upsert_cusip(cusip, ticker, name=None, source="ftd"):
 def cusip_map_count():
     with get_conn() as conn:
         return conn.execute("SELECT COUNT(*) AS n FROM cusip_map").fetchone()["n"]
+
+
+def entity_stats():
+    """Fill stats for the entity master + cusip map (U2 validation)."""
+    with get_conn() as conn:
+        def n(sql):
+            return conn.execute(sql).fetchone()["n"]
+        idx = {}
+        for r in conn.execute(
+                "SELECT COALESCE(NULLIF(index_tags,''),'(none)') AS t, COUNT(*) AS n "
+                "FROM entity GROUP BY t"):
+            idx[r["t"]] = r["n"]
+        return {
+            "entity_rows": n("SELECT COUNT(*) AS n FROM entity"),
+            "with_market_cap": n("SELECT COUNT(*) AS n FROM entity WHERE market_cap IS NOT NULL"),
+            "with_sector": n("SELECT COUNT(*) AS n FROM entity WHERE sector IS NOT NULL AND sector<>''"),
+            "with_cusip": n("SELECT COUNT(*) AS n FROM entity WHERE cusip IS NOT NULL AND cusip<>''"),
+            "index_tags": idx,
+            "cusip_map_size": n("SELECT COUNT(*) AS n FROM cusip_map"),
+        }
 
 
 # --- Alpha Vantage overview --------------------------------------------------
@@ -741,6 +771,23 @@ def get_activist_flag(cik):
 def get_all_activist_flags():
     with get_conn() as conn:
         return {r["cik"]: dict(r) for r in conn.execute("SELECT * FROM activist_flag")}
+
+
+def reset_situations_once(version):
+    """One-time clean slate for Active Situations, gated by a version string in `meta` so it
+    runs exactly once per version bump (not every boot). Clears the hand-set manual tags, the
+    activist_flag table, and any lingering situation columns on `scores` -- then the normal
+    sweep + recompute repopulate only fresh, in-window (<=18-month) situations."""
+    if get_meta("situations_reset") == version:
+        return False
+    with get_conn() as conn:
+        conn.execute("DELETE FROM manual_situations")
+        conn.execute("DELETE FROM activist_flag")
+        conn.execute("UPDATE scores SET active_situation=0, situation_tier='', "
+                     "situation_meta=NULL")
+    set_meta("situations_reset", version)
+    print(f"[situations] clean-slate reset applied (version={version})")
+    return True
 
 
 # --- Manual active-situation overrides + audit trail -------------------------
