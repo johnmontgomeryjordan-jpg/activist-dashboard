@@ -28,7 +28,9 @@ year + period end + accession), so the detail view can show the exact math + a f
 import os
 import time
 import gc
+import io
 import json
+import zipfile
 import traceback
 from datetime import datetime, timedelta
 
@@ -763,6 +765,131 @@ def refresh_entity_master(max_companies=None):
     return done
 
 
+# ---- U2b: free CUSIP -> ticker map from SEC Fails-to-Deliver files ----------
+def _ftd_candidate_urls():
+    """Recent FTD file URLs, newest first: both halves ('b' then 'a') of the last
+    FTD_MONTHS months. Current-month files may not exist yet; _get returns None on 404
+    and we move on."""
+    urls = []
+    now = datetime.utcnow()
+    y, mo = now.year, now.month
+    for _ in range(max(1, config.FTD_MONTHS)):
+        for half in ("b", "a"):
+            urls.append(f"{config.FTD_BASE_URL}/cnsfails{y:04d}{mo:02d}{half}.zip")
+        mo -= 1
+        if mo == 0:
+            mo = 12
+            y -= 1
+    return urls
+
+
+def _parse_ftd_zip(content):
+    """Yield (cusip, ticker, name) from an FTD zip's pipe-delimited text.
+    Columns: SETTLEMENT DATE | CUSIP | SYMBOL | QUANTITY | DESCRIPTION | PRICE."""
+    out = []
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(content))
+    except (zipfile.BadZipFile, OSError):
+        return out
+    for nm in zf.namelist():
+        try:
+            data = zf.read(nm).decode("latin-1", "ignore")
+        except (OSError, RuntimeError):
+            continue
+        for line in data.splitlines():
+            parts = line.split("|")
+            if len(parts) < 5:
+                continue
+            cusip = parts[1].strip()
+            sym = parts[2].strip().upper()
+            name = parts[4].strip()
+            if len(cusip) != 9 or not sym or sym == "SYMBOL":
+                continue
+            out.append((cusip, sym, name))
+    return out
+
+
+def refresh_cusip_map(max_files=None):
+    """Build/refresh the cusip->ticker map from SEC Fails-to-Deliver files (free, public).
+    Each recent file covers ~all actively traded names; we take the newest FTD_MAX_FILES
+    that download, keeping the most-recent ticker per CUSIP, then backfill entity.cusip
+    for names we track. Fails safe: keeps the existing map on any error."""
+    cap = max_files if max_files is not None else config.FTD_MAX_FILES
+    latest = {}                      # cusip -> (ticker, name); first (newest) file wins
+    files_ok = rows_total = 0
+    for url in _ftd_candidate_urls():
+        if files_ok >= cap:
+            break
+        r = _get(_sec, url)
+        if not r:
+            continue
+        rows = _parse_ftd_zip(r.content)
+        if not rows:
+            continue
+        files_ok += 1
+        rows_total += len(rows)
+        for cusip, sym, name in rows:
+            latest.setdefault(cusip, (sym, name))
+        time.sleep(0.3)
+    if not latest:
+        print("[cusip] no FTD data fetched; keeping existing map")
+        return 0
+    database.upsert_cusips([(c, t, n, "ftd") for c, (t, n) in latest.items()])
+    # Backfill entity.cusip for tracked tickers (so profiles / 13F matching have it).
+    try:
+        tick_to_cusip = {}
+        for c, (t, _n) in latest.items():
+            tick_to_cusip.setdefault(t, c)
+        for e in database.get_all_entities():
+            if e.get("cusip"):
+                continue
+            cu = tick_to_cusip.get((e.get("ticker") or "").upper())
+            if cu:
+                database.upsert_entity(e["cik"], cusip=cu)
+    except Exception:
+        traceback.print_exc()
+    print(f"[cusip] map refreshed from {files_ok} FTD file(s): {len(latest)} unique cusips "
+          f"({rows_total} rows scanned); map size={database.cusip_map_count()}")
+    return len(latest)
+
+
+def _openfigi_ticker(cusip):
+    """Map a single CUSIP -> ticker via the free OpenFIGI API. None on any failure.
+    (OpenFIGI accepts a CUSIP as input and returns the ticker -- the direction we need;
+    it just won't hand out CUSIPs.)"""
+    try:
+        headers = {"Content-Type": "application/json"}
+        if config.OPENFIGI_API_KEY:
+            headers["X-OPENFIGI-APIKEY"] = config.OPENFIGI_API_KEY
+        r = requests.post(config.OPENFIGI_URL,
+                          json=[{"idType": "ID_CUSIP", "idValue": cusip}],
+                          headers=headers, timeout=20)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        arr = (data[0] or {}).get("data") if data else None
+        if arr:
+            return ((arr[0].get("ticker") or "").upper()) or None
+    except (requests.RequestException, ValueError, IndexError, KeyError, TypeError):
+        return None
+    return None
+
+
+def resolve_cusip(cusip):
+    """Resolve a CUSIP -> ticker: cached map (FTD / entity) first, then OpenFIGI gap-fill
+    (caching the hit back into cusip_map). This is the single call 4b's 13F parser makes
+    per holding."""
+    if not cusip:
+        return None
+    tk = database.ticker_for_cusip(cusip)
+    if tk:
+        return tk
+    tk = _openfigi_ticker(cusip)
+    if tk:
+        database.upsert_cusip(cusip, tk, source="openfigi")
+    return tk
+
+
 def refresh_governance():
     """Parse DEF 14A governance red flags for shortlist / active / watchlist names
     (cached by filing accession), then rescore. Free SEC data."""
@@ -1239,6 +1366,11 @@ def startup_full_refresh():
     # U2a: fill the entity master last (universe-wide, ~25 min) so nothing above waits on it.
     try:
         refresh_entity_master()
+    except Exception:
+        traceback.print_exc()
+    # U2b: build the free CUSIP->ticker map from SEC Fails-to-Deliver files.
+    try:
+        refresh_cusip_map()
     except Exception:
         traceback.print_exc()
 
