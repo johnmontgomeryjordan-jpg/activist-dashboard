@@ -26,12 +26,12 @@ ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
 # Sentinel: the EDGAR query FAILED (network/transient), which is different from a clean
 # "no activist filing." A failed query must never cause us to clear an existing flag.
 ERROR = object()
-# Activist campaigns persist for years -- a 13D filed two summers ago can still be a live
-# situation today (the activist holds a board seat, the stake is unchanged so there's no
-# new amendment to "refresh" the date). We look back two years so long-running campaigns
-# aren't silently dropped. (Anything older than that, with no recent SEC activity at all,
-# is best handled with a Manual tag.)
-WINDOW_DAYS = 730
+# 18-month agitation gate: a name is an "active situation" only if the activist agitated
+# (13D / contested proxy) within the last ~18 months. Older campaigns are treated as stale
+# and drop off -- an ongoing campaign almost always refreshes its date via a 13D/A amendment,
+# and a genuinely dormant 20-month-old filing is best re-added with a Manual tag. Kept in
+# sync with scoring.AGITATION_MAX_DAYS. (Previously 730; tightened per the recency rule.)
+WINDOW_DAYS = 548
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _session = requests.Session()
 _session.headers.update(HEADERS)
