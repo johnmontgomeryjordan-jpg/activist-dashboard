@@ -122,6 +122,9 @@ CREATE TABLE IF NOT EXISTS entity (
     cik TEXT PRIMARY KEY, ticker TEXT, name TEXT, sector TEXT, industry TEXT,
     exchange TEXT, market_cap REAL, index_tags TEXT, cusip TEXT, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS cusip_map (
+    cusip TEXT PRIMARY KEY, ticker TEXT, name TEXT, source TEXT, updated_at TEXT
+);
 """
 
 
@@ -297,12 +300,40 @@ def get_all_entities():
 
 
 def ticker_for_cusip(cusip):
-    """Resolve a CUSIP to a ticker via the entity master (U2b will also add cusip_map)."""
+    """Resolve a CUSIP to a ticker: the FTD/OpenFIGI cusip_map first, then entity."""
     if not cusip:
         return None
     with get_conn() as conn:
+        r = conn.execute("SELECT ticker FROM cusip_map WHERE cusip=?", (cusip,)).fetchone()
+        if r:
+            return r["ticker"]
         r = conn.execute("SELECT ticker FROM entity WHERE cusip=?", (cusip,)).fetchone()
         return r["ticker"] if r else None
+
+
+# --- CUSIP map (U2b): free cusip -> ticker spine (FTD / OpenFIGI) -------------
+def upsert_cusips(rows):
+    """Bulk upsert of (cusip, ticker, name, source) tuples in one transaction."""
+    ts = now_iso()
+    with get_conn() as conn:
+        conn.executemany(
+            """INSERT INTO cusip_map (cusip,ticker,name,source,updated_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(cusip) DO UPDATE SET
+                 ticker=excluded.ticker,
+                 name=COALESCE(excluded.name, cusip_map.name),
+                 source=excluded.source, updated_at=excluded.updated_at""",
+            [(c, t, n, s, ts) for (c, t, n, s) in rows],
+        )
+
+
+def upsert_cusip(cusip, ticker, name=None, source="ftd"):
+    upsert_cusips([(cusip, ticker, name, source)])
+
+
+def cusip_map_count():
+    with get_conn() as conn:
+        return conn.execute("SELECT COUNT(*) AS n FROM cusip_map").fetchone()["n"]
 
 
 # --- Alpha Vantage overview --------------------------------------------------
