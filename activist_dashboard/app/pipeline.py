@@ -702,6 +702,67 @@ def refresh_fundamentals(max_companies=None):
     return done
 
 
+ENTITY_STALE_DAYS = 6
+
+
+def refresh_entity_master(max_companies=None):
+    """Universe-wide entity master (U2a): one queryable row per company with sector
+    (from SEC fundamentals), market cap + industry + exchange (Finnhub profile2), and
+    index membership (iShares, via universe.ishares_membership). Freshness-gated to
+    ~weekly so daily/boot re-runs are cheap. Fails safe per-name; degrades gracefully
+    without a Finnhub key (still fills sector + name + index tags)."""
+    key = os.getenv("FINNHUB_API_KEY", "")
+    try:
+        membership = universe.ishares_membership()
+    except Exception:
+        traceback.print_exc()
+        membership = {}
+    uni = get_universe()
+    subset = uni[:max_companies] if max_companies else uni
+    now = datetime.utcnow()
+    done = fetched = 0
+    for i, c in enumerate(subset):
+        cik = c.get("cik")
+        if not cik:
+            continue
+        tk = (c.get("ticker") or "")
+        tag = membership.get(tk.upper().replace(".", "-"))
+        prev = database.get_entity(cik) or {}
+        # Freshness gate: if refreshed recently, only cheaply refresh the index tag.
+        if prev.get("updated_at"):
+            try:
+                if (now - datetime.fromisoformat(prev["updated_at"])).days < ENTITY_STALE_DAYS:
+                    if tag and tag != prev.get("index_tags"):
+                        database.upsert_entity(cik, index_tags=tag)
+                    continue
+            except (ValueError, TypeError):
+                pass
+        # Sector from the (padded-cik) fundamentals row's raw blob.
+        sector = None
+        try:
+            raw = json.loads((database.get_fundamentals_one(_pad(cik)) or {}).get("raw") or "{}")
+            sector = raw.get("sector_desc")
+        except (ValueError, TypeError):
+            pass
+        mcap = industry = exchange = None
+        if key and tk:
+            prof = _finnhub_profile(tk, key); time.sleep(0.2)
+            m = _ff(prof.get("marketCapitalization"))
+            mcap = m * 1e6 if m else None          # Finnhub reports market cap in millions
+            industry = prof.get("finnhubIndustry") or None
+            exchange = prof.get("exchange") or None
+            fetched += 1
+        database.upsert_entity(cik, ticker=tk, name=c.get("name"), sector=sector,
+                               industry=industry, exchange=exchange, market_cap=mcap,
+                               index_tags=tag)
+        done += 1
+        if i % 50 == 0:
+            gc.collect()
+    print(f"[entity] entity master refreshed: {done} rows updated "
+          f"({fetched} Finnhub profile fetches); {len(subset)} in universe")
+    return done
+
+
 def refresh_governance():
     """Parse DEF 14A governance red flags for shortlist / active / watchlist names
     (cached by filing accession), then rescore. Free SEC data."""
@@ -1175,6 +1236,11 @@ def startup_full_refresh():
     refresh_lead_data()
     refresh_enrichment()
     refresh_ai_thesis()
+    # U2a: fill the entity master last (universe-wide, ~25 min) so nothing above waits on it.
+    try:
+        refresh_entity_master()
+    except Exception:
+        traceback.print_exc()
 
 
 # ---- Market enrichment: Finnhub (60/min) for cap + P/B; AV cached for description --
