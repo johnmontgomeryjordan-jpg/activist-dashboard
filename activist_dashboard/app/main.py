@@ -57,6 +57,10 @@ async def lifespan(app: FastAPI):
                                   timezone=config.TIMEZONE),
                       id="entity_master", replace_existing=True,
                       max_instances=1)
+    # Monthly (1st, 06:00): rebuild the free CUSIP->ticker map from SEC Fails-to-Deliver.
+    scheduler.add_job(pipeline.refresh_cusip_map,
+                      CronTrigger(day=1, hour=6, minute=0, timezone=config.TIMEZONE),
+                      id="cusip_map", replace_existing=True, max_instances=1)
     scheduler.start()
     threading.Thread(target=_run_initial_refresh, daemon=True).start()
     yield
