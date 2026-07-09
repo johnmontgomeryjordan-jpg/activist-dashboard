@@ -1343,8 +1343,17 @@ def daily_rescore_and_digest():
     return emailer.send_digest()
 
 
+SITUATIONS_RESET_VERSION = "2026-07-09-clean-slate-18mo"
+
+
 def startup_full_refresh():
     print("[boot] VERSION=F3-exec-reaction+F2-payperf+F1-evebitda-goodwill  starting refresh")
+    # One-time clean slate for Active Situations (manual tags + stale flags), before the
+    # sweep repopulates only fresh <=18-month agitation. Version-gated: runs once per bump.
+    try:
+        database.reset_situations_once(SITUATIONS_RESET_VERSION)
+    except Exception:
+        traceback.print_exc()
     refresh_data()
     refresh_fundamentals()
     refresh_governance()
