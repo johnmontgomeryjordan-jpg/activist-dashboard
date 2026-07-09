@@ -97,20 +97,44 @@ def _names_activist(title):
     t = " " + _norm(title) + " "
     return any(c in t for c in _ACTIVIST_CUES)
 
-# A headline must contain at least one of these to be kept (broad feed only).
-DISTRESS_KEYWORDS = [
+# A broad-feed headline must trip a relevance keyword to be kept. The keywords are
+# split by whether they can stand on their own:
+#   STRONG -- inherently corporate/financial; kept on their own.
+#   WEAK   -- also fire on non-corporate stories (a mayor "steps down", a charity
+#             director "resigns", "stocks tumble" market commentary), so they only
+#             count when a CORPORATE ANCHOR is also present. This is what drops
+#             "Edmonton mayor's chief of staff steps down" while keeping "Acme Corp
+#             CEO steps down" -- a structural fix, not a per-name blocklist.
+STRONG_KEYWORDS = [
     "activist", "proxy fight", "proxy battle", "short seller", "short-seller",
-    "shareholder", "profit warning", "guidance cut", "cuts guidance",
-    "lowers guidance", "lowered guidance", "cuts outlook", "lowers outlook",
-    "cuts forecast", "slashes", "earnings miss", "misses estimates",
-    "misses expectations", "falls short", "disappointing", "disappoints",
-    "write-down", "writedown", "impairment", "restructuring", "layoff",
-    "job cuts", "strategic review", "explores sale", "exploring sale",
-    "considering sale", "steps down", "stepping down", "ousted", "to resign",
+    "profit warning", "guidance cut", "cuts guidance", "lowers guidance",
+    "lowered guidance", "cuts outlook", "lowers outlook", "cuts forecast",
+    "weak guidance", "earnings miss", "misses estimates", "misses expectations",
+    "write-down", "writedown", "goodwill impairment", "impairment",
+    "restructuring", "strategic review", "explores sale", "exploring sale",
+    "considering sale", "strategic alternatives", "take private", "take-private",
+    "activist stake", "activist investor", "13d", "poison pill", "delist",
+    "going concern", "restatement", "non-reliance", "material weakness",
+]
+WEAK_KEYWORDS = [
+    "steps down", "stepping down", "step down", "to resign", "resigns", "resigned",
+    "ousted", "new leader", "new ceo", "leadership change", "shareholder",
+    "layoff", "layoffs", "job cuts", "slashes", "slashed",
     "plunge", "plunges", "tumble", "tumbles", "slump", "slumps", "sinks",
     "plummets", "sell-off", "selloff", "downgrade", "downgraded", "warns",
-    "weak guidance", "turnaround", "scraps", "halts", "slashed",
+    "turnaround", "scraps", "halts", "falls short", "disappointing", "disappoints",
 ]
+# WEAK keyword only qualifies if one of these is also present. Word-boundaried so
+# "inc" can't match "since" or "district".
+_CORP_ANCHOR_RE = re.compile(
+    r"\b("
+    r"inc|corp|corporation|company|companies|plc|ltd|llc|holdings|group|"
+    r"technologies|bancorp|bancshares|industries|systems|pharmaceuticals|"
+    r"ceo|cfo|coo|cio|chief executive|chief financial|chairman|chairwoman|"
+    r"board of directors|nasdaq|nyse|earnings|revenue|guidance|quarterly|"
+    r"dividend|buyback|share price|shares|stock|profit|shareholders"
+    r")\b"
+)
 
 # Drop if the headline contains any of these (noise / off-topic).
 # NOTE: _is_noise() runs BEFORE the activist-capture check in refresh_company_news(),
@@ -177,6 +201,22 @@ EXCLUDE_PATTERNS = [
     "defense spending", "military spending",
     # entertainment / gaming studios (often private; not corporate distress, e.g. a "Games CEO steps down")
     "video game", "game studio", "games ceo", "game developer", "gaming studio",
+    # local government / municipal / non-profit leadership (the exact items that leaked
+    # into the pitch email: a charity director, a mayor's chief of staff, a PM's aide)
+    "gospel mission", " mayor", "mayoral", "chief of staff", "city council",
+    "city manager", "town council", "charity", "nonprofit", "non-profit", "starmer",
+    "trump wants", "steps down as president", "school board",
+    # broad-market commentary / index roundups (not a company event; leaked as "Distress")
+    "mag 7", "chip stocks", "stocks step", "summer rally", "santa rally",
+    "rally signals", "outperformance points", "big tech resurgence", "options opportunities",
+    "options trade", " ndx ", "nasdaq 100", "dow jones", "premarket", "pre-market",
+    "sector etf", "market rally", "stock market today",
+]
+
+# Opinion / academic / hyper-local-news domains -- drop regardless of the headline text.
+EXCLUDE_DOMAINS = [
+    "theconversation.com", "castanetkamloops.net", "edmontonsun.com",
+    "castanet.net",
 ]
 
 
@@ -195,13 +235,23 @@ def _is_noise(title):
     return any(bad in t for bad in EXCLUDE_PATTERNS)
 
 
+def _domain_excluded(domain):
+    d = (domain or "").lower()
+    return any(bad in d for bad in EXCLUDE_DOMAINS)
+
+
 def is_relevant(title):
     t = " " + _norm(title) + " "
     if not t.strip():
         return False
     if _is_noise(title):
         return False
-    return any(kw in t for kw in DISTRESS_KEYWORDS)
+    if any(kw in t for kw in STRONG_KEYWORDS):
+        return True
+    # A weak keyword (steps down / tumbles / resigns) only counts with a corporate anchor.
+    if any(kw in t for kw in WEAK_KEYWORDS) and _CORP_ANCHOR_RE.search(t):
+        return True
+    return False
 
 
 # --- Activist-relevance ranking for the daily-email "Top headlines" --------------------------
@@ -309,7 +359,7 @@ def _normalize_gdelt(articles):
     for a in articles:
         url = a.get("url") or ""
         title = a.get("title") or ""
-        if not url or not is_relevant(title):
+        if not url or _domain_excluded(a.get("domain")) or not is_relevant(title):
             continue
         out.append({
             "id": _hash(url),
@@ -364,11 +414,12 @@ def _normalize(articles):
     for a in articles:
         url = a.get("url") or ""
         title = a.get("title") or ""
-        if not url or not is_relevant(title):
+        src = (a.get("source") or {}).get("name") or ""
+        if not url or _domain_excluded(src) or not is_relevant(title):
             continue
         out.append({
             "id": _hash(url), "headline": title,
-            "source": (a.get("source") or {}).get("name") or "",
+            "source": src,
             "published_at": a.get("publishedAt") or "", "url": url,
         })
     return out
