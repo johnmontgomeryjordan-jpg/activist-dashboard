@@ -152,6 +152,23 @@ def _fetch_membership():
     return members
 
 
+def ishares_membership():
+    """Return {NORMALIZED_TICKER: "SP500"|"SP400"|"SP600"} from the iShares feeds, so
+    the entity master (U2) can tag index membership with no extra HTTP beyond U1's fetch.
+    First index wins (dict is ordered 500 -> 400 -> 600). Empty dict on any failure."""
+    out = {}
+    for label, url in ISHARES_HOLDINGS.items():
+        try:
+            r = requests.get(url, headers={"User-Agent": config.SEC_USER_AGENT},
+                             timeout=30)
+            r.raise_for_status()
+            for tk, _nm in _parse_ishares_csv(r.text):
+                out.setdefault(tk, label)
+        except (requests.RequestException, ValueError):
+            continue
+    return out
+
+
 def _read_current_csv():
     """Return {ticker: name} from the current committed/on-disk CSV."""
     out = {}
