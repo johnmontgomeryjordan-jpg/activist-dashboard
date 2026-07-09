@@ -118,6 +118,10 @@ CREATE TABLE IF NOT EXISTS situation_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT, cik TEXT, company TEXT, action TEXT,
     actor TEXT, note TEXT, ts TEXT
 );
+CREATE TABLE IF NOT EXISTS entity (
+    cik TEXT PRIMARY KEY, ticker TEXT, name TEXT, sector TEXT, industry TEXT,
+    exchange TEXT, market_cap REAL, index_tags TEXT, cusip TEXT, updated_at TEXT
+);
 """
 
 
@@ -254,6 +258,51 @@ def get_fundamentals_one(cik):
     with get_conn() as conn:
         r = conn.execute("SELECT * FROM fundamentals WHERE cik=?", (cik,)).fetchone()
         return dict(r) if r else {}
+
+
+# --- Entity master (U2): queryable per-company attributes --------------------
+def upsert_entity(cik, ticker=None, name=None, sector=None, industry=None,
+                  exchange=None, market_cap=None, index_tags=None, cusip=None):
+    """Upsert one entity row. Any field left None is preserved (COALESCE), so a
+    partial update (e.g. index_tags only, or a Finnhub miss) never wipes good data."""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO entity
+                 (cik,ticker,name,sector,industry,exchange,market_cap,index_tags,cusip,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET
+                 ticker=COALESCE(excluded.ticker, entity.ticker),
+                 name=COALESCE(excluded.name, entity.name),
+                 sector=COALESCE(excluded.sector, entity.sector),
+                 industry=COALESCE(excluded.industry, entity.industry),
+                 exchange=COALESCE(excluded.exchange, entity.exchange),
+                 market_cap=COALESCE(excluded.market_cap, entity.market_cap),
+                 index_tags=COALESCE(excluded.index_tags, entity.index_tags),
+                 cusip=COALESCE(excluded.cusip, entity.cusip),
+                 updated_at=excluded.updated_at""",
+            (cik, ticker, name, sector, industry, exchange, market_cap,
+             index_tags, cusip, now_iso()),
+        )
+
+
+def get_entity(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM entity WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def get_all_entities():
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute("SELECT * FROM entity ORDER BY ticker")]
+
+
+def ticker_for_cusip(cusip):
+    """Resolve a CUSIP to a ticker via the entity master (U2b will also add cusip_map)."""
+    if not cusip:
+        return None
+    with get_conn() as conn:
+        r = conn.execute("SELECT ticker FROM entity WHERE cusip=?", (cusip,)).fetchone()
+        return r["ticker"] if r else None
 
 
 # --- Alpha Vantage overview --------------------------------------------------
