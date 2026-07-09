@@ -50,6 +50,13 @@ async def lifespan(app: FastAPI):
                                   timezone=config.TIMEZONE),
                       id="universe_rebuild", replace_existing=True,
                       max_instances=1)
+    # Weekly (Sun 05:30): entity master (sector/market cap/exchange/index tags).
+    # Freshness-gated so it's a cheap no-op most weeks; also fills on the boot refresh.
+    scheduler.add_job(pipeline.refresh_entity_master,
+                      CronTrigger(day_of_week="sun", hour=5, minute=30,
+                                  timezone=config.TIMEZONE),
+                      id="entity_master", replace_existing=True,
+                      max_instances=1)
     scheduler.start()
     threading.Thread(target=_run_initial_refresh, daemon=True).start()
     yield
