@@ -60,6 +60,19 @@ MIN_MARKET_CAP = float(os.getenv("MIN_MARKET_CAP", "1000000000"))  # $1B
 # Path to the CSV of tickers we monitor (ticker,name). Defaults to bundled file.
 UNIVERSE_CSV = os.getenv("UNIVERSE_CSV", str(BASE_DIR / "app" / "universe.csv"))
 
+# --- U2b: free CUSIP -> ticker mapping ---------------------------------------
+# SEC Fails-to-Deliver files: free, public, pipe-delimited ZIPs carrying
+# CUSIP + SYMBOL + issuer name for ~every actively traded security. Primary
+# source for the cusip->ticker spine that 4b's 13F matching resolves against.
+FTD_BASE_URL = os.getenv(
+    "FTD_BASE_URL", "https://www.sec.gov/files/data/fails-deliver-data")
+FTD_MONTHS = int(os.getenv("FTD_MONTHS", "3"))     # look back this many months for files
+FTD_MAX_FILES = int(os.getenv("FTD_MAX_FILES", "2"))  # parse this many recent files
+# OpenFIGI: free identifier-mapping API used only to gap-fill a CUSIP the FTD map
+# misses (works keyless at a lower rate limit; set a key to raise it).
+OPENFIGI_URL = os.getenv("OPENFIGI_URL", "https://api.openfigi.com/v3/mapping")
+OPENFIGI_API_KEY = os.getenv("OPENFIGI_API_KEY", "")
+
 # --- Scoring -----------------------------------------------------------------
 SCORE_THRESHOLD = int(os.getenv("SCORE_THRESHOLD", "3"))   # flag at >= this
 SCORE_WINDOW_DAYS = int(os.getenv("SCORE_WINDOW_DAYS", "90"))
