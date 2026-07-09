@@ -21,6 +21,7 @@ filing), stored as JSON on the score so the detail view can prove why each tag f
 import json
 import os
 import re
+from datetime import datetime
 from . import config, database, pitch
 MIN_PEERS = 5
 # 1-yr stock return must lag the S&P 500 by at least this much (in return terms) to flag.
@@ -243,6 +244,22 @@ EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
 # How many days of news to scan for a named-activist headline (longer than the general
 # scoring window, since a campaign stays "active" for months).
 ACTIVIST_NEWS_WINDOW = 220
+# 18-month agitation gate: a 13D / contested-proxy FILING only counts as a live active
+# situation when it was filed within this window. Older filings are stale campaigns and
+# drop off the page (a partner can re-add by hand). Kept in sync with activist.WINDOW_DAYS.
+AGITATION_MAX_DAYS = 548   # ~18 months
+
+
+def _within_days(date_str, days):
+    """True if an ISO date string (YYYY-MM-DD, or a longer ISO timestamp) is within `days`
+    of today. Missing/unparseable dates return False (can't prove recency -> don't count)."""
+    if not date_str:
+        return False
+    try:
+        d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return False
+    return (datetime.utcnow() - d).days <= days
 # Known activist funds. Substring match on the lowercased headline.
 KNOWN_FUNDS = [
     "elliott", "starboard value", "starboard", "trian", "jana partners", "jana",
@@ -1180,6 +1197,10 @@ def recompute_all():
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
         aflag = aflags.get(r["cik"])
+        # 18-month agitation gate: a filing older than AGITATION_MAX_DAYS is a stale
+        # campaign — treat it as absent so it no longer creates an active situation.
+        if aflag and not _within_days(aflag.get("filed"), AGITATION_MAX_DAYS):
+            aflag = None
         man = manual.get(r["cik"]) or {}
         man_status = man.get("status")
         # An EXEMPT SOLICITATION (Rule 14a-6(g) notice / PX14A6G) is filed by a shareholder who
