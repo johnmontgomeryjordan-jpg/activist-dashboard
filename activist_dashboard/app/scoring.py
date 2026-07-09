@@ -1197,10 +1197,10 @@ def recompute_all():
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
         aflag = aflags.get(r["cik"])
-        # 18-month agitation gate: a filing older than AGITATION_MAX_DAYS is a stale
-        # campaign — treat it as absent so it no longer creates an active situation.
-        if aflag and not _within_days(aflag.get("filed"), AGITATION_MAX_DAYS):
-            aflag = None
+        # 18-month agitation gate is enforced upstream by activist.WINDOW_DAYS (=548): the
+        # sweep only writes flags for filings <=18 months old, so every flag here is already
+        # in-window. (A scoring-side date re-check was removed — it could wrongly drop a valid
+        # Confirmed situation whenever the stored filing date was missing/odd.)
         man = manual.get(r["cik"]) or {}
         man_status = man.get("status")
         # An EXEMPT SOLICITATION (Rule 14a-6(g) notice / PX14A6G) is filed by a shareholder who
