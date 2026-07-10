@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 
 import requests
 
-from . import config, database
+from . import config, database, activists
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 GNEWS_URL = "https://gnews.io/api/v4/search"
@@ -79,18 +79,13 @@ COMPANY_NEWS_PER = int(os.getenv("COMPANY_NEWS_PER", "6"))
 # (scoring._activist_news_hit, a 220-day window) still has data to match weeks later. That's
 # what lets an already-engaged name route itself into Active Situations without a manual tag.
 ACTIVIST_RETAIN_DAYS = int(os.getenv("ACTIVIST_RETAIN_DAYS", "220"))
-# Compact known-activist cue list for capture/retention. The authoritative fund list lives
-# in scoring.KNOWN_FUNDS; this mirror keeps news.py self-contained (no cross-module import).
-_ACTIVIST_CUES = [
+# Activist capture/retention cues = generic campaign language + the shared known-activist
+# list (funds + FGS names + individuals) from activists.py, so this stays in sync with the
+# filer gate and the news auto-routing instead of drifting as its own copy.
+_GENERIC_CUES = [
     "activist", "13d", "proxy fight", "proxy contest", "proxy battle", "dissident",
-    "elliott", "starboard", "trian", "jana", "third point", "icahn", "peltz",
-    "valueact", "value act", "engine no", "ancora", "politan", "sachem head",
-    "legion partners", "pershing square", "ackman", "corvex", "land & buildings",
-    "mantle ridge", "saba capital", "h partners", "irenic", "barington",
-    "d.e. shaw", "glenview", "hestia", "bluebell", "soroban", "kimmeridge",
-    "impactive", "scopia", "lynrock", "browning west", "ananym", "caligan",
-    "kanen", "gatemore", "vision one",
 ]
+_ACTIVIST_CUES = _GENERIC_CUES + activists.NEWS_TERMS
 
 
 def _names_activist(title):
