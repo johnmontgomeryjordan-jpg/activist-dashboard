@@ -994,8 +994,12 @@ def recompute_all():
     ins_all = database.get_all_insider()
     votes_all = database.get_all_votes()
     reactions = database.get_all_exec_reactions()
-    aflags = database.get_all_activist_flags()
-    manual = database.get_manual_situations()   # partner overrides (always win)
+    # Normalize keys to the padded 10-digit CIK that the `recs` rows use. Activist flags are
+    # written with the universe's UNPADDED cik (e.g. "1702744") while rows are padded
+    # ("0001702744"), so a raw lookup silently missed every flag -> no Confirmed situations.
+    # _pad_cik is idempotent, so this also handles any older padded-key rows.
+    aflags = {_pad_cik(k): v for k, v in database.get_all_activist_flags().items()}
+    manual = {_pad_cik(k): v for k, v in database.get_manual_situations().items()}   # partner overrides (always win)
     metrics = ["pb_ratio", "ev_ebitda", "goodwill_to_assets", "operating_margin",
                "tsr_1y", "tsr_3y", "roa", "revenue_growth", "sga_pct",
                "cash_to_assets", "debt_to_assets"]
