@@ -22,7 +22,7 @@ import json
 import os
 import re
 from datetime import datetime
-from . import config, database, pitch
+from . import config, database, pitch, activists
 MIN_PEERS = 5
 # 1-yr stock return must lag the S&P 500 by at least this much (in return terms) to flag.
 TSR_LAG_1Y = -0.15
@@ -260,19 +260,11 @@ def _within_days(date_str, days):
     except (ValueError, TypeError):
         return False
     return (datetime.utcnow() - d).days <= days
-# Known activist funds. Substring match on the lowercased headline.
-KNOWN_FUNDS = [
-    "elliott", "starboard value", "starboard", "trian", "jana partners", "jana",
-    "third point", "carl icahn", "icahn", "nelson peltz", "valueact", "value act",
-    "engine no", "ancora", "politan", "sachem head", "legion partners",
-    "pershing square", "ackman", "corvex", "land & buildings", "land and buildings",
-    "mantle ridge", "inclusive capital", "saba capital", "h partners",
-    "cruiser capital", "irenic", "barington", "d.e. shaw", "blue harbour", "marcato",
-    "glenview", "hestia", "bluebell", "soroban", "kimmeridge", "impactive", "scopia",
-    # added after the June 2026 audit (names the screen had missed, e.g. Lynrock/Teradata)
-    "lynrock lake", "lynrock", "browning west", "ananym", "caligan", "kanen",
-    "gatemore", "vision one", "white tale", "jeffrey smith",
-]
+# Known activist funds + individuals — the single shared list (funds, the FGS "Recurring
+# Activist Investor List", and known individuals) lives in activists.py so the filer gate,
+# the news auto-routing here, and news.py capture all stay in sync. Substring match on the
+# lowercased headline.
+KNOWN_FUNDS = activists.NEWS_TERMS
 # Explicit campaign cues (no fund named, but unambiguous activist language). We keep
 # these tight: weak phrases like "director nominees" appear in routine *defensive* proxy
 # news (e.g. "ISS supports ALL of management's director nominees"), so they're excluded.
