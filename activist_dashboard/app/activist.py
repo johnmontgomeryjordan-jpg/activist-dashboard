@@ -18,7 +18,7 @@ import time
 
 import requests
 
-from . import config, database
+from . import config, database, activists
 
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
@@ -44,20 +44,42 @@ _session.headers.update(HEADERS)
 ROOT_FORMS = ["SC 13D", "DFAN14A", "PREC14A", "DEFC14A", "PX14A6G", "SC 14N"]
 FORMS_PARAM = ",".join(ROOT_FORMS)
 
-# Map a specific form to (kind, human label). 13D = >5% stake; others = proxy campaign.
+# Forms we keep ONLY when a KNOWN activist filed them. DFAN14A (dissident soliciting
+# materials) and PX14A6G (exempt solicitation) are filed by lots of non-activists — ESG
+# gadflies, CLO managers, SPAC founders, one-off individuals — so on their own they flood
+# the list with mega-cap noise (Microsoft, Coca-Cola, Berkshire...). The remaining forms
+# (SC 13D, DEFC14A/PREC14A, SC 14N) are inherently a real campaign regardless of filer, so
+# they stay broad — a brand-new activist's first 13D still surfaces even if not on the list.
+GATED_FORMS = {"DFAN14A", "PX14A6G"}
+
+
+# Map a form to (kind, a filer-friendly verb phrase). The filer name is prepended by the
+# caller, e.g. "Starboard Value LP — filed a Schedule 13D (...)".
 def _kind_label(form):
     f = (form or "").upper()
     if f.startswith("SC 13D"):
-        return "13d", "Activist filed a Schedule 13D (>5% stake, intent to influence)"
+        return "13d", "filed a Schedule 13D (>5% stake, intent to influence)"
     if f in ("PREC14A", "DEFC14A"):
-        return "proxy", "Contested proxy statement filed (proxy fight under way)"
+        return "proxy", "filed a contested proxy statement (proxy fight under way)"
     if f == "DFAN14A":
-        return "proxy", "Dissident soliciting materials filed (activist campaign)"
+        return "proxy", "filed dissident soliciting materials (activist campaign)"
     if f == "PX14A6G":
-        return "proxy", "Exempt solicitation filed by a shareholder (activist pressure)"
+        return "proxy", "filed an exempt solicitation (activist pressure)"
     if f == "SC 14N":
-        return "proxy", "Shareholder nominated directors (board challenge)"
-    return "proxy", "Activist / dissident filing"
+        return "proxy", "nominated directors (board challenge)"
+    return "proxy", "filed activist / dissident materials"
+
+
+def _is_gated(form, root_forms):
+    """True if this filing is a noisy form that requires a known-activist filer."""
+    cands = [form] + list(root_forms or [])
+    return any((str(x) or "").upper().replace(" ", "") in GATED_FORMS for x in cands if x)
+
+
+def _filer_names(src, subject_cik10):
+    """Clean filer name(s) = the display_names that aren't the subject (index 0)."""
+    dn = src.get("display_names") or []
+    return [activists.clean_filer(n) for n in dn[1:] if n]
 
 
 def _pad(cik):
@@ -121,8 +143,17 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
         if not ciks or ciks[0] != cik10:   # ciks[0] is the SUBJECT; if not us, we're the filer
             continue
         form = src.get("form") or (src.get("root_forms") or [""])[0]
-        kind, label = _kind_label(form)
-        return {"kind": kind, "form": form, "label": label,
+        filers = _filer_names(src, cik10)
+        filer_known = any(activists.is_known_activist(f) for f in filers)
+        # Filer gate: keep a noisy DFAN14A / PX14A6G only when a KNOWN activist filed it.
+        # Otherwise skip this hit and keep scanning (an older 13D by a real activist may
+        # still qualify the name).
+        if _is_gated(form, src.get("root_forms")) and not filer_known:
+            continue
+        kind, base = _kind_label(form)
+        who = filers[0] if filers else "An activist"
+        label = f"{who} — {base}"
+        return {"kind": kind, "form": form, "label": label, "who": who,
                 "filed": src.get("file_date"), "url": _doc_url(best, cik10)}
     return None                            # company only appears as a filer -> not a target
 
