@@ -125,6 +125,16 @@ CREATE TABLE IF NOT EXISTS entity (
 CREATE TABLE IF NOT EXISTS cusip_map (
     cusip TEXT PRIMARY KEY, ticker TEXT, name TEXT, source TEXT, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS activist_filers (
+    fund TEXT PRIMARY KEY, cik TEXT, source TEXT, updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS activist_holdings (
+    ticker TEXT, fund TEXT, fund_cik TEXT, cusip TEXT,
+    value REAL, shares REAL, weight_in_fund REAL, ownership_pct REAL,
+    filed TEXT, quarter TEXT, updated_at TEXT,
+    PRIMARY KEY (ticker, fund)
+);
+CREATE INDEX IF NOT EXISTS idx_holdings_ticker ON activist_holdings (ticker);
 """
 
 
@@ -364,6 +374,67 @@ def entity_stats():
             "index_tags": idx,
             "cusip_map_size": n("SELECT COUNT(*) AS n FROM cusip_map"),
         }
+
+
+# --- 13F activist holders (early-warning signal) -----------------------------
+def upsert_activist_filer(fund, cik, source="browse-edgar"):
+    """Cache a fund's resolved 13F-filing CIK so we don't re-resolve every run."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO activist_filers (fund,cik,source,updated_at) VALUES (?,?,?,?) "
+            "ON CONFLICT(fund) DO UPDATE SET cik=excluded.cik, source=excluded.source, "
+            "updated_at=excluded.updated_at",
+            (fund, cik, source, now_iso()))
+
+
+def get_activist_filers():
+    """{fund: cik} of resolved 13F filers."""
+    with get_conn() as conn:
+        return {r["fund"]: r["cik"]
+                for r in conn.execute("SELECT fund, cik FROM activist_filers")}
+
+
+def replace_holdings_for_fund(fund, rows):
+    """Replace ONE fund's holdings with its latest 13F (a fresh 13F supersedes the old one).
+    Each row is (ticker, fund, fund_cik, cusip, value, shares, weight_in_fund, ownership_pct,
+    filed, quarter)."""
+    ts = now_iso()
+    with get_conn() as conn:
+        conn.execute("DELETE FROM activist_holdings WHERE fund=?", (fund,))
+        conn.executemany(
+            """INSERT INTO activist_holdings
+               (ticker,fund,fund_cik,cusip,value,shares,weight_in_fund,ownership_pct,
+                filed,quarter,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            [tuple(r) + (ts,) for r in rows])
+
+
+def holders_for_all():
+    """{TICKER: [ {fund, fund_cik, value, shares, weight_in_fund, ownership_pct, filed,
+    quarter}, ... ]} across every stored 13F holding, strongest conviction first. Scoring
+    applies the materiality gate; this returns everything so the gate lives in one place."""
+    out = {}
+    with get_conn() as conn:
+        for r in conn.execute(
+                "SELECT * FROM activist_holdings "
+                "ORDER BY COALESCE(weight_in_fund,0) DESC"):
+            out.setdefault((r["ticker"] or "").upper(), []).append(dict(r))
+    return out
+
+
+def holders_for_ticker(ticker):
+    if not ticker:
+        return []
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM activist_holdings WHERE UPPER(ticker)=UPPER(?) "
+            "ORDER BY COALESCE(weight_in_fund,0) DESC", (ticker,))]
+
+
+def activist_holdings_count():
+    with get_conn() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) AS n FROM activist_holdings").fetchone()["n"]
 
 
 # --- Alpha Vantage overview --------------------------------------------------
