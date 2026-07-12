@@ -102,6 +102,7 @@ BURN_DISCOUNT = 0.6         # score multiplier for deep cash-burners
 # decline in a company that is NOT a cash-burner (a fixable, acquirable business, not a
 # falling knife). Profitable/quality names that just fell out of favor are exactly the point.
 STRATEGIC_DROP = -0.30      # 1-yr price return at/below this = a sharp de-rating
+DERATE_EXTREME = float(os.getenv("DERATE_EXTREME", "-0.50"))  # a 50%+ 1-yr collapse (4e)
 # De-correlation: signals driven by the SAME underlying fact — a depressed share price —
 # shouldn't each add full weight. Cap the combined severity-weighted contribution of the
 # valuation cluster and the return cluster so one beaten-down price counts once (with size),
@@ -807,15 +808,58 @@ def _peer_evidence(key, r):
             "inputs": "self-selected compensation peer group (DEF 14A) vs 1-yr total return",
             "period": "trailing 1 yr", "source": "SEC DEF 14A + Finnhub",
             "url": r.get("_gov_url")}
+# 4e — separate a genuine falling knife from a fallen-but-viable de-rating.
+def _structural_decline(r):
+    """A de-rated name whose TOP LINE is actually shrinking — the business is contracting,
+    not merely the multiple. Revenue is the cleanest 'falling knife?' tell: it's the hardest
+    number to distort with a one-time charge, so an impairment-driven negative margin (e.g.
+    SMPL, still growing revenue) is NOT mislabeled a structural decline. When true, the
+    strategic-review framing flips from 'clean sale candidate' to 'possible structural
+    decline — diligence required,' and the name loses its quality-floor exemption (a
+    shrinking-and-cheap falling knife shouldn't be force-surfaced as a proactive lead)."""
+    rg = r.get("revenue_growth")
+    return rg is not None and rg < 0
+
+
+def _forward_risk_derate(r):
+    """A VERY sharp de-rating (>=50% in a year) on a still-growing, still-viable business:
+    the multiple has collapsed while the fundamentals hold. That divergence almost always
+    means the market is pricing a FORWARD risk the trailing financials don't yet show (a
+    secular / AI-narrative overhang, a moat question, a guide-down) — the Intuit pattern
+    (down ~63% but +16% revenue, healthy margins). We keep the name as a real sale candidate
+    but attach a caveat so the pitch pressure-tests the thesis instead of treating the
+    de-rating as a pure valuation gift."""
+    t1 = r.get("tsr_1y")
+    return (t1 is not None and t1 <= DERATE_EXTREME) and not _structural_decline(r)
+
+
 def _strategic_evidence(key, r):
     ret = r.get("tsr_1y")
     val = _fmt_metric("tsr_1y", ret) if ret is not None else ""
-    ctx = (f"the stock has de-rated sharply — down {abs(ret) * 100:.0f}% over the past year — "
-           f"on a still-viable business; the classic setup for a sale, take-private, or "
-           f"strategic review (a fixable, acquirable brand, not a falling knife)"
-           if ret is not None else
-           "a sharp de-rating on a still-viable business — a strategic-alternatives setup")
-    return {"key": key, "label": LABELS.get(key, key), "value": val, "context": ctx,
+    drop = (f"down {abs(ret) * 100:.0f}% over the past year"
+            if ret is not None else "sharply de-rated")
+    lbl = LABELS.get(key, key)
+    if _structural_decline(r):
+        lbl = "sharp de-rating — possible structural decline (diligence)"
+        ctx = (f"the stock is {drop}, but the top line is shrinking too — the business is "
+               f"contracting, not just the multiple. Treat as a possible structural decline / "
+               f"falling knife, not a clean turnaround: diligence the revenue trajectory before "
+               f"pitching a sale or strategic-review angle.")
+    elif _forward_risk_derate(r):
+        lbl = "sharp de-rating — sale candidate (thesis at risk)"
+        ctx = (f"the stock is {drop} on a still-growing, still-viable business — the multiple "
+               f"has collapsed while the fundamentals hold. A divergence this wide usually means "
+               f"the market is pricing a forward risk the trailing numbers don't yet show (a "
+               f"secular / narrative overhang or moat question). A fallen-but-viable sale "
+               f"candidate — but pressure-test the thesis before pitching; don't assume the "
+               f"de-rating is a pure valuation gift.")
+    else:
+        ctx = (f"the stock has de-rated sharply — {drop} — on a still-viable business; the "
+               f"classic setup for a sale, take-private, or strategic review (a fixable, "
+               f"acquirable brand, not a falling knife)"
+               if ret is not None else
+               "a sharp de-rating on a still-viable business — a strategic-alternatives setup")
+    return {"key": key, "label": lbl, "value": val, "context": ctx,
             "inputs": "", "period": "trailing 1 yr",
             "source": "Finnhub (price return, excl. dividends)", "url": None}
 def _struct_evidence(key, r, t):
@@ -1259,7 +1303,11 @@ def recompute_all():
         # high-value category that trips few signals by nature — it would score below the
         # generic floor, but it's exactly the class we built this signal to surface, so it's
         # kept even at a modest score (it's labeled distinctly, not generic weak-signal noise).
-        if not is_active and vuln < MIN_LEAD_VULN and "strategic_review" not in trig:
+        # 4e: the exemption applies ONLY to a fallen-but-viable de-rater. A structural-decline
+        # name (top line shrinking) is a possible falling knife — it forfeits the force-keep and
+        # must clear the normal floor on its own merits to reach the proactive board.
+        _sr_exempt = ("strategic_review" in trig and not _structural_decline(r))
+        if not is_active and vuln < MIN_LEAD_VULN and not _sr_exempt:
             continue
         evidence = []
         if aflag:
