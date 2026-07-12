@@ -42,7 +42,7 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "gov_classified": 1, "gov_poison": 1, "gov_dual": 0,
                  "insider_selling": 1, "insider_buying": 0,
                  "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2,
-                 "lags_own_peers": 2, "strategic_review": 3}
+                 "lags_own_peers": 2, "strategic_review": 3, "activist_holder": 4}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "restatement": 2, "layoffs": 1, "leadership_change": 1,
                 "results_update": 0, "news_negative": 1}
@@ -162,6 +162,7 @@ LABELS = {
     "exec_reaction_drop": "stock dropped on a leadership-change 8-K",
     "lags_own_peers": "trails its self-selected proxy peer group",
     "strategic_review": "sharp de-rating — strategic-review / sale candidate",
+    "activist_holder": "known activist already a holder (13F)",
 }
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
 # insider_buying is shown as a 0-point defense/confidence note.
@@ -499,6 +500,13 @@ def _severity(key, r, t, e):
         if ret is None:
             return 0.5
         return _clamp((-ret - 0.30) / 0.40 + 0.3)    # -30% -> ~0.3, -55% -> ~0.9, deeper -> 1
+    if key == "activist_holder":
+        # Scale by the strongest holder's conviction/ownership: a big concentrated slug or a
+        # ~toehold-approaching-5% stake is a sharper tell than a 2%/1% threshold position.
+        h = (r.get("_holders") or [{}])[0]
+        w = h.get("weight_in_fund") or 0.0
+        o = h.get("ownership_pct") or 0.0
+        return _clamp(0.55 + min(0.3, w * 6.0) + min(0.15, o * 3.0))
     if key == "lags_own_peers":
         pa = r.get("_peers") or {}
         med = (pa.get("median") or {}).get("tsr_1y")
@@ -862,6 +870,53 @@ def _strategic_evidence(key, r):
     return {"key": key, "label": lbl, "value": val, "context": ctx,
             "inputs": "", "period": "trailing 1 yr",
             "source": "Finnhub (price return, excl. dividends)", "url": None}
+# 13F activist-holder signal -------------------------------------------------
+_FUND_WEIGHT_MIN = getattr(config, "FUND_WEIGHT_MIN", 0.02)     # >=2% of the fund's 13F book
+_OWNERSHIP_PCT_MIN = getattr(config, "OWNERSHIP_PCT_MIN", 0.01)  # >=1% of the company's shares
+
+
+def _holder_is_material(h):
+    """A 13F position counts only when it shows CONVICTION — a meaningful slice of the fund's
+    own book OR a meaningful slice of the company. Either clears it (per the design): catches
+    both a concentrated small-fund slug and a big-fund toehold."""
+    w = h.get("weight_in_fund")
+    o = h.get("ownership_pct")
+    return (w is not None and w >= _FUND_WEIGHT_MIN) or (o is not None and o >= _OWNERSHIP_PCT_MIN)
+
+
+def _material_holders(holders):
+    """Material holders, strongest conviction first (list already weight-sorted upstream)."""
+    return [h for h in (holders or []) if _holder_is_material(h)]
+
+
+def _fmt_holder(h):
+    """'Elliott — 4.2% of its 13F book · ~1.8% of shares (Q4 2025)'."""
+    fund = (h.get("fund") or "an activist").title()
+    bits = []
+    if h.get("weight_in_fund") is not None:
+        bits.append(f"{h['weight_in_fund'] * 100:.1f}% of its 13F book")
+    if h.get("ownership_pct") is not None:
+        bits.append(f"~{h['ownership_pct'] * 100:.1f}% of shares outstanding")
+    tail = " · ".join(bits) if bits else "a disclosed stake"
+    q = f" ({h['quarter']})" if h.get("quarter") else ""
+    return f"{fund} — {tail}{q}"
+
+
+def _holder_evidence(key, r):
+    hs = r.get("_holders") or []
+    top = hs[0] if hs else {}
+    names = ", ".join(sorted({(h.get("fund") or "").title() for h in hs if h.get("fund")}))
+    ctx = (f"a known activist already holds a material stake here but has NOT yet filed a 13D or "
+           f"launched a proxy fight — the early-warning window. {_fmt_holder(top)}."
+           + (f" Other activist holders: {names}." if len(hs) > 1 else ""))
+    url = None
+    if top.get("fund_cik") and top.get("filed"):
+        url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={top['fund_cik']}&type=13F-HR"
+    return {"key": key, "label": LABELS.get(key, key), "value": "", "context": ctx,
+            "inputs": "", "period": (top.get("quarter") or "") + " · 13F-HR",
+            "source": "SEC EDGAR (Form 13F information table)", "url": url}
+
+
 def _struct_evidence(key, r, t):
     if key in ("weak_tsr_1y", "weak_tsr_3y"):
         return _tsr_evidence(key, r)
@@ -1047,6 +1102,9 @@ def recompute_all():
     # _pad_cik is idempotent, so this also handles any older padded-key rows.
     aflags = {_pad_cik(k): v for k, v in database.get_all_activist_flags().items()}
     manual = {_pad_cik(k): v for k, v in database.get_manual_situations().items()}   # partner overrides (always win)
+    # 13F activist holders, keyed by ticker (early-warning: an activist is in the stock but
+    # hasn't agitated). Materiality gating happens per-row below.
+    holders_by_ticker = database.holders_for_all()
     metrics = ["pb_ratio", "ev_ebitda", "goodwill_to_assets", "operating_margin",
                "tsr_1y", "tsr_3y", "roa", "revenue_growth", "sga_pct",
                "cash_to_assets", "debt_to_assets"]
@@ -1288,6 +1346,17 @@ def recompute_all():
                 is_active, tier = True, "reported"
             else:
                 is_active, tier = False, ""
+        # 13F activist-holder signal (early warning). A known activist already holds a MATERIAL
+        # stake but hasn't agitated (no 13D/proxy) -> the highest-conviction proactive setup:
+        # the smart money is in the stock, we bring the thesis. Suppressed once a name IS an
+        # active situation (aflag/news/manual) -- there the holding is redundant with the
+        # campaign. Adds points + an evidence card + a warm-intro pitch input.
+        if not is_active:
+            _mh = _material_holders(holders_by_ticker.get((r.get("ticker") or "").upper()))
+            if _mh:
+                r["_holders"] = _mh
+                trig.append("activist_holder")
+                total += STRUCT_POINTS["activist_holder"]
         # Data-quality guard: a proactive lead with no market cap is data-incomplete
         # (its valuation signals can't be trusted and the card looks broken, e.g. IAC's
         # blank market cap). Drop it from the leads — but never drop an active situation.
@@ -1330,6 +1399,8 @@ def recompute_all():
                 evidence.append(_peer_evidence(key, r))
             elif key == "strategic_review":
                 evidence.append(_strategic_evidence(key, r))
+            elif key == "activist_holder":
+                evidence.append(_holder_evidence(key, r))
             elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
