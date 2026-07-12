@@ -73,6 +73,17 @@ FTD_MAX_FILES = int(os.getenv("FTD_MAX_FILES", "2"))  # parse this many recent f
 OPENFIGI_URL = os.getenv("OPENFIGI_URL", "https://api.openfigi.com/v3/mapping")
 OPENFIGI_API_KEY = os.getenv("OPENFIGI_API_KEY", "")
 
+# --- 13F activist-holder signal (early-warning tier) -------------------------
+# A known activist already HOLDS a name (per its quarterly Form 13F) but hasn't yet agitated
+# (no 13D / proxy). We resolve each fund's 13F-filing CIK via EDGAR company search, parse its
+# information table, map CUSIP -> ticker off the cusip_map (U2b), and fire the signal when the
+# stake shows conviction on EITHER measure below. All free SEC data.
+THIRTEENF_ENABLED = os.getenv("THIRTEENF_ENABLED", "1") == "1"
+FUND_WEIGHT_MIN = float(os.getenv("FUND_WEIGHT_MIN", "0.02"))     # >= 2% of the fund's 13F book
+OWNERSHIP_PCT_MIN = float(os.getenv("OWNERSHIP_PCT_MIN", "0.01")) # >= 1% of the company's shares
+THIRTEENF_MAX_FUNDS = int(os.getenv("THIRTEENF_MAX_FUNDS", "80")) # cap funds resolved per run
+THIRTEENF_TIMEOUT = int(os.getenv("THIRTEENF_TIMEOUT", "25"))     # per-request timeout (s)
+
 # --- Scoring -----------------------------------------------------------------
 SCORE_THRESHOLD = int(os.getenv("SCORE_THRESHOLD", "3"))   # flag at >= this
 SCORE_WINDOW_DAYS = int(os.getenv("SCORE_WINDOW_DAYS", "90"))
