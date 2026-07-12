@@ -17,7 +17,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from . import config, database, pipeline, emailer, scoring, spotlight, universe
+from . import config, database, pipeline, emailer, scoring, spotlight, universe, thirteenf
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -30,6 +30,15 @@ def _run_initial_refresh():
         pipeline.startup_full_refresh()
     except Exception as e:  # pragma: no cover
         print(f"[startup] initial refresh failed: {e}")
+    # 13F activist-holder signal: populate on first boot (or whenever the table is empty),
+    # then recompute so leads immediately reflect any activist already in the stock. The
+    # weekly cron keeps it fresh thereafter; failures never block the rest of startup.
+    try:
+        if config.THIRTEENF_ENABLED and database.activist_holdings_count() == 0:
+            if thirteenf.refresh_13f() > 0:
+                scoring.recompute_all()
+    except Exception as e:  # pragma: no cover
+        print(f"[startup] 13F populate failed: {e}")
 
 
 @asynccontextmanager
@@ -61,6 +70,13 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(pipeline.refresh_cusip_map,
                       CronTrigger(day=1, hour=6, minute=0, timezone=config.TIMEZONE),
                       id="cusip_map", replace_existing=True, max_instances=1)
+    # Weekly (Sun 06:00): refresh the 13F activist-holder map. 13F is quarterly + lagged ~45
+    # days, so weekly is ample; runs after universe/entity so the cusip_map + universe are set.
+    if config.THIRTEENF_ENABLED:
+        scheduler.add_job(thirteenf.refresh_13f,
+                          CronTrigger(day_of_week="sun", hour=6, minute=0,
+                                      timezone=config.TIMEZONE),
+                          id="thirteenf", replace_existing=True, max_instances=1)
     scheduler.start()
     threading.Thread(target=_run_initial_refresh, daemon=True).start()
     yield
@@ -613,3 +629,38 @@ def api_send_test_digest():
     return {"ok": True, "sent": sent,
             "message": f"Digest sent to {sent} of {len(subs)} subscriber(s). "
                        f"Check your inbox (and spam folder)."}
+
+
+@app.get("/api/thirteenf/stats")
+def api_thirteenf_stats(ticker: str = ""):
+    """Debug view of the 13F activist-holder map: how many funds resolved, how many universe
+    holdings mapped, when it last ran, and (optionally) the holders for one ticker."""
+    out = {
+        "filers_resolved": len(database.get_activist_filers()),
+        "holdings_mapped": database.activist_holdings_count(),
+        "last_run": database.get_meta("thirteenf_last_run"),
+    }
+    if ticker:
+        out["ticker"] = ticker.upper()
+        out["holders"] = database.holders_for_ticker(ticker)
+    return out
+
+
+@app.post("/api/refresh-13f")
+def api_refresh_13f():
+    """Force a full 13F refresh (resolve funds -> pull latest info tables -> map holdings),
+    then recompute scores so any activist-holder signal appears. Runs in the background
+    (~1-2 minutes) so the request returns immediately."""
+    def _job():
+        import traceback
+        try:
+            n = thirteenf.refresh_13f()
+            scoring.recompute_all()
+            print(f"[refresh-13f] done; {n} holdings mapped")
+        except Exception:
+            print("[refresh-13f] failed")
+            traceback.print_exc()
+    threading.Thread(target=_job, daemon=True).start()
+    return {"ok": True, "message": "13F activist-holder refresh started across the activist "
+            "fund list. Takes ~1-2 minutes; watch the logs for '[13f] resolved … funds', then "
+            "reload. Any name where an activist is already a holder gets a boost + evidence card."}
