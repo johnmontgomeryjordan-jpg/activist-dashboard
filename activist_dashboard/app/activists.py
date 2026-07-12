@@ -21,7 +21,7 @@ FUNDS = [
     "value act", "pershing square", "engine capital", "engine no", "engaged capital",
     "ancora", "politan", "sachem head", "legion partners", "corvex",
     "land & buildings", "land and buildings", "mantle ridge", "inclusive capital",
-    "saba capital", "h partners", "irenic", "barington", "d.e. shaw", "glenview",
+    "saba capital", "h partners management", "irenic", "barington", "d.e. shaw", "glenview",
     "hestia", "bluebell", "soroban", "kimmeridge", "impactive", "scopia",
     "lynrock", "browning west", "ananym", "caligan", "kanen", "gatemore",
     "vision one", "cruiser capital", "blue harbour", "marcato", "white tale",
