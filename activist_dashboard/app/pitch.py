@@ -162,6 +162,31 @@ def _archetype(trig):
     return "default"
 
 
+def _holder_hook(r):
+    """13F early-warning hook: a known activist already holds a material stake but hasn't gone
+    active. The strongest possible opener — the diligence is done and the capital is committed,
+    so it's a warm introduction, not a cold pitch."""
+    hs = r.get("_holders") or []
+    if not hs:
+        return ""
+    h = hs[0]
+    fund = (h.get("fund") or "A known activist").title()
+    if h.get("ownership_pct") is not None:
+        stake = f"~{h['ownership_pct'] * 100:.1f}% of the shares"
+    elif h.get("weight_in_fund") is not None:
+        stake = f"a position worth {h['weight_in_fund'] * 100:.1f}% of its own 13F book"
+    else:
+        stake = "a disclosed position"
+    others = sorted({(x.get("fund") or "").title() for x in hs if x.get("fund")} - {fund})
+    extra = ""
+    if others:
+        verb = "is" if len(others) == 1 else "are"
+        extra = f" ({', '.join(others)} {verb} also on the register.)"
+    return (f"{fund} already owns {stake} here per its latest 13F but has not yet gone active — "
+            f"the capital is committed and the diligence is done. This is a warm introduction, "
+            f"not a cold call: bring the campaign thesis to an investor already in the stock.{extra}")
+
+
 def _derate_caveat(r, trig):
     """4e — a diligence flag appended to a strategic-review thesis so the pitch never sells a
     sharp de-rating as a pure valuation gift. Two cases: (1) the top line is shrinking with
@@ -223,6 +248,9 @@ def _thesis(r, trig):
         s2 = "A clear match for the profile activists target."
 
     parts = [s1]
+    hook = _holder_hook(r)
+    if hook:
+        parts.append(hook)
     if _acq_rerate(r, trig):
         parts.append("The sharp de-rating since a large, goodwill-heavy acquisition reads as "
                      "the market's verdict on a value-destructive deal.")
