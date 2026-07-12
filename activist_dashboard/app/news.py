@@ -142,6 +142,13 @@ EXCLUDE_PATTERNS = [
     "rosen law", "pomerantz", "bragar", "kessler", "levi & korsinsky", "schall law",
     "robbins", "securities fraud", "reminds investors", "encourages investors",
     "investigation on behalf", "notifies investors", "shareholder rights",
+    # law-firm client alerts / M&A-governance memos (not a company-specific campaign) —
+    # e.g. a Skadden Delaware-court note that name-matched three unrelated companies.
+    "skadden", "wachtell", "sullivan & cromwell", "cravath", "latham & watkins",
+    "kirkland & ellis", "paul weiss", "meagher & flom", "cleary gottlieb",
+    "advance notice bylaws", "client alert", "client memo", "legal update",
+    # foreign / general-interest news roundups ("Today top 7 stories")
+    "top 7 stories", "top stories", "today's top", "todays top",
     # academic / health journals
     "plos", "journal", "study", "accumulation", "glycation", "renal", "peer-review",
     "clinical study", "examination population", "doi.org",
@@ -208,10 +215,12 @@ EXCLUDE_PATTERNS = [
     "sector etf", "market rally", "stock market today",
 ]
 
-# Opinion / academic / hyper-local-news domains -- drop regardless of the headline text.
+# Opinion / academic / legal-aggregator / hyper-local-news domains -- drop regardless of
+# the headline text. jdsupra.com is a law-firm client-alert aggregator (not company news);
+# news24.com is a South-African general-news site whose "top stories" roundups leaked in.
 EXCLUDE_DOMAINS = [
     "theconversation.com", "castanetkamloops.net", "edmontonsun.com",
-    "castanet.net",
+    "castanet.net", "jdsupra.com", "news24.com", "lexology.com", "mondaq.com",
 ]
 
 
