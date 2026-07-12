@@ -162,6 +162,27 @@ def _archetype(trig):
     return "default"
 
 
+def _derate_caveat(r, trig):
+    """4e — a diligence flag appended to a strategic-review thesis so the pitch never sells a
+    sharp de-rating as a pure valuation gift. Two cases: (1) the top line is shrinking with
+    the stock — a possible structural decline / falling knife, not a clean turnaround; (2) a
+    50%+ collapse on a still-growing business — the market is pricing a forward risk the
+    trailing numbers don't show (the Intuit pattern), so the moat/thesis must be tested."""
+    if "strategic_review" not in trig:
+        return ""
+    rg = r.get("revenue_growth")
+    t1 = r.get("tsr_1y")
+    if rg is not None and rg < 0:
+        return ("One caveat to diligence first: the top line is shrinking alongside the stock, "
+                "so pressure-test whether this is a fixable de-rating or a structural decline "
+                "before pitching a sale.")
+    if t1 is not None and t1 <= -0.50:
+        return ("One caveat to diligence first: a de-rating this sharp on a still-growing "
+                "business means the market is pricing a forward risk the trailing numbers "
+                "don't show — test the moat and guidance rather than assuming a valuation gift.")
+    return ""
+
+
 # ---- thesis -----------------------------------------------------------------
 def _thesis(r, trig):
     name = r.get("name") or "The company"
@@ -208,6 +229,9 @@ def _thesis(r, trig):
     if extra:
         parts.append(extra)
     parts.append(s2)
+    cav = _derate_caveat(r, trig)
+    if cav:
+        parts.append(cav)
     return " ".join(parts)
 
 
