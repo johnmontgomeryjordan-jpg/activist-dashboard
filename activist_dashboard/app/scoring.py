@@ -188,6 +188,17 @@ COMP_RAMP_SUSPECT = 1.0
 # return capital" is the wrong thesis. Suppress under-levered when lease liabilities exceed this
 # share of assets (SIG: ~$1.1B leases / $5.73B ≈ 19%).
 LEASE_HEAVY = 0.10
+
+
+def _leveraged_recap(r):
+    """True for a negative-equity / debt-funded-buyback capital structure (e.g. Domino's:
+    book equity < 0, debt ~2.6x assets). Such a company has ALREADY returned all its capital
+    and then some via a leveraged recap, so its cash is operating float — not "idle capital an
+    activist would push to return." We suppress the cash-hoard read for these (same spirit as
+    the bank/insurer and lease carve-outs)."""
+    be = (r.get("raw") or {}).get("book_equity")
+    da = r.get("debt_to_assets")
+    return (be is not None and be <= 0) or (da is not None and da > 1.0)
 # Exec-change stock reaction (the 1-day abnormal move vs S&P on a leadership-change 8-K).
 REACTION_KEYS = ("exec_reaction_drop",)
 # Fire when the stock fell at least this much MORE than the market on the announcement day.
@@ -527,7 +538,7 @@ def _fin_context(r, t, e):
         "operating_margin": _fin or _outperf or not _om_pos,
         "roa": (r.get("roa") or 0) <= 0,
         "sga_pct": _fin or _outperf or not _om_pos,
-        "cash_to_assets": _fin or _outperf,
+        "cash_to_assets": _fin or _outperf or _leveraged_recap(r),
         "debt_to_assets": _fin or _outperf or _lease_heavy,
         "ev_ebitda": _fin,
     }
@@ -1111,7 +1122,10 @@ def recompute_all():
         if (high("sga_pct") and not _is_financial and not _strong_outperformer
                 and (r.get("operating_margin") or 0) > 0):
             trig.append("high_sga")
-        if high("cash_to_assets") and not _is_financial and not _strong_outperformer:
+        # Leveraged-recap / negative-equity names (Domino's) have already returned all their
+        # capital via debt-funded buybacks — "cash = idle capital to return" is exactly wrong.
+        if (high("cash_to_assets") and not _is_financial and not _strong_outperformer
+                and not _leveraged_recap(r)):
             trig.append("cash_hoard")
         # Lease guard: a lease-heavy retailer at zero funded debt isn't really under-levered.
         _bs = r.get("raw") or {}
