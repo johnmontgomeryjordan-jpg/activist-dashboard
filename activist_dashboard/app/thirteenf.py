@@ -170,38 +170,47 @@ def refresh_13f():
 
     n_funds = 0
     n_rows = 0
+    n_err = 0
     for fund in funds:
-        res = resolve_and_latest(fund)
-        time.sleep(0.2)                                # stay under SEC's 10 req/s
-        if not res:
-            continue
-        cik10, accession, filed = res
-        database.upsert_activist_filer(fund, cik10, "browse-edgar")
-        xml = latest_infotable(cik10, accession)
-        time.sleep(0.2)
-        holds = parse_infotable(xml)
-        if not holds:
-            continue
-        port_total = sum(h["value"] for h in holds if h.get("value")) or 0.0
-        period = _period_label(filed)
-        rows = []
-        for h in holds:
-            tk = database.ticker_for_cusip(h["cusip"])
-            if not tk:
+        # Per-fund guard: one bad fund (a network hiccup, a rate-limit, an odd response) must
+        # NEVER abort the whole sweep. We log the offender and move on, and always reach the
+        # last_run stamp below so the run is visibly complete even if some funds failed.
+        try:
+            res = resolve_and_latest(fund)
+            time.sleep(0.2)                            # stay under SEC's 10 req/s
+            if not res:
                 continue
-            tk = tk.upper()
-            if tk not in universe:                     # only names we actively monitor
+            cik10, accession, filed = res
+            database.upsert_activist_filer(fund, cik10, "browse-edgar")
+            xml = latest_infotable(cik10, accession)
+            time.sleep(0.2)
+            holds = parse_infotable(xml)
+            if not holds:
+                n_funds += 1
                 continue
-            weight = (h["value"] / port_total) if (port_total and h.get("value")) else None
-            so = shares_out.get(tk)
-            own = (h["shares"] / so) if (so and h.get("shares")) else None
-            rows.append((tk, fund, cik10, h["cusip"], h.get("value"),
-                         h.get("shares"), weight, own, filed, period))
-        if rows:
-            database.replace_holdings_for_fund(fund, rows)
-            n_rows += len(rows)
-        n_funds += 1
+            port_total = sum(h["value"] for h in holds if h.get("value")) or 0.0
+            period = _period_label(filed)
+            rows = []
+            for h in holds:
+                tk = database.ticker_for_cusip(h["cusip"])
+                if not tk:
+                    continue
+                tk = tk.upper()
+                if tk not in universe:                 # only names we actively monitor
+                    continue
+                weight = (h["value"] / port_total) if (port_total and h.get("value")) else None
+                so = shares_out.get(tk)
+                own = (h["shares"] / so) if (so and h.get("shares")) else None
+                rows.append((tk, fund, cik10, h["cusip"], h.get("value"),
+                             h.get("shares"), weight, own, filed, period))
+            if rows:
+                database.replace_holdings_for_fund(fund, rows)
+                n_rows += len(rows)
+            n_funds += 1
+        except Exception as e:                         # keep sweeping; surface the offender
+            n_err += 1
+            print(f"[13f] fund '{fund}' failed: {type(e).__name__}: {e}")
 
     database.set_meta("thirteenf_last_run", database.now_iso())
-    print(f"[13f] resolved {n_funds} activist funds; {n_rows} universe holdings mapped")
+    print(f"[13f] resolved {n_funds} funds; {n_rows} universe holdings mapped; {n_err} errored")
     return n_rows
