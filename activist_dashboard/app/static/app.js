@@ -41,7 +41,7 @@ function showView(name){
 
 /* ===== How it works: subtabs + feedback ===== */
 function aboutTab(id){
-  ["purpose","method","glossary","using","limits","roadmap","feedback"].forEach(s=>{
+  ["purpose","method","glossary","faq","using","limits","roadmap","feedback"].forEach(s=>{
     const sec=document.getElementById("about-"+s); if(sec) sec.style.display = s===id?"block":"none";
     const btn=document.getElementById("ab-"+s); if(btn) btn.classList.toggle("active", s===id);
   });
