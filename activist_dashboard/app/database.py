@@ -609,6 +609,21 @@ def upsert_news(n):
         )
 
 
+def news_all_brief():
+    """Every stored headline (id/headline/url/source) — for re-applying exclude rules to items
+    ingested before a pattern existed."""
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute("SELECT id, headline, url, source FROM news")]
+
+
+def delete_news(ids):
+    if not ids:
+        return 0
+    with get_conn() as conn:
+        conn.executemany("DELETE FROM news WHERE id=?", [(i,) for i in ids])
+    return len(ids)
+
+
 def _dedup_news(rows, limit):
     """Collapse repeats of the same headline (syndicated wires / cross-source dupes),
     keeping the newest, until `limit` items."""
