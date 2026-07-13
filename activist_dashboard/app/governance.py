@@ -42,7 +42,9 @@ DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
 # false flags would persist). This re-run also backfills compensation's ceo_transition flag.
 # v3: header-anchored negation for "What We Do / What We Don't Do" governance-highlights tables
 #     (v2's 80-char window missed the distant column header, so Uber/CrowdStrike stayed flagged).
-GOV_PARSER_VERSION = "3"
+# v4: forces a full proxy re-parse so compensation.find_peers re-runs with the ambiguous
+#     single-token fix (drops "target"/"match"/etc. false peers, e.g. Target Corp on INSP).
+GOV_PARSER_VERSION = "4"
 
 
 def _pad(cik):
