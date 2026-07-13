@@ -509,6 +509,7 @@
     <button class="abtab active" id="ab-purpose" onclick="aboutTab('purpose')">Purpose</button>
     <button class="abtab" id="ab-method" onclick="aboutTab('method')">Methodology</button>
     <button class="abtab" id="ab-glossary" onclick="aboutTab('glossary')">Metrics &amp; terms</button>
+    <button class="abtab" id="ab-faq" onclick="aboutTab('faq')">FAQ</button>
     <button class="abtab" id="ab-using" onclick="aboutTab('using')">Using it</button>
     <button class="abtab" id="ab-limits" onclick="aboutTab('limits')">Limitations</button>
     <button class="abtab" id="ab-roadmap" onclick="aboutTab('roadmap')">Roadmap</button>
@@ -567,6 +568,47 @@
     <span class="pill" style="color:var(--accent);">25–49 Elevated</span>
     <span class="pill">&lt;25 Moderate</span>
     It is capped below 100 by design, so it never reads as a certainty — it's a measure of fit, not odds.</p>
+
+    <h3>How each metric is computed</h3>
+    <p>Every financial metric is calculated directly from the company's <b>SEC XBRL</b> data — the
+    tagged numbers in its 10-K / 10-Q — using standard definitions, so each traces to a filing:</p>
+    <ul>
+      <li><b>Operating margin</b> = operating income ÷ revenue &nbsp;·&nbsp; <b>Return on assets</b>
+        = net income ÷ total assets &nbsp;·&nbsp; <b>SG&amp;A %</b> = SG&amp;A ÷ revenue.</li>
+      <li><b>Revenue growth</b> = the year-over-year change in trailing revenue.</li>
+      <li><b>Cash / assets</b>, <b>Debt / assets</b>, <b>Goodwill / assets</b> = the balance-sheet
+        item ÷ total assets.</li>
+      <li><b>Price / book</b> = share price ÷ book value per share; <b>EV / EBITDA</b> = (market cap +
+        debt − cash) ÷ operating earnings — both blending market data with the filed fundamentals.</li>
+    </ul>
+    <p>Figures always read the company's <em>most recent</em> filing, and quarterly items are
+    trailing-twelve-month where that's the honest basis, so a single seasonal quarter doesn't distort
+    a ratio.</p>
+
+    <h3>How we decide "in line" vs. "vulnerability"</h3>
+    <p>A raw number means nothing on its own — a 12% margin is weak for software, strong for a grocer.
+    So every metric is ranked <b>against the company's industry peers</b> (grouped by 2-digit SIC
+    code), and the peer distribution's <b>quartiles</b> set the cutoffs. On the Financials tab each
+    metric gets one of three verdicts, and the bar shows where the company sits across its sector's
+    full range (5th–95th percentile):</p>
+    <ul>
+      <li><span class="pill" style="color:var(--hot);">Vulnerability</span> (red) — the company is in
+        the <b>worse quartile</b> vs. peers: <b>below the 25th percentile</b> on a higher-is-better
+        metric (operating margin, ROA, revenue growth) or <b>above the 75th percentile</b> on a
+        lower-is-better one (SG&amp;A, goodwill). This is the "there's a lever here to attack" end —
+        a cost problem, weak returns, an overpaying balance sheet.</li>
+      <li><span class="pill" style="color:var(--warn);">Opportunity</span> (gold) — an activist
+        <em>lever</em>, not a weakness: cheap to book or EV/EBITDA (bottom quartile = a cheap entry),
+        a cash-heavy balance sheet, or under-levered (idle capital to return).</li>
+      <li><span class="pill">In line</span> — mid-pack vs. peers; no flag.</li>
+    </ul>
+    <p>The peer <b>cutoff</b> (the 25th- or 75th-percentile value) is shown on each evidence card, so
+    you can see exactly the bar a company fell short of. A signal only adds to the score when it
+    crosses that quartile line — and it's then <b>weighted by how far past the cutoff</b> the company
+    sits toward the sector floor/ceiling (5th/95th percentile), so a margin barely below the cutoff
+    counts far less than one near the sector's worst. The Financials tab mirrors the same guards as
+    the score (financials carve-out, multi-year-winner, profitability rule), so it never paints a red
+    flag the scorer deliberately suppressed.</p>
 
     <h3>The signals</h3>
     <p><b>Valuation gap</b> — cheap vs peers (low price-to-book); cheap on EV/EBITDA vs peers.<br>
@@ -628,6 +670,34 @@
     sometimes a serious activist but often an ESG/gadfly filer, so they're held at lower confidence), or
     <b>Manual</b> (tagged by a team member). These are tracked for awareness — they're usually past the
     point of a proactive pitch, though a fresh filing can be an urgent defense lead.</p>
+    <p>A fourth tier, <b>Disclosed holder</b>, sits below these: a known activist owns ≥5% (so a
+    Schedule 13D/13G is on file — public) but has not agitated in the last 18 months. A public but
+    dormant position, distinct from a live campaign.</p>
+
+    <h3>The activist ownership layer (13F) — Accumulating &amp; Disclosed</h3>
+    <p>Beyond the fundamentals screen, the tool tracks <b>which known activists already own which of
+    our names</b>, from each fund's quarterly <b>Form 13F</b>. The pipeline, all on free SEC data:
+    for each fund on our recurring-activist list, EDGAR full-text search plus the SEC submissions API
+    resolve the fund to its filer and its latest 13F; we parse the information table (every long
+    US-equity position, by CUSIP), and map each CUSIP to a ticker via a free CUSIP→ticker spine we
+    built from SEC Fails-to-Deliver files and OpenFIGI. A position counts as <b>material</b> only when
+    it shows real conviction (≥1% of the company <em>and</em> ≥1% of the fund's own book), which
+    screens out passive/quant books and mega-cap core longs. A material holder that <b>hasn't agitated</b>
+    then routes to <b>Accumulating</b> (a stealth stake under 5%, the early-warning window) or the
+    <b>Disclosed holder</b> tier (≥5%, already public). If the name is already a live campaign, it stays
+    in Active Situations instead. 13F is quarterly and lagged ~45 days, so it's a lead to confirm, not
+    a live feed.</p>
+
+    <h3>Detecting an active campaign (the filing sweep)</h3>
+    <p>A 13D or proxy fight is filed <em>by the activist</em>, so it never appears in the target
+    company's own filing feed. To find "which of our names just drew an activist," we use EDGAR
+    full-text search filtered by the company's CIK and the activist form types (13D, DFAN14A,
+    PREC14A/DEFC14A, PX14A6G, SC 14N). Each hit lists the subject company first and the filer after —
+    so a company is a <b>target</b> only when its CIK is the subject. A <b>filer gate</b> keeps the
+    noisiest forms (exempt solicitations, dissident materials) only when a <em>known</em> activist
+    filed them, so ESG gadflies and one-off filers don't flood the list. The sweep uses an
+    <b>18-month recency window</b>: a campaign that concluded long ago drops off, so a stale filing
+    doesn't deter a proactive pitch.</p>
 
     <h3>Where the data comes from — all public</h3>
     <p>Everything here is built from <b>publicly available data</b> — SEC filings and free market-data
@@ -636,6 +706,11 @@
       <li><b>SEC XBRL</b> — fundamentals: revenue, margins, SG&amp;A, returns, cash, debt, goodwill, D&amp;A.</li>
       <li><b>SEC EDGAR</b> — 8-K / 10-K / 10-Q events, Form 4 insider trades, 8-K Item 5.07 vote
         results, DEF 14A proxies (governance, CEO pay, peer group), and a 13D / contested-proxy sweep.</li>
+      <li><b>SEC EDGAR full-text search + submissions API</b> — resolves each activist fund to its
+        13F filer and latest quarterly holdings (powers Accumulating &amp; Disclosed holders).</li>
+      <li><b>SEC Form 13F information tables</b> — the activist holdings themselves, by CUSIP.</li>
+      <li><b>Free CUSIP→ticker map</b> — built from SEC Fails-to-Deliver files + OpenFIGI, so 13F
+        holdings map onto our universe with no paid identifier feed.</li>
       <li><b>Finnhub</b> — market cap, price-to-book, P/E, 1-yr return, earnings calendar, insider sentiment.</li>
       <li><b>Twelve Data</b> — daily price history and multi-year (3/5-yr) price returns.</li>
       <li><b>Financial Modeling Prep</b> — company profile and IR/contact details.</li>
@@ -657,6 +732,9 @@
         universe-wide activist sweep, multi-year price returns, price charts, the AI thesis, and the emailed pitch
         kit. The "lead of the day" rotates on this 6 AM build, so the site is fresh each morning and
         captures the prior night's filings and headlines.</li>
+      <li><b>Weekly</b> — the S&amp;P 1500 membership rebuild (from iShares index holdings) and the
+        13F activist-holder refresh (Accumulating &amp; Disclosed). 13F only updates quarterly at the
+        source, so a weekly pull is more than enough.</li>
     </ul>
   </div>
 
@@ -743,6 +821,144 @@
       <li><b>10-K / 10-Q</b> — annual / quarterly financial reports (the source of the fundamentals).</li>
       <li><b>Form 4</b> — insider open-market buys and sells.</li>
     </ul>
+  </div>
+
+  <!-- FAQ -->
+  <div class="about-sec" id="about-faq" style="display:none;">
+    <h2>FAQ</h2>
+    <p class="lead">The questions that come up the first time you use the tool — what the rating
+    means, why a name is or isn't here, how the scoring works, and how to read the SEC filings it
+    references.</p>
+
+    <h3>The rating</h3>
+    <p><b>Is a high rating a prediction that a campaign is coming?</b><br>
+    No. The 0–92 rating measures how strongly a company <em>fits the profile</em> activists target —
+    cheap, underperforming, with a fixable lever. It is a measure of <b>fit, not odds</b>. A company
+    can score 85 and never draw a campaign (insiders control the vote, it's too small for the funds,
+    the board is already acting), and an activist can target a name that barely screens. Treat a high
+    rating as "this deserves a closer look," not "this will happen."</p>
+    <p><b>Why is it capped at 92 and not 100?</b><br>
+    By design, so it never reads as a certainty. It's an index of how many activist-target traits a
+    company shows and how severe each is — not a probability. Leaving headroom keeps everyone honest
+    that it's a screen.</p>
+    <p><b>What do the bands mean?</b><br>
+    <span class="pill" style="color:var(--hot);">75+ Severe</span>
+    <span class="pill" style="color:var(--warn);">50–74 High</span>
+    <span class="pill" style="color:var(--accent);">25–49 Elevated</span>
+    <span class="pill">&lt;25 Moderate</span>
+    — a shorthand for how strong the match is. They're relative, not absolute thresholds for action.</p>
+
+    <h3>How the scoring works</h3>
+    <p><b>How is the number actually built?</b><br>
+    Each trait (cheap vs. peers, margins vs. peers, price lagging the S&amp;P, governance flags, etc.)
+    is checked <b>against the company's own industry peers</b>, not on an absolute basis — a 12%
+    operating margin is weak for software and strong for a grocer. Every triggered signal contributes
+    points <b>weighted by how severe it is</b> (how deep in the peer tail, how cheap, how far returns
+    lag). The points sum to the 0–92 index. Full detail is under <b>Methodology</b>.</p>
+    <p><b>What is the "lead floor" — why do some names not appear on the pitch board?</b><br>
+    A company has to clear a minimum score to show up as a proactive lead. Below that floor, it's a
+    weak, one-or-two-signal match that would just dilute the board — so it's held back rather than
+    presented as a name to pitch. (One deliberate exception: a sharp "sale-candidate" de-rating is
+    kept even at a modest score, because it's a distinct high-value setup that trips few signals by
+    nature.) Active situations and 13F holders are never dropped by the floor — they're tracked for
+    awareness regardless of score.</p>
+    <p><b>Why does a signal sometimes NOT fire when the raw number looks bad?</b><br>
+    Because of the guards (see Methodology → Sanity checks). A negative operating margin doesn't fire
+    the "cost-cut" signal (you can't cost-cut out of a loss); a one-time impairment that crushed a
+    quarter is detected and suppressed; a multi-year market-beater doesn't get flagged as a
+    "sustained underperformer." The guards exist so the score reflects a real activist lever, not an
+    accounting artifact.</p>
+
+    <h3>Why a name is — or isn't — here</h3>
+    <p><b>Why isn't company X on the board?</b><br>
+    Usually one of three reasons: (1) it doesn't screen — it doesn't match enough of the profile to
+    clear the lead floor; (2) it's already an <b>active situation</b> (an activist has shown up, so
+    it moved off the proactive board); or (3) a data gap — a name missing core data (e.g., no market
+    cap) is held back rather than shown with a broken card. Absence of a flag is <b>not</b> proof of
+    safety.</p>
+    <p><b>What's the difference between Active situations, Disclosed holder, and Accumulating?</b><br>
+    They're three stages of activist involvement:</p>
+    <ul>
+      <li><b>Active situations</b> — an activist is <em>currently agitating</em>: a 13D, a contested
+        proxy, or dissident soliciting materials on file (Confirmed), or named in the press
+        (Reported), within the last ~18 months. Usually too late to pitch proactively.</li>
+      <li><b>Disclosed holder</b> — an activist owns <b>≥5%</b> (so a Schedule 13D/13G is on file —
+        already public) but there's no campaign in the last 18 months. A known holder to watch; the
+        stake is public but dormant.</li>
+      <li><b>Accumulating</b> — an activist holds a <b>material stake under 5%</b> (no 13D yet) that
+        we surfaced from its quarterly Form 13F. The true early-warning window: the smart money is in
+        before anything is announced. This is the newest and most differentiated view.</li>
+    </ul>
+
+    <h3>The Accumulating tab</h3>
+    <p><b>Why do most companies in Accumulating say "not yet on the board" and have a thin profile?</b><br>
+    This is expected, and it's the whole point of the tab. A name lands in Accumulating <b>purely
+    because a known activist holds it</b> — the activist's presence <em>is</em> the signal. Most of
+    these names don't <em>also</em> screen as vulnerability targets on our fundamentals (if they did,
+    they'd carry a rating chip and sit on the pitch board too). So they have no vulnerability score
+    and their profile is lighter — we're flagging them for <b>who's in the stock</b>, not for how
+    they screen. When a name shows both a rating chip <em>and</em> an activist holder, that's the
+    highest-conviction combination on the platform.</p>
+    <p><b>Where do the activist stakes come from — and can I trust the ownership %?</b><br>
+    From each activist fund's quarterly <b>Form 13F</b> (the SEC filing every &gt;$100M manager must
+    file listing its long US-equity holdings). We resolve each fund to its filer, pull its latest
+    13F, and map every position to a ticker. Two caveats: 13F is <b>quarterly and lagged ~45 days</b>,
+    so a stake can be up to ~4.5 months stale — always confirm the current position before you rely
+    on it. And the ownership-of-company % is derived from shares held ÷ shares outstanding; where the
+    underlying share count is imperfect it can be off, so treat it as approximate. The
+    <b>% of the fund's own book</b> (conviction) is exact.</p>
+    <p><b>Why are some famous activists (or names) missing from Accumulating?</b><br>
+    A few reasons: their big positions may already be <b>active situations</b> or <b>≥5% disclosed
+    holders</b> (shown on those tabs instead); a fund that has stopped filing 13F drops off; and we
+    deliberately exclude the largest mega-caps (activists don't stealth-accumulate a $200B+ company)
+    and passive/quant books (a fund holding 1% of hundreds of names isn't running a campaign).</p>
+    <p><b>What does the "13D on file" badge mean?</b><br>
+    Crossing 5% ownership legally forces a Schedule 13D or 13G within 10 days — so any ≥5% activist
+    stake is <b>already publicly disclosed</b>. The badge flags that: it's a known, public position,
+    not a stealth accumulation.</p>
+
+    <h3>The SEC filings it references</h3>
+    <p>The odd letter-and-number codes are SEC form types. The ones you'll see:</p>
+    <ul>
+      <li><b>Schedule 13D</b> — filed when an investor crosses <b>5%</b> ownership <em>with intent to
+        influence</em>. The clearest single sign an activist has engaged. (A <b>13G</b> is the passive
+        version — same 5% threshold, no activist intent.)</li>
+      <li><b>DFAN14A</b> — "dissident soliciting materials": an activist's campaign communications to
+        shareholders. A live campaign.</li>
+      <li><b>PREC14A / DEFC14A</b> — a <b>contested</b> proxy statement (preliminary / definitive) —
+        i.e. a proxy fight is under way.</li>
+      <li><b>PX14A6G</b> — an "exempt solicitation": a shareholder urging a vote without running a
+        full proxy. Sometimes a serious activist, often an ESG/gadfly filer — so we hold these at
+        lower confidence.</li>
+      <li><b>SC 14N</b> — a shareholder nominating directors to the board.</li>
+      <li><b>DEF 14A</b> — the annual proxy statement (board, governance, executive pay, and the
+        company's self-selected compensation peer group).</li>
+      <li><b>8-K</b> — a material-event filing. <b>Item 5.02</b> = executive/director changes;
+        <b>Item 5.07</b> = shareholder vote results (say-on-pay); <b>Item 4.02</b> = a restatement
+        ("non-reliance on previously issued financials").</li>
+      <li><b>10-K / 10-Q</b> — annual / quarterly financial reports (the source of the fundamentals).</li>
+      <li><b>Form 4</b> — an insider's open-market buys and sells.</li>
+      <li><b>Form 13F</b> — an institution's quarterly holdings report (the basis of the Accumulating
+        and Disclosed-holder tabs).</li>
+    </ul>
+    <p>The long strings in a filing link (e.g. <code>0001517137</code>) are <b>CIK numbers</b> — the
+    SEC's permanent ID for a company or filer. They're how we tie a filing to the right entity.</p>
+
+    <h3>Why things misflag</h3>
+    <p><b>Why does the news/filings feed sometimes tag the wrong company or a non-event?</b><br>
+    Headlines and filings are matched to companies by name and ticker, which is imperfect and lagged —
+    it can occasionally pull in a law-firm memo or an article about a different company. That's why
+    the feed is a <b>prompt to look, not a vetted record</b>, and why active situations carry a
+    confidence tier. If you spot a misfire, the <b>Manage</b> button (Active situations) or the
+    <b>Feedback</b> tab flags it. See <b>Limitations</b> for the full list of where a screen like this
+    goes wrong.</p>
+
+    <h3>Trust &amp; compliance</h3>
+    <p><b>Is any of this material non-public information?</b><br>
+    No. Everything in the tool is built from <b>public data</b> — SEC filings and free market-data
+    tiers. There is no private, paid, or non-public information anywhere in it. It's an internal
+    lead-generation aid that organizes public information faster; every number traces to a public
+    filing you can open.</p>
   </div>
 
   <!-- USING IT -->
@@ -838,6 +1054,28 @@
     it does, and also the source of most of its current limits. The biggest improvements all come from
     moving past those free tiers. Here's where it stands now versus what it could become.</p>
 
+    <h3>Recently shipped</h3>
+    <p>The newest layer takes the tool beyond a pure fundamentals screen and into <b>tracking the
+    activists themselves</b>:</p>
+    <ul>
+      <li><b>Activist ownership from 13F</b> — we now resolve every fund on the recurring-activist
+        list to its latest quarterly Form 13F and map its holdings onto our universe, entirely on free
+        SEC data (EDGAR full-text search + the submissions API + a home-built CUSIP→ticker spine).</li>
+      <li><b>Accumulating tab</b> — the early-warning view: names where a known activist holds a
+        material stake <b>under 5%</b> (no 13D yet), grouped by activist. The smart money in the stock
+        before anything is announced.</li>
+      <li><b>Disclosed-holder tier</b> — ≥5% activist positions (a public 13D/13G on file) that aren't
+        a live campaign, given their own tier on Active Situations.</li>
+      <li><b>Conviction &amp; quality filters</b> — a materiality gate (real % of the company AND of
+        the fund's book) that screens out quant/multi-strat books and passive mega-cap longs, so the
+        list is genuine activist accumulation, not index-like holdings.</li>
+      <li><b>Falling-knife vs. fallen-but-viable split</b> — the sharp-de-rating signal now separates a
+        clean sale candidate from a structural decline, and flags when a collapse is pricing a forward
+        risk the trailing numbers don't yet show.</li>
+      <li><b>Detection hardening</b> — a filer gate on the activist sweep (so ESG gadflies don't flood
+        Active Situations) and a scrub of law-firm legal-alert false positives.</li>
+    </ul>
+
     <h3>What it does today vs. with more investment</h3>
     <div style="overflow-x:auto;">
     <table class="cmp">
@@ -891,6 +1129,21 @@
         backups, and alerts when a company jumps into a higher band.</li>
       <li><b>Beyond internal use.</b> Commercially-licensed data is also what would let the tool move past
         an internal-only setting down the road.</li>
+    </ul>
+
+    <h3>Next up — the near-term queue</h3>
+    <p>The product work lined up immediately after the 13F layer:</p>
+    <ul>
+      <li><b>Universe search &amp; filters (U3).</b> A search box to jump to any name, plus filters on
+        the board — by sector, index (S&amp;P 500/400/600), whether an activist already holds it, and
+        vulnerability band. The most-requested everyday "find and slice the list" need.</li>
+      <li><b>Buy-and-hold / style flag.</b> Distinguish a campaign activist from a long-term
+        constructivist (e.g. a fund that owns a large but passive stake in a compounder), so the
+        ownership tabs surface intent, not just position size.</li>
+      <li><b>Impairment &amp; intangibles pack.</b> Normalize one-time charges (goodwill impairments,
+        write-downs) so an impairment-driven quarter doesn't mislabel an otherwise-healthy business.</li>
+      <li><b>Widen the universe.</b> Extend coverage below the current ~$1B floor toward ~$300M, where
+        a lot of small-cap activism actually happens.</li>
     </ul>
 
     <h3>Planned new signals (deeper coverage)</h3>
