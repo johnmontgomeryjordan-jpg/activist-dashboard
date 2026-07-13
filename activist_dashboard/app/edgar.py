@@ -31,7 +31,10 @@ FORMS = {"8-K", "10-K", "10-Q"}
 # Bump this string to force a one-time re-classification of stored filings.
 # 2026-07-07: added Item 4.02 (restatement / non-reliance) — the re-classification pass
 # re-tags 8-Ks already in the window so existing non-reliance filings light up.
-CLASSIFIER_VERSION = "2026-07-07-item402-restatement"
+# 2026-07-13: precise Item 5.02 — separate real departures from routine appointments so the
+#             standard term-of-office boilerplate ("...death, resignation or removal...") stops
+#             tagging appointments/annual-meeting 8-Ks as "Executive departure".
+CLASSIFIER_VERSION = "2026-07-13-item502-departure-precision"
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
@@ -42,12 +45,32 @@ _TAG = re.compile(r"<[^>]+>")
 # catalysts activists key off (it forces board/audit-committee accountability).
 ITEM_DIRECT = {"2.06": "impairment", "2.05": "layoffs", "4.02": "restatement"}
 
+# Real-departure phrases. Deliberately EXCLUDES bare "resign"/"resignation"/"retire"/
+# "retirement"/"terminat"/"removal", which appear verbatim in the standard board-appointment
+# term-of-office boilerplate ("...to hold office until his earlier death, resignation or
+# removal...") and were tagging routine APPOINTMENTS as "Executive departure" (Amphastar,
+# Trade Desk) and annual-meeting/equity-plan 8-Ks too (INSP).
 DEPART_TERMS = [
-    "resign", "resignation", "step down", "stepping down", "stepped down",
-    "will step down", "to step down", "departure of", "will depart", "departs",
-    "terminat", "no longer serve", "no longer be", "will leave", "to leave",
-    "leave the company", "retire", "retirement", "relieved of", "removed as",
-    "separation from", "ceases to serve", "mutual agreement to",
+    "has resigned", "have resigned", "resigned as", "resigned from", "resigned effective",
+    "is resigning", "are resigning", "will resign", "tendered his resignation",
+    "tendered her resignation", "tendered their resignation", "step down", "stepping down",
+    "stepped down", "will step down", "to step down", "will retire", "to retire",
+    "intends to retire", "his retirement", "her retirement", "their retirement",
+    "retirement of", "departure of", "will depart", "departs", "no longer serve as",
+    "no longer be employed", "will leave the company", "to leave the company",
+    "terminated as", "termination of employment", "relieved of", "removed as",
+    "separation from the company", "ceases to serve", "mutual agreement to",
+]
+# New-director / new-officer appointment phrases. A 5.02 with an appointment but no departure
+# is a low-weight "leadership_change", NOT a departure. Routine annual RE-election language
+# ("were elected", "election of directors") is deliberately excluded so a 5.07 vote-results
+# 8-K doesn't read as a leadership event.
+APPOINT_TERMS = [
+    "appointed", "appointment of", "named to the board", "named as a director",
+    "joins the board", "joined the board", "increased the size of the board",
+    "increase the size of the board", "increased the number of directors",
+    "increase the number of directors", "newly created", "to fill the vacancy",
+    "appointed to serve", "to serve as a class",
 ]
 MISS_TERMS = [
     "below expectations", "below consensus", "below estimates", "below the prior",
@@ -98,8 +121,15 @@ def classify(form, item_codes, text):
             sigs.add(ITEM_DIRECT[c])
     t = text or ""
     if "5.02" in codes:
-        sigs.add("ceo_departure" if any(d in t for d in DEPART_TERMS)
-                 else "leadership_change")
+        # Strip the standard term-of-office boilerplate ("...until his earlier death,
+        # resignation or removal...") so a routine appointment isn't read as a departure.
+        tclean = re.sub(r"death,?\s+resignation\s+or\s+removal", " ", t)
+        if any(d in tclean for d in DEPART_TERMS):
+            sigs.add("ceo_departure")
+        elif any(a in tclean for a in APPOINT_TERMS):
+            sigs.add("leadership_change")
+        # else: 5.02 with no actual departure or new appointment (equity-plan amendment,
+        # bylaw/charter change, comp arrangement, annual-meeting housekeeping) → no signal.
     if "2.02" in codes:
         sigs.add("earnings_miss" if any(m in t for m in MISS_TERMS)
                  else "results_update")
@@ -182,6 +212,14 @@ def ingest(universe, days=None, max_companies=None):
         row = conn.execute("SELECT value FROM meta WHERE key='edgar_classifier'").fetchone()
         if (row["value"] if row else None) != CLASSIFIER_VERSION:
             conn.execute("DELETE FROM filings")
+            # Exec-reaction rows are derived from filing classification. Wipe them too so a
+            # filing that is no longer a leadership event (a re-classified appointment or an
+            # annual-meeting 8-K) can't leave a stale "stock dropped on a leadership 8-K"
+            # reaction behind; refresh_exec_reactions rebuilds only current leadership filings.
+            try:
+                conn.execute("DELETE FROM exec_reactions")
+            except Exception:
+                pass
             conn.execute("INSERT OR REPLACE INTO meta (key,value) VALUES ('edgar_classifier',?)",
                          (CLASSIFIER_VERSION,))
         existing = set(r["id"] for r in conn.execute("SELECT id FROM filings"))
