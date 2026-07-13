@@ -100,6 +100,17 @@ OWNERSHIP_DISCLOSED = float(os.getenv("OWNERSHIP_DISCLOSED", "0.05"))
 # holder in a >$100B name is a passive/compounder long (TCI in Visa, Soroban in Microsoft), not a
 # campaign setup. Exclude them from the Accumulating tab.
 MEGA_CAP_MAX = float(os.getenv("MEGA_CAP_MAX", "100000000000"))   # $100B
+# Backstop for the mega-cap filter: these >$150B names have no reliable market cap in the DB
+# (un-enriched universe rows) and sometimes carry bad shares-outstanding that inflate ownership
+# (Mastercard). Activists don't stealth-accumulate them, so exclude by ticker regardless.
+_MEGA_CAP_DENY_DEFAULT = (
+    "AAPL,MSFT,NVDA,AMZN,GOOGL,GOOG,META,AVGO,TSLA,BRK.A,BRK.B,LLY,JPM,V,MA,WMT,UNH,XOM,ORCL,"
+    "JNJ,PG,HD,COST,ABBV,KO,BAC,MRK,CVX,PEP,CRM,NFLX,TMO,ACN,LIN,MCD,ADBE,CSCO,ABT,WFC,IBM,GE,"
+    "DIS,NOW,SPGI,QCOM,TXN,AMD,INTU,CAT,GS,AXP,MS,BLK,ISRG,PM,AMGN,GILD,C,BKNG,SYK,DHR,PFE,"
+    "UNP,RTX,HON,LOW,T,VZ,CMCSA,COP,BSX,PLD,ADP,MU,PANW,KLAC,LRCX,SNPS,CDNS,ANET,APH,MMC,ELV,"
+    "CB,CME,ICE,MO,SO,DUK,ZTS,PGR,APO,BX,SCHW,USB,PNC,CI,UPS,SBUX,MDT,TT,ETN,DE,BA,LMT,GD")
+MEGA_CAP_DENY = {t.strip().upper() for t in
+                 os.getenv("MEGA_CAP_DENY", _MEGA_CAP_DENY_DEFAULT).split(",") if t.strip()}
 FUND_WEIGHT_MIN = float(os.getenv("FUND_WEIGHT_MIN", "0.02"))     # (legacy; kept for compat)
 THIRTEENF_MAX_FUNDS = int(os.getenv("THIRTEENF_MAX_FUNDS", "80")) # cap funds resolved per run
 # A real 13F filer files every quarter. If the newest 13F under a resolved CIK is older than this,
