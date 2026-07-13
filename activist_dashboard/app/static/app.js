@@ -393,11 +393,14 @@ function accumFundRow(e){
   if(e.weight!=null) bits.push(`${(e.weight*100).toFixed(1)}% of book`);
   if(e.own!=null)    bits.push(`~${(e.own*100).toFixed(2)}% of co.`);
   const stake=bits.length?`<span class="ac-conv">${bits.join(" · ")}</span>`:"";
+  // A stake >=5% forced a Schedule 13D/13G filing, so it's already DISCLOSED — flag it so a
+  // known public campaign (Elliott/Southwest) never reads as a stealth accumulation.
+  const disc=(e.own!=null && e.own>=0.05)?`<span class="ac-disc" title="≥5% stake — a Schedule 13D/13G is on file">13D on file</span>`:"";
   const q=e.quarter?`<span class="as-date">${esc(e.quarter)} 13F</span>`:"";
   const board=e.on_board?vulnChip(e.vuln):`<span class="ac-note">not yet on the board</span>`;
   return `<div class="as-row" onclick="openCompany('${esc(e.cik)}')">
     <div><span class="co-link">${esc(e.company)}</span><div class="co-meta">${esc(e.ticker||"")}</div></div>
-    <div class="as-head">${stake}${q}</div>
+    <div class="as-head">${stake}${disc}${q}</div>
     <div>${board}</div>
     <div><button class="ghost as-mng" onclick="event.stopPropagation();openCompany('${esc(e.cik)}')">View</button></div>
   </div>`;
@@ -428,7 +431,7 @@ async function loadAccumulating(){
       const n=g.items.length;
       return `<div class="as-section">
         <div class="as-section-h"><span class="ac-fundhead">${head}</span>
-          <span class="as-section-d">${n} name${n>1?"s":""} held, not yet agitating</span></div>
+          <span class="as-section-d">${n} position${n>1?"s":""} · not a current active campaign</span></div>
         <div class="panel"><div class="as-list">${g.items.map(accumFundRow).join("")}</div></div></div>`;
     }).join("");
   }catch(e){ const el=document.getElementById("accumBody"); if(el) el.innerHTML=`<div class="empty">Couldn't load — try again.</div>`; }
