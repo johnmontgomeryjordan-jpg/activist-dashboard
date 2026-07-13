@@ -216,6 +216,9 @@ def refresh_13f():
         if tk and f.get("shares"):
             shares_out[tk] = f["shares"]
 
+    # Wipe first (pre-loop reads have succeeded) so no stale rows from a prior run survive; the
+    # per-fund guard below means the run still completes and repopulates even if some funds fail.
+    database.clear_all_holdings()
     n_funds = 0
     n_rows = 0
     n_err = 0
