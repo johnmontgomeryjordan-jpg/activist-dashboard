@@ -34,7 +34,7 @@ FORMS = {"8-K", "10-K", "10-Q"}
 # 2026-07-13: precise Item 5.02 — separate real departures from routine appointments so the
 #             standard term-of-office boilerplate ("...death, resignation or removal...") stops
 #             tagging appointments/annual-meeting 8-Ks as "Executive departure".
-CLASSIFIER_VERSION = "2026-07-13-item502-departure-precision-r2"
+CLASSIFIER_VERSION = "2026-07-13-item502-caption-strip-r3"
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
@@ -121,9 +121,17 @@ def classify(form, item_codes, text):
             sigs.add(ITEM_DIRECT[c])
     t = text or ""
     if "5.02" in codes:
-        # Strip the standard term-of-office boilerplate ("...until his earlier death,
-        # resignation or removal...") so a routine appointment isn't read as a departure.
-        tclean = re.sub(r"death,?\s+resignation\s+or\s+removal", " ", t)
+        # Item 5.02's SEC-mandated caption — "Departure of Directors or Certain Officers;
+        # Election of Directors; Appointment of Certain Officers; Compensatory Arrangements of
+        # Certain Officers" — appears verbatim in EVERY 5.02 body and contains both "departure
+        # of" and "appointment of". If we don't strip it, that boilerplate header tags every
+        # 5.02 (appointments, annual-meeting housekeeping, comp-plan changes) as a departure.
+        # Strip the caption AND the standard term-of-office boilerplate, then classify on the
+        # ACTUAL event text.
+        tclean = re.sub(r"departure of directors or certain officers", " ", t)
+        tclean = re.sub(r"appointment of certain officers", " ", tclean)
+        tclean = re.sub(r"compensatory arrangements of certain officers", " ", tclean)
+        tclean = re.sub(r"death,?\s+resignation,?\s+or\s+removal", " ", tclean)
         if any(d in tclean for d in DEPART_TERMS):
             sigs.add("ceo_departure")
         elif any(a in tclean for a in APPOINT_TERMS):
