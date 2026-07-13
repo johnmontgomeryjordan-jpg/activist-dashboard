@@ -96,6 +96,10 @@ OWNERSHIP_MAX = float(os.getenv("OWNERSHIP_MAX", "1.0"))
 # Crossing 5% forces a Schedule 13D/13G, so a >= this stake is DISCLOSED (already public), not a
 # stealth accumulation -- flagged as such in the UI.
 OWNERSHIP_DISCLOSED = float(os.getenv("OWNERSHIP_DISCLOSED", "0.05"))
+# Activists don't run campaigns on the largest mega-caps (the capital is prohibitive), so a big
+# holder in a >$100B name is a passive/compounder long (TCI in Visa, Soroban in Microsoft), not a
+# campaign setup. Exclude them from the Accumulating tab.
+MEGA_CAP_MAX = float(os.getenv("MEGA_CAP_MAX", "100000000000"))   # $100B
 FUND_WEIGHT_MIN = float(os.getenv("FUND_WEIGHT_MIN", "0.02"))     # (legacy; kept for compat)
 THIRTEENF_MAX_FUNDS = int(os.getenv("THIRTEENF_MAX_FUNDS", "80")) # cap funds resolved per run
 THIRTEENF_TIMEOUT = int(os.getenv("THIRTEENF_TIMEOUT", "25"))     # per-request timeout (s)
