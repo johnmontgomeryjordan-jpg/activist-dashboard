@@ -387,6 +387,39 @@ async function loadActiveSituations(){
   }catch(e){}
 }
 
+/* ===== Disclosed holders (>=5%, 13D on file, no campaign in 18mo) — on Active Situations ===== */
+function disclosedRow(c){
+  const who=(c.holders||[]).map(h=>{
+    const o=h.ownership_pct!=null?` <span class="ac-conv">${(h.ownership_pct*100).toFixed(1)}%</span>`:"";
+    const url=h.fund_cik?`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(h.fund_cik)}&type=13F-HR`:null;
+    const nm=`<span class="ac-fund">${esc(h.fund)}</span>`;
+    return (url?`<a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${nm}</a>`:nm)+o;
+  }).join(", ");
+  const q=c.quarter?`<span class="as-date">${esc(c.quarter)} 13F</span>`:"";
+  const board=c.on_board?vulnChip(c.vuln):"";
+  return `<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
+    <div><span class="co-link">${esc(c.company)}</span><div class="co-meta">${esc(c.ticker||"")}</div></div>
+    <div class="as-head">${who} <span class="ac-disc">13D on file</span>${q}</div>
+    <div>${board}</div>
+    <div><button class="ghost as-mng" onclick="event.stopPropagation();openCompany('${esc(c.cik)}')">View</button></div>
+  </div>`;
+}
+async function loadDisclosed(){
+  try{ const d=await (await fetch("/api/disclosed-holders")).json();
+    const rows=d.companies||[]; rows.forEach(regInfo);
+    const el=document.getElementById("disclosedHolders"); if(!el) return;
+    if(!rows.length){ el.innerHTML=""; return; }
+    rows.sort((a,b)=>((b.top_ownership||0)-(a.top_ownership||0)));
+    const col="var(--accent)";
+    const desc="A known activist owns ≥5% (a Schedule 13D/13G is on file — already public), but no 13D/proxy in the last 18 months. A known holder to keep watch on, not a fresh accumulation.";
+    el.innerHTML=`<div class="as-section">
+      <div class="as-section-h">
+        <span class="as-tier-badge" style="background:color-mix(in srgb, ${col} 14%, transparent);color:${col};border-color:color-mix(in srgb, ${col} 45%, transparent)">Disclosed holder</span>
+        <span class="as-section-d">${desc}</span><span class="as-section-n">${rows.length}</span></div>
+      <div class="panel"><div class="as-list">${rows.map(disclosedRow).join("")}</div></div></div>`;
+  }catch(e){}
+}
+
 /* ===== Accumulating (13F: activist holds, hasn't agitated yet) — grouped by activist ===== */
 function accumFundRow(e){
   const bits=[];
@@ -975,7 +1008,7 @@ function exportCsv(){ window.open("/api/shortlist.csv","_blank"); }
 
 async function refreshAll(){
   await loadWatchlist();
-  await Promise.all([loadStatus(), loadFeed(), loadShortlist(), loadActiveSituations(), loadAccumulating()]);
+  await Promise.all([loadStatus(), loadFeed(), loadShortlist(), loadActiveSituations(), loadDisclosed(), loadAccumulating()]);
   renderPitchKit();
   const u=document.getElementById("updated"); if(u) u.textContent="Last updated "+new Date().toLocaleTimeString();
 }
