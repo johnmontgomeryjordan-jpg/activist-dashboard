@@ -26,12 +26,13 @@ let CURRENT_VIEW="pitchkit", CURRENT_CIK=null, CURRENT_DATA=null, CURRENT_TAB="o
 function regInfo(c){ if(c && c.cik) COMPANY_INFO[c.cik]={ticker:c.ticker, company:c.company}; }
 
 /* ===== View routing ===== */
-const VIEWS=["pitchkit","dashboard","active","watchlist","feed","about","admin","company"];
+const VIEWS=["pitchkit","dashboard","active","accumulating","watchlist","feed","about","admin","company"];
 function showView(name){
   VIEWS.forEach(v=>{ const p=document.getElementById("page-"+v); if(p) p.style.display = v===name?"block":"none"; });
   document.querySelectorAll(".navtab").forEach(b=>b.classList.remove("active"));
   const nb=document.getElementById("nt-"+name); if(nb) nb.classList.add("active");
   if(name!=="company") CURRENT_VIEW=name;
+  if(name==="accumulating") loadAccumulating();
   if(name==="watchlist") loadWatchlist();
   if(name==="pitchkit") renderPitchKit();
   if(name==="about") loadFeedback();
@@ -384,6 +385,38 @@ async function loadActiveSituations(){
         <div class="panel"><div class="as-list">${g.map(asRow).join("")}</div></div></div>`; });
     el.innerHTML = html || `<div class="empty">No active situations right now. The SEC 13D / contested-proxy sweep runs daily; named-activist news is matched continuously; or add one manually above.</div>`;
   }catch(e){}
+}
+
+/* ===== Accumulating (13F: activist holds, hasn't agitated yet) ===== */
+function accumRow(c){
+  const holders=(c.holders||[]).map(h=>{
+    const bits=[];
+    if(h.weight_in_fund!=null) bits.push(`${(h.weight_in_fund*100).toFixed(1)}% of book`);
+    if(h.ownership_pct!=null)  bits.push(`~${(h.ownership_pct*100).toFixed(2)}% of co.`);
+    const conv=bits.length?` <span class="ac-conv">${bits.join(" · ")}</span>`:"";
+    const url=h.fund_cik?`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(h.fund_cik)}&type=13F-HR`:null;
+    const nm=`<span class="ac-fund">${esc(h.fund)}</span>`;
+    const name=url?`<a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${nm}</a>`:nm;
+    return `<span class="ac-holder">${name}${conv}</span>`;
+  }).join("");
+  const q=c.quarter?`<span class="as-date">${esc(c.quarter)} 13F</span>`:"";
+  const board=c.on_board?vulnChip(c.vuln):`<span class="ac-note">not yet on the board</span>`;
+  return `<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
+    <div><span class="co-link">${esc(c.company)}</span><div class="co-meta">${esc(c.ticker||"")}</div></div>
+    <div class="as-head ac-head">${holders}${q}</div>
+    <div>${board}</div>
+    <div><button class="ghost as-mng" onclick="event.stopPropagation();openCompany('${esc(c.cik)}')">View</button></div>
+  </div>`;
+}
+async function loadAccumulating(){
+  try{ const d=await (await fetch("/api/accumulating")).json();
+    const rows=d.companies||[]; rows.forEach(regInfo);
+    const nav=document.getElementById("navAccum"); if(nav) nav.textContent=rows.length?`(${rows.length})`:"";
+    const el=document.getElementById("accumBody"); if(!el) return;
+    el.innerHTML = rows.length
+      ? `<div class="panel"><div class="as-list">${rows.map(accumRow).join("")}</div></div>`
+      : `<div class="empty">No accumulating names yet. This fills once the 13F refresh has run — a known activist holding a <b>material</b> stake (≥2% of its book or ≥1% of the company) in a name that <b>isn't</b> already an active situation shows up here. If it's empty after a refresh, trigger one on the <b>Admin</b> tab.</div>`;
+  }catch(e){ const el=document.getElementById("accumBody"); if(el) el.innerHTML=`<div class="empty">Couldn't load — try again.</div>`; }
 }
 
 /* ----- Manual override modal + audit ----- */
@@ -902,6 +935,14 @@ async function runEnrichment(){ const b=document.getElementById("enrichBtn"); b.
   try{ const r=await fetch("/api/run-enrichment",{method:"POST"}); const d=await r.json(); b.textContent=d.ok?"Running in background ✓":"Error"; }
   catch(e){ b.textContent="Network error"; }
   setTimeout(async()=>{ await refreshAll(); b.disabled=false; b.textContent="⟳ Run enrichment now"; },120000); }
+async function refresh13f(){
+  if(!confirm("Refresh the 13F activist-holder data now?\n\nResolves each activist fund's latest Form 13F and re-maps holdings onto the universe (~1–2 minutes in the background). Safe to run anytime; it updates the Accumulating tab and the holder boost on leads.")) return;
+  const b=document.getElementById("r13fBtn"); if(b){ b.disabled=true; b.textContent="↻ Refreshing… (~1–2 min)"; }
+  try{ const r=await (await fetch("/api/refresh-13f",{method:"POST"})).json();
+    const m=document.getElementById("r13fMsg"); if(m) m.textContent=r.message||"13F refresh started.";
+  }catch(e){ const m=document.getElementById("r13fMsg"); if(m) m.textContent="Could not start the refresh — try again."; }
+  setTimeout(async()=>{ await loadAccumulating(); if(b){ b.disabled=false; b.textContent="↻ Refresh 13F holdings"; } },120000);
+}
 async function subscribe(){ const email=document.getElementById("emailInput").value, msg=document.getElementById("subMsg");
   try{ const r=await fetch("/api/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email})}); const d=await r.json();
     msg.textContent=d.ok?d.message:(d.error||"Error"); msg.className="msg "+(d.ok?"ok":"err"); if(d.ok)loadStatus(); }
@@ -916,7 +957,7 @@ function exportCsv(){ window.open("/api/shortlist.csv","_blank"); }
 
 async function refreshAll(){
   await loadWatchlist();
-  await Promise.all([loadStatus(), loadFeed(), loadShortlist(), loadActiveSituations()]);
+  await Promise.all([loadStatus(), loadFeed(), loadShortlist(), loadActiveSituations(), loadAccumulating()]);
   renderPitchKit();
   const u=document.getElementById("updated"); if(u) u.textContent="Last updated "+new Date().toLocaleTimeString();
 }
