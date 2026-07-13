@@ -44,7 +44,8 @@ DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
 #     (v2's 80-char window missed the distant column header, so Uber/CrowdStrike stayed flagged).
 # v4: forces a full proxy re-parse so compensation.find_peers re-runs with the ambiguous
 #     single-token fix (drops "target"/"match"/etc. false peers, e.g. Target Corp on INSP).
-GOV_PARSER_VERSION = "4"
+# v5: parse the annual-meeting date from the proxy (timing catalyst) — re-parse to backfill it.
+GOV_PARSER_VERSION = "5"
 
 
 def _pad(cik):
@@ -100,6 +101,34 @@ def _proxy_html(cik_int, accn, doc):
 
 def _detag(html):
     return _TAG.sub(" ", html or "").lower()[:1500000]
+
+
+# ---- annual-meeting date (timing catalyst) ----------------------------------
+# The proxy's notice ("Annual Meeting of Stockholders ... to be held on <date>") sits at the top
+# of every DEF 14A, so the FIRST "annual meeting … held … <date>" is the upcoming meeting. Free —
+# it's the same proxy we already fetch. Precision over recall: a wrong date in a pitch is worse
+# than none, so we only accept a date tied to the meeting being held/scheduled.
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august",
+           "september", "october", "november", "december")
+_MONTHNUM = {m: i + 1 for i, m in enumerate(_MONTHS)}
+_MEETING_DATE = re.compile(
+    r"annual meeting[^.]{0,180}?(?:will be held|to be held|is scheduled to be held|"
+    r"will be convened|to be convened|will take place|held)\b[^.]{0,40}?\b("
+    + "|".join(_MONTHS) + r")\s+(\d{1,2}),?\s+(20\d{2})\b")
+
+
+def annual_meeting_date(detagged):
+    """Best-effort next annual-meeting date from the proxy body. Returns ISO 'YYYY-MM-DD' or None."""
+    m = _MEETING_DATE.search(detagged or "")
+    if not m:
+        return None
+    mo = _MONTHNUM.get(m.group(1))
+    if not mo:
+        return None
+    try:
+        return f"{int(m.group(3)):04d}-{mo:02d}-{int(m.group(2)):02d}"
+    except (ValueError, TypeError):
+        return None
 
 
 # Negations that turn a "match" into a NON-match when they appear just before the phrase.
@@ -192,6 +221,7 @@ def refresh_governance(ciks):
             continue
         detagged = _detag(html)
         flags = detect(detagged)
+        mtg = annual_meeting_date(detagged)
         try:
             comp = compensation.parse_ceo_comp(html) or {}     # {} = attempted, none found
         except Exception:
@@ -204,7 +234,7 @@ def refresh_governance(ciks):
         nod = prx["accn"].replace("-", "")
         url = f"{ARCHIVE}/{int(cik10)}/{nod}/{prx['doc']}"
         database.upsert_governance(cik10, flags, prx["accn"], prx.get("date"), url,
-                                   comp, peers)
+                                   comp, peers, meeting_date=mtg)
         done += 1
         if comp:
             ncomp += 1
