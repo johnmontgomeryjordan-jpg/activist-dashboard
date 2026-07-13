@@ -102,6 +102,10 @@ OWNERSHIP_DISCLOSED = float(os.getenv("OWNERSHIP_DISCLOSED", "0.05"))
 MEGA_CAP_MAX = float(os.getenv("MEGA_CAP_MAX", "100000000000"))   # $100B
 FUND_WEIGHT_MIN = float(os.getenv("FUND_WEIGHT_MIN", "0.02"))     # (legacy; kept for compat)
 THIRTEENF_MAX_FUNDS = int(os.getenv("THIRTEENF_MAX_FUNDS", "80")) # cap funds resolved per run
+# A real 13F filer files every quarter. If the newest 13F under a resolved CIK is older than this,
+# the fund has stopped filing (restructured / dropped below $100M) — skip it rather than show a
+# years-stale book (JANA's 2023, Amber's 2017).
+STALE_13F_DAYS = int(os.getenv("STALE_13F_DAYS", "400"))          # ~13 months
 THIRTEENF_TIMEOUT = int(os.getenv("THIRTEENF_TIMEOUT", "25"))     # per-request timeout (s)
 
 # --- Scoring -----------------------------------------------------------------
