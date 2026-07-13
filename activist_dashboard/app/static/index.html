@@ -145,6 +145,14 @@
   .as-head a { color:var(--text); text-decoration:none; font-weight:500; }
   .as-head a:hover { color:var(--brand); text-decoration:underline; }
   .as-head .as-date { color:var(--muted); font-size:11.5px; margin-left:6px; }
+  /* Accumulating rows: several activist holders per line, each with conviction/ownership */
+  .ac-head { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:baseline; }
+  .ac-holder { color:var(--text); font-weight:500; }
+  .ac-fund { text-transform:capitalize; font-weight:600; }
+  .ac-holder a { color:var(--text); text-decoration:none; }
+  .ac-holder a:hover { color:var(--brand); text-decoration:underline; }
+  .ac-conv { color:var(--muted); font-size:11.5px; font-weight:400; }
+  .ac-note { color:var(--dim); font-size:11.5px; font-style:italic; }
   .as-section { margin-bottom:24px; }
   .as-section-h { display:flex; align-items:center; gap:11px; margin:0 2px 10px; flex-wrap:wrap; }
   .as-section-d { color:var(--muted); font-size:12.5px; flex:1 1 220px; }
@@ -360,6 +368,7 @@
     <button class="navtab active" id="nt-pitchkit" onclick="showView('pitchkit')">Pitch kit</button>
     <button class="navtab" id="nt-dashboard" onclick="showView('dashboard')">Dashboard</button>
     <button class="navtab" id="nt-active" onclick="showView('active')">Active situations <span class="navcount" id="navActive"></span></button>
+    <button class="navtab" id="nt-accumulating" onclick="showView('accumulating')">Accumulating <span class="navcount" id="navAccum"></span></button>
     <button class="navtab" id="nt-watchlist" onclick="showView('watchlist')">Watchlist <span class="navcount" id="navWatch"></span></button>
     <button class="navtab" id="nt-feed" onclick="showView('feed')">Live feed</button>
     <button class="navtab" id="nt-about" onclick="showView('about')">How it works</button>
@@ -452,6 +461,16 @@
     <span class="hint2">Pull in a situation we didn't auto-detect, or remove a false positive with <b>Manage</b>. (The full SEC re-sweep lives on the <b>Admin</b> tab.)</span>
   </div>
   <div id="activeSit"><div class="empty">Loading…</div></div>
+</div>
+
+<!-- ACCUMULATING (13F: activist holds, hasn't agitated) -->
+<div class="wrap page" id="page-accumulating" style="display:none;">
+  <h2 class="sec" style="color:var(--accent);">◧ Accumulating — an activist is already in the stock</h2>
+  <p class="hint">Names where a known activist holds a <b>material</b> position on its latest Form 13F (≥2% of the fund's book or ≥1% of the company) but has <b>not yet agitated</b> — no 13D, no proxy fight. The early-warning window: the smart money is in before the campaign starts. Active situations (already agitating) live on the <b>Active situations</b> tab; those are filtered out here. 13F is quarterly and lagged ~45 days — treat as a lead, and confirm the current stake before you rely on it.</p>
+  <div class="as-toolbar">
+    <span class="hint2">Sorted by number of activist holders, then conviction. A name marked <b>not yet on the board</b> doesn't otherwise screen as a target — the activist's presence is the signal. Refresh the 13F data on the <b>Admin</b> tab.</span>
+  </div>
+  <div id="accumBody"><div class="empty">Loading…</div></div>
 </div>
 
 <!-- WATCHLIST -->
@@ -934,6 +953,15 @@
     ones. Leave the app deployed while it runs.</p>
     <button class="ghost" id="sweepBtn" onclick="fullSweep()">↻ Re-sweep SEC filings</button>
     <span class="msg" id="adminMsg" style="margin-left:10px;"></span>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 4px;">Refresh 13F activist holdings</h3>
+    <p class="hint" style="margin:0 0 12px;">Re-resolves each activist fund's latest Form 13F and re-maps
+    its holdings onto the universe (~1–2 minutes). Updates the <b>Accumulating</b> tab and the
+    "known activist already a holder" boost on leads. Runs weekly automatically; use this when you
+    want it fresh right now.</p>
+    <button class="ghost" id="r13fBtn" onclick="refresh13f()">↻ Refresh 13F holdings</button>
+    <span class="msg" id="r13fMsg" style="margin-left:10px;"></span>
   </div>
 </div>
 
