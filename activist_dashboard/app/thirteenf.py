@@ -264,6 +264,8 @@ def refresh_13f():
                 weight = (a["value"] / port_total) if port_total else None
                 so = shares_out.get(tk)
                 own = (a["shares"] / so) if (so and a["shares"]) else None
+                if own is not None and own > getattr(config, "OWNERSHIP_MAX", 1.0):
+                    own = None                         # >100% -> bad shares-outstanding, discard
                 rows.append((tk, fund, cik10, a["cusip"], a["value"] or None,
                              a["shares"] or None, weight, own, filed, period))
             if rows:
