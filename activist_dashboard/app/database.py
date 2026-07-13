@@ -437,13 +437,25 @@ def activist_holdings_count():
             "SELECT COUNT(*) AS n FROM activist_holdings").fetchone()["n"]
 
 
-def accumulating(fund_weight_min, ownership_pct_min):
+def _holder_material(h):
+    """Materiality = influence over the COMPANY. Ownership-of-company is the necessary condition
+    (a big slice of a fund's book in a mega-cap is a passive long, not a campaign). Qualifies at
+    >= OWNERSHIP_PCT_MIN of the company, or >= OWNERSHIP_SOFT of it when the stake is also a
+    concentrated >= FUND_WEIGHT_CONV of the fund's book. No ownership figure -> can't verify."""
+    o = h.get("ownership_pct")
+    if o is None:
+        return False
+    if o >= config.OWNERSHIP_PCT_MIN:
+        return True
+    return o >= config.OWNERSHIP_SOFT and (h.get("weight_in_fund") or 0) >= config.FUND_WEIGHT_CONV
+
+
+def accumulating():
     """The 'Accumulating' list: universe names where a known activist holds a MATERIAL stake
-    (>= fund_weight_min of the fund's 13F book OR >= ownership_pct_min of the company) but the
-    name is NOT already an active situation (no 13D / contested proxy / reported campaign) —
-    i.e. the activist is in the stock but hasn't agitated yet. Each entry carries the material
-    holder(s), the company display info, and its vuln score if it's also on the pitch board.
-    Sorted by number of activist holders, then strongest conviction."""
+    (see _holder_material) but the name is NOT already an active situation (no 13D / contested
+    proxy / reported campaign) — i.e. the activist is in the stock but hasn't agitated yet. Each
+    entry carries the material holder(s), the company display info, and its vuln score if it's
+    also on the pitch board. Sorted by number of activist holders, then strongest conviction."""
     with get_conn() as conn:
         active = {(r["ticker"] or "").upper()
                   for r in conn.execute(
@@ -465,9 +477,15 @@ def accumulating(fund_weight_min, ownership_pct_min):
     for tk, hs in byt.items():
         if tk in active:                          # already agitating -> not "accumulating"
             continue
-        material = [h for h in hs
-                    if (h.get("weight_in_fund") or 0) >= fund_weight_min
-                    or (h.get("ownership_pct") or 0) >= ownership_pct_min]
+        # Dedupe holders that resolve to the same 13F filer CIK (two list aliases of one firm,
+        # e.g. "third point" / "third point llc"), keeping the strongest-weight instance.
+        seen, uniq = set(), []
+        for h in hs:
+            key = h.get("fund_cik") or h.get("fund")
+            if key in seen:
+                continue
+            seen.add(key); uniq.append(h)
+        material = [h for h in uniq if _holder_material(h)]
         if not material:
             continue
         ci = comp.get(tk, {})
