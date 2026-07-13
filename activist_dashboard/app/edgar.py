@@ -34,7 +34,7 @@ FORMS = {"8-K", "10-K", "10-Q"}
 # 2026-07-13: precise Item 5.02 — separate real departures from routine appointments so the
 #             standard term-of-office boilerplate ("...death, resignation or removal...") stops
 #             tagging appointments/annual-meeting 8-Ks as "Executive departure".
-CLASSIFIER_VERSION = "2026-07-13-item502-departure-precision"
+CLASSIFIER_VERSION = "2026-07-13-item502-departure-precision-r2"
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
