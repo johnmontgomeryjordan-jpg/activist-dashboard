@@ -86,6 +86,16 @@ THIRTEENF_ENABLED = os.getenv("THIRTEENF_ENABLED", "1") == "1"
 OWNERSHIP_PCT_MIN = float(os.getenv("OWNERSHIP_PCT_MIN", "0.01"))  # >= 1% of the company (strong)
 OWNERSHIP_SOFT = float(os.getenv("OWNERSHIP_SOFT", "0.005"))      # >= 0.5% of the company (soft)
 FUND_WEIGHT_CONV = float(os.getenv("FUND_WEIGHT_CONV", "0.05"))   # + >= 5% of the fund's book
+# Real activists run CONCENTRATED books; a quant / multi-strat fund (D.E. Shaw) holds hundreds of
+# names each a rounding error of its book. Require the position to be >= this share of the fund's
+# 13F book so a diversified 0.x%-of-book holding doesn't count as activist conviction.
+FUND_WEIGHT_FLOOR = float(os.getenv("FUND_WEIGHT_FLOOR", "0.01"))  # >= 1% of the fund's book
+# Ownership above this is physically impossible -> bad shares-outstanding (e.g. wrong share class);
+# reject it as a data error rather than let it clear the ownership gate.
+OWNERSHIP_MAX = float(os.getenv("OWNERSHIP_MAX", "1.0"))
+# Crossing 5% forces a Schedule 13D/13G, so a >= this stake is DISCLOSED (already public), not a
+# stealth accumulation -- flagged as such in the UI.
+OWNERSHIP_DISCLOSED = float(os.getenv("OWNERSHIP_DISCLOSED", "0.05"))
 FUND_WEIGHT_MIN = float(os.getenv("FUND_WEIGHT_MIN", "0.02"))     # (legacy; kept for compat)
 THIRTEENF_MAX_FUNDS = int(os.getenv("THIRTEENF_MAX_FUNDS", "80")) # cap funds resolved per run
 THIRTEENF_TIMEOUT = int(os.getenv("THIRTEENF_TIMEOUT", "25"))     # per-request timeout (s)
