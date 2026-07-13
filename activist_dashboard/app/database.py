@@ -498,7 +498,17 @@ def accumulating():
         if not material:
             continue
         ci = comp.get(tk, {})
-        if ci.get("market_cap") and ci["market_cap"] > config.MEGA_CAP_MAX:
+        # Market cap: use the enriched value if present, else imply it from the 13F itself
+        # (position value / ownership% = shares_out * price = market cap) — the enriched cap is
+        # null for un-scored universe names (Visa, Microsoft), which was letting mega-caps slip.
+        mkt = ci.get("market_cap")
+        if not mkt:
+            for h in material:
+                v, o = h.get("value"), h.get("ownership_pct")
+                if v and o:
+                    mkt = v / o
+                    break
+        if mkt and mkt > config.MEGA_CAP_MAX:
             continue                              # mega-cap -> a holder here is a passive long
         sc = score.get(tk, {})
         top = material[0]
