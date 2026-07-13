@@ -30,6 +30,7 @@ import requests
 from . import config, database, activists
 
 EFTS = "https://efts.sec.gov/LATEST/search-index"     # EDGAR full-text search (JSON API)
+SUBMISSIONS = "https://data.sec.gov/submissions/CIK{}.json"   # date-authoritative filing list
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _session = requests.Session()
@@ -112,37 +113,59 @@ def _period_label(filed):
     return f"Q3 {y}"
 
 
+def _latest_13f_for_cik(cik10):
+    """Newest (accession, filing_date) 13F-HR for a filer, from the SEC submissions API — which
+    lists filings date-descending, so this is authoritative (efts hits are relevance-ranked, so
+    their newest-by-date can miss the actual latest filing)."""
+    j = _get(SUBMISSIONS.format(cik10), want="json")
+    if not j:
+        return None
+    rec = ((j.get("filings", {}) or {}).get("recent", {}) or {})
+    forms = rec.get("form", []) or []
+    accns = rec.get("accessionNumber", []) or []
+    dates = rec.get("filingDate", []) or []
+    best = None
+    for i, f in enumerate(forms):
+        if f != "13F-HR":                              # original quarterly report (has holdings)
+            continue
+        d = dates[i] if i < len(dates) else ""
+        a = accns[i] if i < len(accns) else ""
+        if a and (best is None or d > best[1]):
+            best = (a, d)
+    return best
+
+
 def resolve_and_latest(fund):
-    """(cik10, accession, filing_date) for the newest 13F-HR filed by `fund`, via EDGAR
-    full-text search. efts phrase-matches the (proper) fund name across 13F filings and returns
-    an `entity_filter` aggregation — the dominant bucket is the actual filer, which disambiguates
-    generic names (browse-edgar could not). Returns None if nothing resolves."""
+    """(cik10, accession, filing_date) for the newest 13F-HR filed by `fund`. efts phrase-matches
+    the (proper) fund name and its `entity_filter` aggregation pins the actual filer CIK
+    (disambiguating generic names browse-edgar couldn't); the newest filing then comes from the
+    date-authoritative submissions API. Returns None if nothing resolves."""
     query = _RESOLVE.get(fund, fund)
     j = _get(EFTS, {"q": f'"{query}"', "forms": "13F-HR"}, want="json")
     if not j:
         return None
-    hits = (j.get("hits", {}) or {}).get("hits", []) or []
     buckets = (((j.get("aggregations", {}) or {}).get("entity_filter", {}) or {})
                .get("buckets", []) or [])
-    if not hits or not buckets:
+    if not buckets:
         return None
     m = _BUCKET_CIK_RE.search(buckets[0].get("key", ""))   # dominant filer = most 13F docs
     if not m:
         return None
     cik10 = m.group(1)
-    best = None                                             # newest 13F-HR for that filer
-    for h in hits:
+    latest = _latest_13f_for_cik(cik10)
+    time.sleep(0.15)
+    if latest:
+        return cik10, latest[0], latest[1]
+    # fallback: newest 13F-HR among the efts hits (used only if submissions is unavailable)
+    best = None
+    for h in (j.get("hits", {}) or {}).get("hits", []) or []:
         s = h.get("_source", {}) or {}
-        if (s.get("ciks") or [None])[0] != cik10:
-            continue
-        if "13F-HR" not in (s.get("root_forms") or []):
+        if (s.get("ciks") or [None])[0] != cik10 or "13F-HR" not in (s.get("root_forms") or []):
             continue
         fd, adsh = s.get("file_date"), s.get("adsh")
         if adsh and (best is None or (fd or "") > best[1]):
             best = (adsh, fd or "")
-    if not best:
-        return None
-    return cik10, best[0], best[1]
+    return (cik10, best[0], best[1]) if best else None
 
 
 def latest_infotable(cik10, accession):
