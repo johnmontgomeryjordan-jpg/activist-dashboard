@@ -24,6 +24,7 @@ How it works, all on free SEC data:
 import re
 import time
 import xml.etree.ElementTree as ET
+from datetime import date
 
 import requests
 
@@ -133,6 +134,18 @@ def _latest_13f_for_cik(cik10):
         if a and (best is None or d > best[1]):
             best = (a, d)
     return best
+
+
+def _too_old(filed):
+    """True if a filing date (YYYY-MM-DD) is older than STALE_13F_DAYS — i.e. the filer has
+    stopped filing quarterly, so its book is stale and shouldn't be shown."""
+    if not filed or len(filed) < 10:
+        return False
+    try:
+        age = (date.today() - date(int(filed[:4]), int(filed[5:7]), int(filed[8:10]))).days
+    except (ValueError, TypeError):
+        return False
+    return age > getattr(config, "STALE_13F_DAYS", 400)
 
 
 def resolve_and_latest(fund):
@@ -256,6 +269,8 @@ def refresh_13f():
             if not res:
                 continue
             cik10, accession, filed = res
+            if _too_old(filed):                        # filer stopped filing -> skip stale book
+                continue
             # Two list entries can name the same firm ("starboard" / "starboard value",
             # "irenic" / "irenic capital"): both resolve to one 13F CIK, so skip the repeat
             # rather than store the same book twice.
