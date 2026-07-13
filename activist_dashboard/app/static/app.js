@@ -387,25 +387,19 @@ async function loadActiveSituations(){
   }catch(e){}
 }
 
-/* ===== Accumulating (13F: activist holds, hasn't agitated yet) ===== */
-function accumRow(c){
-  const holders=(c.holders||[]).map(h=>{
-    const bits=[];
-    if(h.weight_in_fund!=null) bits.push(`${(h.weight_in_fund*100).toFixed(1)}% of book`);
-    if(h.ownership_pct!=null)  bits.push(`~${(h.ownership_pct*100).toFixed(2)}% of co.`);
-    const conv=bits.length?` <span class="ac-conv">${bits.join(" · ")}</span>`:"";
-    const url=h.fund_cik?`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(h.fund_cik)}&type=13F-HR`:null;
-    const nm=`<span class="ac-fund">${esc(h.fund)}</span>`;
-    const name=url?`<a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${nm}</a>`:nm;
-    return `<span class="ac-holder">${name}${conv}</span>`;
-  }).join("");
-  const q=c.quarter?`<span class="as-date">${esc(c.quarter)} 13F</span>`:"";
-  const board=c.on_board?vulnChip(c.vuln):`<span class="ac-note">not yet on the board</span>`;
-  return `<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
-    <div><span class="co-link">${esc(c.company)}</span><div class="co-meta">${esc(c.ticker||"")}</div></div>
-    <div class="as-head ac-head">${holders}${q}</div>
+/* ===== Accumulating (13F: activist holds, hasn't agitated yet) — grouped by activist ===== */
+function accumFundRow(e){
+  const bits=[];
+  if(e.weight!=null) bits.push(`${(e.weight*100).toFixed(1)}% of book`);
+  if(e.own!=null)    bits.push(`~${(e.own*100).toFixed(2)}% of co.`);
+  const stake=bits.length?`<span class="ac-conv">${bits.join(" · ")}</span>`:"";
+  const q=e.quarter?`<span class="as-date">${esc(e.quarter)} 13F</span>`:"";
+  const board=e.on_board?vulnChip(e.vuln):`<span class="ac-note">not yet on the board</span>`;
+  return `<div class="as-row" onclick="openCompany('${esc(e.cik)}')">
+    <div><span class="co-link">${esc(e.company)}</span><div class="co-meta">${esc(e.ticker||"")}</div></div>
+    <div class="as-head">${stake}${q}</div>
     <div>${board}</div>
-    <div><button class="ghost as-mng" onclick="event.stopPropagation();openCompany('${esc(c.cik)}')">View</button></div>
+    <div><button class="ghost as-mng" onclick="event.stopPropagation();openCompany('${esc(e.cik)}')">View</button></div>
   </div>`;
 }
 async function loadAccumulating(){
@@ -413,9 +407,30 @@ async function loadAccumulating(){
     const rows=d.companies||[]; rows.forEach(regInfo);
     const nav=document.getElementById("navAccum"); if(nav) nav.textContent=rows.length?`(${rows.length})`:"";
     const el=document.getElementById("accumBody"); if(!el) return;
-    el.innerHTML = rows.length
-      ? `<div class="panel"><div class="as-list">${rows.map(accumRow).join("")}</div></div>`
-      : `<div class="empty">No accumulating names yet. This fills once the 13F refresh has run — a known activist holding a <b>material</b> stake (≥2% of its book or ≥1% of the company) in a name that <b>isn't</b> already an active situation shows up here. If it's empty after a refresh, trigger one on the <b>Admin</b> tab.</div>`;
+    if(!rows.length){
+      el.innerHTML=`<div class="empty">No accumulating names yet. This fills once the 13F refresh has run — a known activist holding a <b>material</b> stake (≥1% of the company) in a name that <b>isn't</b> already an active situation shows up here. If it's empty after a refresh, trigger one on the <b>Admin</b> tab.</div>`;
+      return;
+    }
+    // Pivot company-rows into activist-fund groups (a company held by 3 funds appears under all 3).
+    const byFund={};
+    rows.forEach(c=>{ (c.holders||[]).forEach(h=>{
+      const f=h.fund||"—";
+      const g=byFund[f]||(byFund[f]={cik:h.fund_cik, items:[]});
+      g.items.push({company:c.company, ticker:c.ticker, cik:c.cik, vuln:c.vuln,
+        on_board:c.on_board, quarter:c.quarter, weight:h.weight_in_fund, own:h.ownership_pct});
+    }); });
+    const funds=Object.keys(byFund).sort((a,b)=>a.localeCompare(b));
+    el.innerHTML = funds.map(f=>{
+      const g=byFund[f];
+      g.items.sort((a,b)=>((b.own||0)-(a.own||0))||((b.weight||0)-(a.weight||0)));
+      const url=g.cik?`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(g.cik)}&type=13F-HR`:null;
+      const head=url?`<a href="${url}" target="_blank" rel="noopener">${esc(f)}</a>`:esc(f);
+      const n=g.items.length;
+      return `<div class="as-section">
+        <div class="as-section-h"><span class="ac-fundhead">${head}</span>
+          <span class="as-section-d">${n} name${n>1?"s":""} held, not yet agitating</span></div>
+        <div class="panel"><div class="as-list">${g.items.map(accumFundRow).join("")}</div></div></div>`;
+    }).join("");
   }catch(e){ const el=document.getElementById("accumBody"); if(el) el.innerHTML=`<div class="empty">Couldn't load — try again.</div>`; }
 }
 
