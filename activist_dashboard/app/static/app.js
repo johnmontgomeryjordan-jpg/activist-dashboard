@@ -689,9 +689,16 @@ function pitchStrip(d){
   if(/earnings miss|guidance cut/i.test(sig)) cat.push("Earnings miss");
   if(/impairment/i.test(sig)) cat.push("Impairment");
   const ernDate=(d.earnings&&d.earnings.next_date)?d.earnings.next_date:null;
-  const tpills=[...(ernDate?["Earnings "+fmtDateMD(ernDate)]:[]),...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
-  const timingBody=(ernDate||cat.length)
-    ? `${tpills}${ernDate?`<br>Next print <b>${esc(fmtDateY(ernDate))}</b> — often the most receptive window to reach out.`:""}`
+  const mtgDate=(d.governance&&d.governance.annual_meeting_date)?d.governance.annual_meeting_date:null;
+  const tpills=[...(ernDate?["Earnings "+fmtDateMD(ernDate)]:[]),
+                ...(mtgDate?["Annual mtg "+fmtDateMD(mtgDate)]:[]),
+                ...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
+  const timingLines=[
+    ernDate?`Next print <b>${esc(fmtDateY(ernDate))}</b> — often the most receptive window to reach out.`:"",
+    mtgDate?`Annual meeting <b>${esc(fmtDateY(mtgDate))}</b> — the window to nominate directors ahead of a proxy fight.`:""
+  ].filter(Boolean).join("<br>");
+  const timingBody=(ernDate||mtgDate||cat.length)
+    ? `${tpills}${timingLines?`<br>${timingLines}`:""}`
     : `<span class="gov-note">No near-term catalyst on the calendar.</span>`;
   const ct=d.contacts||{};
   const ctRow=(label,name,email,phone)=>{
@@ -878,8 +885,13 @@ function renderTab(){
         <thead><tr><th style="${th}"></th><th style="${th}">This stock</th><th style="${th}">S&amp;P 500</th><th style="${th}">Gap</th></tr></thead>
         <tbody>${tsrRows}</tbody></table></div>`;
     }
-    const ern=(d.earnings&&d.earnings.next_date)?`<div class="timing"><i>◷</i> Next earnings <b>${esc(d.earnings.next_date)}</b> — often the most receptive window to reach out</div>`:"";
-    const g=d.governance||{}; const gb=(on,t)=>`<span class="gov-badge ${on?'on':'off'}">${on?'●':'○'} ${t}</span>`;
+    const g=d.governance||{};
+    const mtgDate=g.annual_meeting_date||null;
+    const ern=[
+      (d.earnings&&d.earnings.next_date)?`<div class="timing"><i>◷</i> Next earnings <b>${esc(d.earnings.next_date)}</b> — often the most receptive window to reach out</div>`:"",
+      mtgDate?`<div class="timing"><i>◷</i> Next annual meeting <b>${esc(fmtDateY(mtgDate))}</b> — the window to nominate directors ahead of a proxy fight</div>`:""
+    ].join("");
+    const gb=(on,t)=>`<span class="gov-badge ${on?'on':'off'}">${on?'●':'○'} ${t}</span>`;
     const anyGov=g.classified_board||g.poison_pill||g.dual_class;
     const govRow=`<div class="gov-row">${gb(g.classified_board,"Classified board")}${gb(g.poison_pill,"Poison pill")}${gb(g.dual_class,"Dual-class stock")}`
       +(g.proxy_url?`<a class="extlink" href="${esc(g.proxy_url)}" target="_blank" rel="noopener">DEF 14A ↗</a>`:"")
