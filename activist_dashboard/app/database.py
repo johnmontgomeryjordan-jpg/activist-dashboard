@@ -438,16 +438,18 @@ def activist_holdings_count():
 
 
 def _holder_material(h):
-    """Materiality = influence over the COMPANY. Ownership-of-company is the necessary condition
-    (a big slice of a fund's book in a mega-cap is a passive long, not a campaign). Qualifies at
-    >= OWNERSHIP_PCT_MIN of the company, or >= OWNERSHIP_SOFT of it when the stake is also a
-    concentrated >= FUND_WEIGHT_CONV of the fund's book. No ownership figure -> can't verify."""
+    """Materiality = a CONCENTRATED activist stake with real influence over the COMPANY. Needs two
+    things: enough of the company (ownership), AND enough of the fund's own book (conviction) — the
+    latter is what separates a real activist from a quant/multi-strat fund that owns 1% of hundreds
+    of names. Qualifies at >=1% of the company AND >=1% of the fund's book, OR >=0.5% of the company
+    when it's a concentrated >=5% of the book. Ownership must be present and not a >100% data error."""
     o = h.get("ownership_pct")
-    if o is None:
+    w = h.get("weight_in_fund") or 0
+    if o is None or o > config.OWNERSHIP_MAX:
         return False
-    if o >= config.OWNERSHIP_PCT_MIN:
+    if o >= config.OWNERSHIP_PCT_MIN and w >= config.FUND_WEIGHT_FLOOR:
         return True
-    return o >= config.OWNERSHIP_SOFT and (h.get("weight_in_fund") or 0) >= config.FUND_WEIGHT_CONV
+    return o >= config.OWNERSHIP_SOFT and w >= config.FUND_WEIGHT_CONV
 
 
 def accumulating():
@@ -491,7 +493,9 @@ def accumulating():
         ci = comp.get(tk, {})
         sc = score.get(tk, {})
         top = material[0]
+        max_own = max((h.get("ownership_pct") or 0) for h in material)
         out.append({
+            "disclosed": max_own >= config.OWNERSHIP_DISCLOSED,   # >=5% -> 13D/13G on file
             "ticker": tk,
             "company": ci.get("name") or tk,
             "cik": ci.get("cik") or sc.get("cik"),
