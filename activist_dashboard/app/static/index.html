@@ -466,12 +466,13 @@
     <span class="hint2">Pull in a situation we didn't auto-detect, or remove a false positive with <b>Manage</b>. (The full SEC re-sweep lives on the <b>Admin</b> tab.)</span>
   </div>
   <div id="activeSit"><div class="empty">Loading…</div></div>
+  <div id="disclosedHolders"></div>
 </div>
 
 <!-- ACCUMULATING (13F: activist holds, hasn't agitated) -->
 <div class="wrap page" id="page-accumulating" style="display:none;">
   <h2 class="sec" style="color:var(--accent);">◧ Accumulating — an activist is already in the stock</h2>
-  <p class="hint">Where a known activist holds a <b>concentrated, material</b> 13F position — <b>≥1% of the company AND ≥1% of the fund's own book</b> (or ≥0.5% of the company when it's a big ≥5% of the book) — that our SEC sweep has <b>not</b> flagged as a <em>current</em> active campaign (no 13D / proxy in the last 18 months). The conviction test screens out quant/multi-strat books (a fund owning 1% of hundreds of names) and passive mega-cap longs. Note: a stake <b>≥5% forced a Schedule 13D/13G</b>, so those are already public — marked <span class="ac-disc">13D on file</span>; treat them as disclosed, not stealth. Names with a rating chip also screen as targets. 13F is quarterly, lagged ~45 days — confirm the current stake before relying on it.</p>
+  <p class="hint">Where a known activist holds a <b>concentrated, material</b> 13F position — <b>≥1% of the company AND ≥1% of the fund's own book</b> (or ≥0.5% of the company when it's a big ≥5% of the book) — that our SEC sweep has <b>not</b> flagged as a <em>current</em> active campaign (no 13D / proxy in the last 18 months). The conviction test screens out quant/multi-strat books (a fund owning 1% of hundreds of names) and passive mega-cap longs. These are <b>stealth</b> positions under 5%, where no 13D has been filed yet. A stake <b>≥5%</b> forces a Schedule 13D/13G (already public), so those names move to the <b>Disclosed holder</b> tier on the <b>Active situations</b> tab. Names with a rating chip also screen as targets. 13F is quarterly, lagged ~45 days — confirm the current stake before relying on it.</p>
   <div class="as-toolbar">
     <span class="hint2">Grouped by activist (alphabetical). A name marked <b>not yet on the board</b> doesn't otherwise screen as a target — the activist's presence is the signal; a rating chip means it screens too. Refresh the 13F data on the <b>Admin</b> tab.</span>
   </div>
