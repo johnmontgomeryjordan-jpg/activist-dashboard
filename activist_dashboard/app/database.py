@@ -437,6 +437,13 @@ def activist_holdings_count():
             "SELECT COUNT(*) AS n FROM activist_holdings").fetchone()["n"]
 
 
+def clear_all_holdings():
+    """Wipe the holdings table before a full refresh so stale rows from renamed/removed/deduped
+    funds (e.g. an old 'third point' alias, a fund that stopped filing) can't linger."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM activist_holdings")
+
+
 def _holder_material(h):
     """Materiality = a CONCENTRATED activist stake with real influence over the COMPANY. Needs two
     things: enough of the company (ownership), AND enough of the fund's own book (conviction) — the
@@ -491,6 +498,8 @@ def accumulating():
         if not material:
             continue
         ci = comp.get(tk, {})
+        if ci.get("market_cap") and ci["market_cap"] > config.MEGA_CAP_MAX:
+            continue                              # mega-cap -> a holder here is a passive long
         sc = score.get(tk, {})
         top = material[0]
         max_own = max((h.get("ownership_pct") or 0) for h in material)
