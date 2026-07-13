@@ -501,6 +501,8 @@ def accumulating():
             if key in seen:
                 continue
             seen.add(key); uniq.append(h)
+        if tk in getattr(config, "MEGA_CAP_DENY", set()):
+            continue                              # largest mega-caps: never a stealth accumulation
         material = [h for h in uniq if _holder_material(h)]
         if not material:
             continue
