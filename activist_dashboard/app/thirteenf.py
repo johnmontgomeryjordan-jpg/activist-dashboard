@@ -29,7 +29,7 @@ import requests
 
 from . import config, database, activists
 
-BROWSE = "https://www.sec.gov/cgi-bin/browse-edgar"
+EFTS = "https://efts.sec.gov/LATEST/search-index"     # EDGAR full-text search (JSON API)
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _session = requests.Session()
@@ -37,11 +37,41 @@ _session.headers.update(HEADERS)
 
 _TIMEOUT = getattr(config, "THIRTEENF_TIMEOUT", 25)
 
-# In the browse-edgar atom, the filer's own CIK sits in <company-info><cik>..</cik> (before any
-# filing entries), and each filing entry carries an <accession-number> newest-first.
-_CIK_RE = re.compile(r"<cik>\s*(\d{10})\s*</cik>", re.I)
-_ACCN_RE = re.compile(r"<accession-number>\s*([\dA-Za-z-]+)\s*</accession-number>", re.I)
-_DATE_RE = re.compile(r"<filing-date>\s*([\d-]+)\s*</filing-date>", re.I)
+# The CIK is embedded in the efts entity bucket key, e.g. "Elliott ... (CIK 0001791786)".
+_BUCKET_CIK_RE = re.compile(r"\(CIK\s+(\d{10})\)", re.I)
+
+# Several of our fund tokens are tuned for headline / filer matching and are too GENERIC to
+# resolve an entity ("elliott" matches dozens of filers). Map those to the proper firm name so
+# the full-text query lands on the right 13F filer. efts confirms the match via its entity
+# aggregation, and a wrong name simply returns nothing (safe skip) rather than bad data.
+_RESOLVE = {
+    "elliott": "Elliott Investment Management", "trian": "Trian Fund Management",
+    "valueact": "ValueAct Holdings", "value act": "ValueAct Holdings",
+    "pershing square": "Pershing Square Capital Management",
+    "ancora": "Ancora Advisors", "corvex": "Corvex Management",
+    "glenview": "Glenview Capital Management", "soroban": "Soroban Capital Partners",
+    "irenic": "Irenic Capital Management", "irenic capital": "Irenic Capital Management",
+    "engine no": "Engine No. 1", "engine no. 1": "Engine No. 1",
+    "d.e. shaw": "D. E. Shaw", "the children's investment": "TCI Fund Management",
+    "tci fund": "TCI Fund Management", "kimmeridge": "Kimmeridge Energy Management",
+    "inclusive capital": "Inclusive Capital Partners", "saba capital": "Saba Capital Management",
+    "legion partners": "Legion Partners Asset Management", "scopia": "Scopia Capital Management",
+    "gatemore": "Gatemore Capital Management", "kanen": "Kanen Wealth Management",
+    "bulldog investors": "Bulldog Investors", "steel partners": "Steel Partners Holdings",
+    "sarissa": "Sarissa Capital Management", "toms capital": "Toms Capital",
+    "wynnefield": "Wynnefield Capital", "macellum": "Macellum",
+    "vision one": "Vision One Management", "mhr fund": "MHR Fund Management",
+    "adw capital": "ADW Capital", "alta fox": "Alta Fox Capital",
+    "amber capital": "Amber Capital", "anson funds": "Anson Funds Management",
+    "holdco asset": "HoldCo Asset Management", "p2 capital": "P2 Capital Partners",
+    "palliser": "Palliser Capital", "parvus": "Parvus Asset Management",
+    "pl capital": "PL Capital", "dalton investments": "Dalton Investments",
+    "oasis management": "Oasis Management", "carronade": "Carronade Capital",
+    "stilwell": "Stilwell Value", "cevian": "Cevian Capital",
+}
+# Marquee activists whose 13F filer isn't captured by a FUNDS token (e.g. individuals whose fund
+# files under a firm name). Resolved in addition to activists.FUNDS.
+_EXTRA_FUNDS = ["Icahn Capital", "JANA Partners", "Third Point", "Impactive Capital"]
 
 
 def _get(url, params=None, want="text"):
@@ -83,18 +113,36 @@ def _period_label(filed):
 
 
 def resolve_and_latest(fund):
-    """(cik10, accession, filing_date) for the newest 13F-HR filed under `fund`, or None if the
-    fund can't be resolved to a single 13F filer (ambiguous name -> no filing entries -> skip)."""
-    txt = _get(BROWSE, {"action": "getcompany", "company": fund, "type": "13F-HR",
-                        "dateb": "", "owner": "include", "count": "10", "output": "atom"})
-    if not txt:
+    """(cik10, accession, filing_date) for the newest 13F-HR filed by `fund`, via EDGAR
+    full-text search. efts phrase-matches the (proper) fund name across 13F filings and returns
+    an `entity_filter` aggregation — the dominant bucket is the actual filer, which disambiguates
+    generic names (browse-edgar could not). Returns None if nothing resolves."""
+    query = _RESOLVE.get(fund, fund)
+    j = _get(EFTS, {"q": f'"{query}"', "forms": "13F-HR"}, want="json")
+    if not j:
         return None
-    mc = _CIK_RE.search(txt)
-    ma = _ACCN_RE.search(txt)          # first (newest) 13F-HR accession
-    if not mc or not ma:               # no single filer, or no 13F on file -> skip this fund
+    hits = (j.get("hits", {}) or {}).get("hits", []) or []
+    buckets = (((j.get("aggregations", {}) or {}).get("entity_filter", {}) or {})
+               .get("buckets", []) or [])
+    if not hits or not buckets:
         return None
-    md = _DATE_RE.search(txt)
-    return mc.group(1), ma.group(1), (md.group(1) if md else None)
+    m = _BUCKET_CIK_RE.search(buckets[0].get("key", ""))   # dominant filer = most 13F docs
+    if not m:
+        return None
+    cik10 = m.group(1)
+    best = None                                             # newest 13F-HR for that filer
+    for h in hits:
+        s = h.get("_source", {}) or {}
+        if (s.get("ciks") or [None])[0] != cik10:
+            continue
+        if "13F-HR" not in (s.get("root_forms") or []):
+            continue
+        fd, adsh = s.get("file_date"), s.get("adsh")
+        if adsh and (best is None or (fd or "") > best[1]):
+            best = (adsh, fd or "")
+    if not best:
+        return None
+    return cik10, best[0], best[1]
 
 
 def latest_infotable(cik10, accession):
@@ -159,7 +207,7 @@ def refresh_13f():
     holdings onto our universe, compute conviction + ownership, and store. Returns the number
     of universe holdings mapped. Non-destructive per fund: a fund we can't resolve this run
     keeps its previously stored holdings (they only get replaced when a fresh 13F parses)."""
-    funds = activists.FUNDS[:getattr(config, "THIRTEENF_MAX_FUNDS", 80)]
+    funds = activists.FUNDS[:getattr(config, "THIRTEENF_MAX_FUNDS", 80)] + _EXTRA_FUNDS
     universe = {(c.get("ticker") or "").upper() for c in database.get_companies()
                 if c.get("ticker")}
     shares_out = {}
@@ -171,6 +219,7 @@ def refresh_13f():
     n_funds = 0
     n_rows = 0
     n_err = 0
+    seen_ciks = set()                                  # dedupe funds that resolve to one filer
     for fund in funds:
         # Per-fund guard: one bad fund (a network hiccup, a rate-limit, an odd response) must
         # NEVER abort the whole sweep. We log the offender and move on, and always reach the
@@ -181,6 +230,12 @@ def refresh_13f():
             if not res:
                 continue
             cik10, accession, filed = res
+            # Two list entries can name the same firm ("starboard" / "starboard value",
+            # "irenic" / "irenic capital"): both resolve to one 13F CIK, so skip the repeat
+            # rather than store the same book twice.
+            if cik10 in seen_ciks:
+                continue
+            seen_ciks.add(cik10)
             database.upsert_activist_filer(fund, cik10, "browse-edgar")
             xml = latest_infotable(cik10, accession)
             time.sleep(0.2)
@@ -190,7 +245,10 @@ def refresh_13f():
                 continue
             port_total = sum(h["value"] for h in holds if h.get("value")) or 0.0
             period = _period_label(filed)
-            rows = []
+            # Aggregate BY TICKER within the fund: a 13F can list one issuer under several
+            # CUSIPs/share classes (or two CUSIPs can map to one ticker). Summing value + shares
+            # gives the fund's true total position in that name and avoids a duplicate-key row.
+            agg = {}
             for h in holds:
                 tk = database.ticker_for_cusip(h["cusip"])
                 if not tk:
@@ -198,11 +256,16 @@ def refresh_13f():
                 tk = tk.upper()
                 if tk not in universe:                 # only names we actively monitor
                     continue
-                weight = (h["value"] / port_total) if (port_total and h.get("value")) else None
+                a = agg.setdefault(tk, {"value": 0.0, "shares": 0.0, "cusip": h["cusip"]})
+                a["value"] += (h.get("value") or 0.0)
+                a["shares"] += (h.get("shares") or 0.0)
+            rows = []
+            for tk, a in agg.items():
+                weight = (a["value"] / port_total) if port_total else None
                 so = shares_out.get(tk)
-                own = (h["shares"] / so) if (so and h.get("shares")) else None
-                rows.append((tk, fund, cik10, h["cusip"], h.get("value"),
-                             h.get("shares"), weight, own, filed, period))
+                own = (a["shares"] / so) if (so and a["shares"]) else None
+                rows.append((tk, fund, cik10, a["cusip"], a["value"] or None,
+                             a["shares"] or None, weight, own, filed, period))
             if rows:
                 database.replace_holdings_for_fund(fund, rows)
                 n_rows += len(rows)
