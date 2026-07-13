@@ -419,7 +419,9 @@ def _normalize(articles):
         url = a.get("url") or ""
         title = a.get("title") or ""
         src = (a.get("source") or {}).get("name") or ""
-        if not url or _domain_excluded(src) or not is_relevant(title):
+        # Check the URL too, not just the source NAME — the excluded-domain list is domains
+        # (jdsupra.com), but the source name is often "JD Supra", which the domain list misses.
+        if not url or _domain_excluded(src) or _domain_excluded(url) or not is_relevant(title):
             continue
         out.append({
             "id": _hash(url), "headline": title,
@@ -432,11 +434,30 @@ def _normalize(articles):
 # --------------------------------------------------------------------------- #
 # Per-company news (Finnhub)                                                   #
 # --------------------------------------------------------------------------- #
+def purge_excluded_news():
+    """Delete stored headlines that now match an exclude rule (a law-firm client alert like the
+    Skadden/jdsupra Delaware-court memo, an excluded domain, or noise) but were ingested BEFORE
+    that rule existed — otherwise they linger in the news table and keep routing names to Active
+    Situations. Runs each company-news refresh. Returns the count removed."""
+    try:
+        rows = database.news_all_brief()
+    except Exception:
+        return 0
+    bad = [n["id"] for n in rows
+           if _is_noise(n.get("headline")) or _domain_excluded(n.get("url"))
+           or _domain_excluded(n.get("source"))]
+    n = database.delete_news(bad)
+    if n:
+        print(f"[news] purged {n} stale excluded headlines")
+    return n
+
+
 def refresh_company_news(tickers, key, days=COMPANY_NEWS_DAYS, per_symbol=COMPANY_NEWS_PER):
     """Recent headlines for each tracked ticker from Finnhub's company-news endpoint,
     stored in the shared `news` table tagged with that ticker (so the company profile
     can show them). Real-time and ticker-clean — no fuzzy name matching. Returns the
     number of headlines stored. No-op without a key or tickers."""
+    purge_excluded_news()          # scrub stale items ingested before an exclude rule existed
     if not key or not tickers:
         return 0
     frm = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
@@ -459,7 +480,10 @@ def refresh_company_news(tickers, key, days=COMPANY_NEWS_DAYS, per_symbol=COMPAN
             head = a.get("headline") or ""
             if not url or not head:
                 continue
-            if _is_noise(head):       # skip analyst-promo / chart-setup / off-topic clutter
+            # skip analyst-promo / chart-setup / off-topic clutter AND law-firm client alerts /
+            # excluded domains (a Skadden/jdsupra Delaware-court memo was routing 3 names to
+            # Active Situations). Check the URL for the domain (source name misses "jdsupra.com").
+            if _is_noise(head) or _domain_excluded(url):
                 continue
             is_act = _names_activist(head)
             # Keep the most-recent `per_symbol` general headlines for display, but ALWAYS
