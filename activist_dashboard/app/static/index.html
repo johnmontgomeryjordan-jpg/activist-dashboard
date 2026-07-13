@@ -153,6 +153,9 @@
   .ac-holder a:hover { color:var(--brand); text-decoration:underline; }
   .ac-conv { color:var(--muted); font-size:11.5px; font-weight:400; }
   .ac-note { color:var(--dim); font-size:11.5px; font-style:italic; }
+  .ac-fundhead { font-family:var(--serif); font-size:17px; font-weight:600; color:var(--text); text-transform:capitalize; }
+  .ac-fundhead a { color:var(--text); text-decoration:none; }
+  .ac-fundhead a:hover { color:var(--brand); text-decoration:underline; }
   .as-section { margin-bottom:24px; }
   .as-section-h { display:flex; align-items:center; gap:11px; margin:0 2px 10px; flex-wrap:wrap; }
   .as-section-d { color:var(--muted); font-size:12.5px; flex:1 1 220px; }
@@ -466,9 +469,9 @@
 <!-- ACCUMULATING (13F: activist holds, hasn't agitated) -->
 <div class="wrap page" id="page-accumulating" style="display:none;">
   <h2 class="sec" style="color:var(--accent);">◧ Accumulating — an activist is already in the stock</h2>
-  <p class="hint">Names where a known activist holds a <b>material</b> position on its latest Form 13F (≥2% of the fund's book or ≥1% of the company) but has <b>not yet agitated</b> — no 13D, no proxy fight. The early-warning window: the smart money is in before the campaign starts. Active situations (already agitating) live on the <b>Active situations</b> tab; those are filtered out here. 13F is quarterly and lagged ~45 days — treat as a lead, and confirm the current stake before you rely on it.</p>
+  <p class="hint">Names where a known activist holds a <b>material</b> position on its latest Form 13F — <b>≥1% of the company</b> (or ≥0.5% when it's also a concentrated ≥5% of the fund's book) — but has <b>not yet agitated</b>: no 13D, no proxy fight. The early-warning window: the smart money is in before the campaign starts. A big slice of a fund's book in a mega-cap (a passive core long) doesn't count — the test is ownership of the company. Active situations (already agitating) live on the <b>Active situations</b> tab; those are filtered out here. 13F is quarterly and lagged ~45 days — treat as a lead, and confirm the current stake before you rely on it.</p>
   <div class="as-toolbar">
-    <span class="hint2">Sorted by number of activist holders, then conviction. A name marked <b>not yet on the board</b> doesn't otherwise screen as a target — the activist's presence is the signal. Refresh the 13F data on the <b>Admin</b> tab.</span>
+    <span class="hint2">Grouped by activist (alphabetical). A name marked <b>not yet on the board</b> doesn't otherwise screen as a target — the activist's presence is the signal; a rating chip means it screens too. Refresh the 13F data on the <b>Admin</b> tab.</span>
   </div>
   <div id="accumBody"><div class="empty">Loading…</div></div>
 </div>
