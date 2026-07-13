@@ -424,6 +424,7 @@ def api_company(cik: str):
             "dual_class": bool(gov.get("dual_class")),
             "proxy_url": gov.get("proxy_url"),
             "proxy_date": gov.get("proxy_date"),
+            "annual_meeting_date": gov.get("meeting_date"),
         },
         "insider": {
             "buy_value": ins.get("buy_value"),
