@@ -871,17 +871,22 @@ def _strategic_evidence(key, r):
             "inputs": "", "period": "trailing 1 yr",
             "source": "Finnhub (price return, excl. dividends)", "url": None}
 # 13F activist-holder signal -------------------------------------------------
-_FUND_WEIGHT_MIN = getattr(config, "FUND_WEIGHT_MIN", 0.02)     # >=2% of the fund's 13F book
-_OWNERSHIP_PCT_MIN = getattr(config, "OWNERSHIP_PCT_MIN", 0.01)  # >=1% of the company's shares
+_OWNERSHIP_PCT_MIN = getattr(config, "OWNERSHIP_PCT_MIN", 0.01)   # >=1% of the company (strong)
+_OWNERSHIP_SOFT = getattr(config, "OWNERSHIP_SOFT", 0.005)        # >=0.5% of the company (soft)
+_FUND_WEIGHT_CONV = getattr(config, "FUND_WEIGHT_CONV", 0.05)     # + >=5% of the fund's book
 
 
 def _holder_is_material(h):
-    """A 13F position counts only when it shows CONVICTION — a meaningful slice of the fund's
-    own book OR a meaningful slice of the company. Either clears it (per the design): catches
-    both a concentrated small-fund slug and a big-fund toehold."""
-    w = h.get("weight_in_fund")
+    """A 13F position counts only when it gives INFLUENCE OVER THE COMPANY. Ownership-of-company
+    is the necessary condition — a big % of a fund's book in a mega-cap is a passive long, not a
+    campaign (Third Point's 0.02% of Amazon). Qualifies at >=1% of the company, or >=0.5% when
+    the stake is also a concentrated >=5% of the fund's book. No ownership figure -> can't judge."""
     o = h.get("ownership_pct")
-    return (w is not None and w >= _FUND_WEIGHT_MIN) or (o is not None and o >= _OWNERSHIP_PCT_MIN)
+    if o is None:
+        return False
+    if o >= _OWNERSHIP_PCT_MIN:
+        return True
+    return o >= _OWNERSHIP_SOFT and (h.get("weight_in_fund") or 0) >= _FUND_WEIGHT_CONV
 
 
 def _material_holders(holders):
