@@ -177,6 +177,11 @@ _PEER_NAME_SUFFIX = {
     "plc", "ltd", "limited", "lp", "llc", "holdings", "holding", "group", "the",
     "&", "and", "international", "intl", "industries", "enterprises",
 }
+# Single-token company cores that are ALSO common compensation-proxy words — matching them as
+# whole words pulls in the wrong company (e.g. "target compensation" / "target award" wrongly
+# added Target Corp to a medtech's peer group). Skip these in the single-token branch;
+# multiword names (e.g. "General Mills") are unaffected.
+_PEER_AMBIGUOUS_SINGLE = {"target", "match", "block", "square"}
 
 
 def _peer_section(detagged_lower):
@@ -215,6 +220,8 @@ def find_peers(detagged_text, universe, self_cik=None, min_peers=5):
                 out.append(cik)
         else:                                   # single token: must be distinctive (>=6)
             t = toks[0]
+            if t in _PEER_AMBIGUOUS_SINGLE:
+                continue                         # common comp-proxy word, not the company
             if len(t) >= 6 and re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", seg):
                 out.append(cik)
     out = list(dict.fromkeys(out))              # dedupe, preserve order
