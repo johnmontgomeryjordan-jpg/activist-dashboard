@@ -874,19 +874,22 @@ def _strategic_evidence(key, r):
 _OWNERSHIP_PCT_MIN = getattr(config, "OWNERSHIP_PCT_MIN", 0.01)   # >=1% of the company (strong)
 _OWNERSHIP_SOFT = getattr(config, "OWNERSHIP_SOFT", 0.005)        # >=0.5% of the company (soft)
 _FUND_WEIGHT_CONV = getattr(config, "FUND_WEIGHT_CONV", 0.05)     # + >=5% of the fund's book
+_FUND_WEIGHT_FLOOR = getattr(config, "FUND_WEIGHT_FLOOR", 0.01)   # >=1% of the fund's book
+_OWNERSHIP_MAX = getattr(config, "OWNERSHIP_MAX", 1.0)            # >100% = data error
 
 
 def _holder_is_material(h):
-    """A 13F position counts only when it gives INFLUENCE OVER THE COMPANY. Ownership-of-company
-    is the necessary condition — a big % of a fund's book in a mega-cap is a passive long, not a
-    campaign (Third Point's 0.02% of Amazon). Qualifies at >=1% of the company, or >=0.5% when
-    the stake is also a concentrated >=5% of the fund's book. No ownership figure -> can't judge."""
+    """A concentrated activist stake with real influence over the COMPANY: enough of the company
+    (ownership) AND enough of the fund's own book (conviction — separates a real activist from a
+    quant/multi-strat fund holding 1% of hundreds of names). >=1% of company AND >=1% of book, or
+    >=0.5% of company when it's a concentrated >=5% of book. Ownership present, not a >100% error."""
     o = h.get("ownership_pct")
-    if o is None:
+    w = h.get("weight_in_fund") or 0
+    if o is None or o > _OWNERSHIP_MAX:
         return False
-    if o >= _OWNERSHIP_PCT_MIN:
+    if o >= _OWNERSHIP_PCT_MIN and w >= _FUND_WEIGHT_FLOOR:
         return True
-    return o >= _OWNERSHIP_SOFT and (h.get("weight_in_fund") or 0) >= _FUND_WEIGHT_CONV
+    return o >= _OWNERSHIP_SOFT and w >= _FUND_WEIGHT_CONV
 
 
 def _material_holders(holders):
