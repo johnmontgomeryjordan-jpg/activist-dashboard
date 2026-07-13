@@ -660,7 +660,7 @@ def api_thirteenf_stats(ticker: str = ""):
 def api_accumulating():
     """Names where a known activist holds a MATERIAL stake but hasn't agitated yet (no 13D /
     proxy) — the early-warning tier. Materiality thresholds come from config."""
-    rows = database.accumulating(config.FUND_WEIGHT_MIN, config.OWNERSHIP_PCT_MIN)
+    rows = database.accumulating()
     return {"companies": rows, "count": len(rows)}
 
 
