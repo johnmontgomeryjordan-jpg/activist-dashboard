@@ -437,6 +437,61 @@ def activist_holdings_count():
             "SELECT COUNT(*) AS n FROM activist_holdings").fetchone()["n"]
 
 
+def accumulating(fund_weight_min, ownership_pct_min):
+    """The 'Accumulating' list: universe names where a known activist holds a MATERIAL stake
+    (>= fund_weight_min of the fund's 13F book OR >= ownership_pct_min of the company) but the
+    name is NOT already an active situation (no 13D / contested proxy / reported campaign) —
+    i.e. the activist is in the stock but hasn't agitated yet. Each entry carries the material
+    holder(s), the company display info, and its vuln score if it's also on the pitch board.
+    Sorted by number of activist holders, then strongest conviction."""
+    with get_conn() as conn:
+        active = {(r["ticker"] or "").upper()
+                  for r in conn.execute(
+                      "SELECT ticker FROM scores WHERE active_situation=1 AND ticker IS NOT NULL")}
+        comp = {}
+        for r in conn.execute(
+                "SELECT cik, ticker, name, market_cap FROM companies WHERE ticker IS NOT NULL"):
+            comp[(r["ticker"] or "").upper()] = dict(r)
+        score = {}
+        for r in conn.execute(
+                "SELECT ticker, cik, vuln, score FROM scores WHERE ticker IS NOT NULL"):
+            score[(r["ticker"] or "").upper()] = dict(r)
+        byt = {}
+        for r in conn.execute(
+                "SELECT * FROM activist_holdings ORDER BY COALESCE(weight_in_fund,0) DESC"):
+            byt.setdefault((r["ticker"] or "").upper(), []).append(dict(r))
+
+    out = []
+    for tk, hs in byt.items():
+        if tk in active:                          # already agitating -> not "accumulating"
+            continue
+        material = [h for h in hs
+                    if (h.get("weight_in_fund") or 0) >= fund_weight_min
+                    or (h.get("ownership_pct") or 0) >= ownership_pct_min]
+        if not material:
+            continue
+        ci = comp.get(tk, {})
+        sc = score.get(tk, {})
+        top = material[0]
+        out.append({
+            "ticker": tk,
+            "company": ci.get("name") or tk,
+            "cik": ci.get("cik") or sc.get("cik"),
+            "market_cap": ci.get("market_cap"),
+            "vuln": sc.get("vuln"),
+            "on_board": tk in score,               # also a proactive lead?
+            "n_holders": len(material),
+            "top_weight": top.get("weight_in_fund"),
+            "top_ownership": top.get("ownership_pct"),
+            "quarter": top.get("quarter"),
+            "filed": top.get("filed"),
+            "holders": material,
+        })
+    out.sort(key=lambda x: (x["n_holders"], x["top_weight"] or 0, x["top_ownership"] or 0),
+             reverse=True)
+    return out
+
+
 # --- Alpha Vantage overview --------------------------------------------------
 def upsert_av_overview(cik, ticker, data_dict):
     with get_conn() as conn:
