@@ -658,9 +658,19 @@ def api_thirteenf_stats(ticker: str = ""):
 
 @app.get("/api/accumulating")
 def api_accumulating():
-    """Names where a known activist holds a MATERIAL stake but hasn't agitated yet (no 13D /
-    proxy) — the early-warning tier. Materiality thresholds come from config."""
-    rows = database.accumulating()
+    """STEALTH accumulators: a known activist holds a material stake (<5%, so no 13D yet) but
+    hasn't agitated. The true early-warning tier. (>=5% disclosed holders move to the Active
+    Situations 'Disclosed holder' tier via /api/disclosed-holders.)"""
+    rows = [r for r in database.accumulating() if not r.get("disclosed")]
+    return {"companies": rows, "count": len(rows)}
+
+
+@app.get("/api/disclosed-holders")
+def api_disclosed_holders():
+    """DISCLOSED holders: a known activist owns >=5% (a Schedule 13D/13G is on file — already
+    public) but the name isn't a CURRENT active situation (no 13D/proxy in the last 18 months).
+    Shown on the Active Situations page as its own tier — a known holder, campaign not active."""
+    rows = [r for r in database.accumulating() if r.get("disclosed")]
     return {"companies": rows, "count": len(rows)}
 
 
