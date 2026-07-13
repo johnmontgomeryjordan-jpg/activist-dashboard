@@ -30,13 +30,22 @@ def _run_initial_refresh():
         pipeline.startup_full_refresh()
     except Exception as e:  # pragma: no cover
         print(f"[startup] initial refresh failed: {e}")
-    # 13F activist-holder signal: populate on first boot (or whenever the table is empty),
-    # then recompute so leads immediately reflect any activist already in the stock. The
-    # weekly cron keeps it fresh thereafter; failures never block the rest of startup.
+
+
+def _run_initial_13f():
+    """Populate the 13F activist-holder map on boot if it's empty. Runs in its OWN thread —
+    NOT gated behind the ~20-min startup_full_refresh — because everything it reads (cusip_map,
+    companies, fundamentals) is already on the persistent disk from prior runs. This guarantees
+    it actually executes even when frequent redeploys keep restarting the long startup job. A
+    short delay lets the app settle first; the per-fund guard in thirteenf keeps a bad fund from
+    aborting the sweep."""
+    import time
     try:
-        if config.THIRTEENF_ENABLED and database.activist_holdings_count() == 0:
-            if thirteenf.refresh_13f() > 0:
-                scoring.recompute_all()
+        time.sleep(20)
+        if not config.THIRTEENF_ENABLED or database.activist_holdings_count() > 0:
+            return
+        if thirteenf.refresh_13f() > 0:
+            scoring.recompute_all()
     except Exception as e:  # pragma: no cover
         print(f"[startup] 13F populate failed: {e}")
 
@@ -79,6 +88,7 @@ async def lifespan(app: FastAPI):
                           id="thirteenf", replace_existing=True, max_instances=1)
     scheduler.start()
     threading.Thread(target=_run_initial_refresh, daemon=True).start()
+    threading.Thread(target=_run_initial_13f, daemon=True).start()
     yield
     scheduler.shutdown(wait=False)
 
