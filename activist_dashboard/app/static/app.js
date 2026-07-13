@@ -387,12 +387,41 @@ async function loadActiveSituations(){
   }catch(e){}
 }
 
+/* ===== Activist fund display names — resolve raw filer tokens ("elliott", "h partners
+   management") to proper firm names so Accumulating subheaders and the Disclosed tier read
+   cleanly. Display-only; backend keys are unchanged. Unknown keys fall back to Title Case. ===== */
+const FUND_NAMES={
+  "alta fox":"Alta Fox Capital","ananym":"Ananym Capital","ancora":"Ancora Advisors",
+  "anson funds":"Anson Funds Management","barington":"Barington Capital",
+  "browning west":"Browning West","caligan":"Caligan Partners","carronade":"Carronade Capital",
+  "cevian":"Cevian Capital","corvex":"Corvex Management","elliott":"Elliott Investment Management",
+  "engaged capital":"Engaged Capital","engine capital":"Engine Capital",
+  "glenview":"Glenview Capital Management","h partners":"H Partners Management",
+  "h partners management":"H Partners Management","holdco asset":"HoldCo Asset Management",
+  "hestia":"Hestia Capital","icahn capital":"Icahn Capital","impactive":"Impactive Capital",
+  "irenic":"Irenic Capital Management","jana partners":"JANA Partners","kanen":"Kanen Wealth Management",
+  "land & buildings":"Land & Buildings","legion partners":"Legion Partners Asset Management",
+  "lynrock":"Lynrock Lake","mantle ridge":"Mantle Ridge","oasis management":"Oasis Management",
+  "p2 capital":"P2 Capital Partners","politan":"Politan Capital Management",
+  "sachem head":"Sachem Head Capital","sarissa":"Sarissa Capital Management",
+  "soroban":"Soroban Capital Partners","starboard":"Starboard Value",
+  "steel partners":"Steel Partners Holdings","the children's investment":"TCI Fund Management",
+  "third point":"Third Point","trian":"Trian Fund Management","valueact":"ValueAct Holdings",
+  "vision one":"Vision One Management","voss capital":"Voss Capital"
+};
+function fundLabel(f){
+  if(!f) return "—";
+  const k=String(f).trim().toLowerCase();
+  if(FUND_NAMES[k]) return FUND_NAMES[k];
+  return String(f).replace(/\b([a-z])([a-z0-9&.'’-]*)/g,(m,a,b)=>a.toUpperCase()+b);
+}
+
 /* ===== Disclosed holders (>=5%, 13D on file, no campaign in 18mo) — on Active Situations ===== */
 function disclosedRow(c){
   const who=(c.holders||[]).map(h=>{
     const o=h.ownership_pct!=null?` <span class="ac-conv">${(h.ownership_pct*100).toFixed(1)}%</span>`:"";
     const url=h.fund_cik?`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(h.fund_cik)}&type=13F-HR`:null;
-    const nm=`<span class="ac-fund">${esc(h.fund)}</span>`;
+    const nm=`<span class="ac-fund">${esc(fundLabel(h.fund))}</span>`;
     return (url?`<a href="${url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${nm}</a>`:nm)+o;
   }).join(", ");
   const q=c.quarter?`<span class="as-date">${esc(c.quarter)} 13F</span>`:"";
@@ -455,12 +484,13 @@ async function loadAccumulating(){
       g.items.push({company:c.company, ticker:c.ticker, cik:c.cik, vuln:c.vuln,
         on_board:c.on_board, quarter:c.quarter, weight:h.weight_in_fund, own:h.ownership_pct});
     }); });
-    const funds=Object.keys(byFund).sort((a,b)=>a.localeCompare(b));
+    const funds=Object.keys(byFund).sort((a,b)=>fundLabel(a).localeCompare(fundLabel(b)));
     el.innerHTML = funds.map(f=>{
       const g=byFund[f];
       g.items.sort((a,b)=>((b.own||0)-(a.own||0))||((b.weight||0)-(a.weight||0)));
       const url=g.cik?`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(g.cik)}&type=13F-HR`:null;
-      const head=url?`<a href="${url}" target="_blank" rel="noopener">${esc(f)}</a>`:esc(f);
+      const lbl=fundLabel(f);
+      const head=url?`<a href="${url}" target="_blank" rel="noopener">${esc(lbl)}</a>`:esc(lbl);
       const n=g.items.length;
       return `<div class="as-section">
         <div class="as-section-h"><span class="ac-fundhead">${head}</span>
