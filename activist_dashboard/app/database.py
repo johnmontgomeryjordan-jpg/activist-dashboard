@@ -477,6 +477,13 @@ def accumulating():
         for r in conn.execute(
                 "SELECT ticker, cik, vuln, score FROM scores WHERE ticker IS NOT NULL"):
             score[(r["ticker"] or "").upper()] = dict(r)
+        # Reliable, universe-wide market caps (Finnhub, via the entity master) — the enriched
+        # companies.market_cap is null for un-scored names, and implying cap from the 13F inherits
+        # any bad shares-outstanding, so entity is the trustworthy mega-cap source.
+        ent_mkt = {}
+        for r in conn.execute("SELECT ticker, market_cap FROM entity "
+                              "WHERE ticker IS NOT NULL AND market_cap IS NOT NULL"):
+            ent_mkt[(r["ticker"] or "").upper()] = r["market_cap"]
         byt = {}
         for r in conn.execute(
                 "SELECT * FROM activist_holdings ORDER BY COALESCE(weight_in_fund,0) DESC"):
@@ -498,10 +505,10 @@ def accumulating():
         if not material:
             continue
         ci = comp.get(tk, {})
-        # Market cap: use the enriched value if present, else imply it from the 13F itself
-        # (position value / ownership% = shares_out * price = market cap) — the enriched cap is
-        # null for un-scored universe names (Visa, Microsoft), which was letting mega-caps slip.
-        mkt = ci.get("market_cap")
+        # Market cap: entity (reliable, universe-wide) first, then enriched companies, then imply
+        # from the 13F as a last resort. Entity is trusted because implied cap inherits any bad
+        # shares-outstanding (which was letting Mastercard's inflated ownership slip a $500B name).
+        mkt = ent_mkt.get(tk) or ci.get("market_cap")
         if not mkt:
             for h in material:
                 v, o = h.get("value"), h.get("ownership_pct")
