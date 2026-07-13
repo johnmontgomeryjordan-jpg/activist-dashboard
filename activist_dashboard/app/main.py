@@ -656,6 +656,14 @@ def api_thirteenf_stats(ticker: str = ""):
     return out
 
 
+@app.get("/api/accumulating")
+def api_accumulating():
+    """Names where a known activist holds a MATERIAL stake but hasn't agitated yet (no 13D /
+    proxy) — the early-warning tier. Materiality thresholds come from config."""
+    rows = database.accumulating(config.FUND_WEIGHT_MIN, config.OWNERSHIP_PCT_MIN)
+    return {"companies": rows, "count": len(rows)}
+
+
 @app.post("/api/refresh-13f")
 def api_refresh_13f():
     """Force a full 13F refresh (resolve funds -> pull latest info tables -> map holdings),
