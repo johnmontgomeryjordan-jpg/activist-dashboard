@@ -78,9 +78,15 @@ OPENFIGI_API_KEY = os.getenv("OPENFIGI_API_KEY", "")
 # (no 13D / proxy). We resolve each fund's 13F-filing CIK via EDGAR company search, parse its
 # information table, map CUSIP -> ticker off the cusip_map (U2b), and fire the signal when the
 # stake shows conviction on EITHER measure below. All free SEC data.
+# Materiality = influence over the COMPANY, so ownership-of-company is the necessary condition
+# (a big % of a fund's book in a mega-cap is a passive core long, not a campaign — Third Point's
+# 0.02% of Amazon). A name qualifies if a holder owns >= OWNERSHIP_PCT_MIN of the company, OR
+# owns >= OWNERSHIP_SOFT of it AND that stake is a concentrated >= FUND_WEIGHT_CONV of its book.
 THIRTEENF_ENABLED = os.getenv("THIRTEENF_ENABLED", "1") == "1"
-FUND_WEIGHT_MIN = float(os.getenv("FUND_WEIGHT_MIN", "0.02"))     # >= 2% of the fund's 13F book
-OWNERSHIP_PCT_MIN = float(os.getenv("OWNERSHIP_PCT_MIN", "0.01")) # >= 1% of the company's shares
+OWNERSHIP_PCT_MIN = float(os.getenv("OWNERSHIP_PCT_MIN", "0.01"))  # >= 1% of the company (strong)
+OWNERSHIP_SOFT = float(os.getenv("OWNERSHIP_SOFT", "0.005"))      # >= 0.5% of the company (soft)
+FUND_WEIGHT_CONV = float(os.getenv("FUND_WEIGHT_CONV", "0.05"))   # + >= 5% of the fund's book
+FUND_WEIGHT_MIN = float(os.getenv("FUND_WEIGHT_MIN", "0.02"))     # (legacy; kept for compat)
 THIRTEENF_MAX_FUNDS = int(os.getenv("THIRTEENF_MAX_FUNDS", "80")) # cap funds resolved per run
 THIRTEENF_TIMEOUT = int(os.getenv("THIRTEENF_TIMEOUT", "25"))     # per-request timeout (s)
 
