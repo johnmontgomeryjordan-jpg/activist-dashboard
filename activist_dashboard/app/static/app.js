@@ -644,9 +644,10 @@ function renderCompany(){
   }
   const star=WATCHLIST_SET.has(d.cik)?'★ On watchlist':'☆ Add to watchlist';
   const npeers=(d.peer_analysis&&d.peer_analysis.peers)?d.peer_analysis.peers.length:0;
+  const _advc=((d.advisors&&d.advisors.firms)?d.advisors.firms.length:0)+(((d.contacts||{}).comms_name)?1:0);
   const tabs=[["overview","Overview"],["evidence","Evidence",(d.evidence||[]).length],["financials","Financials"]];
   if(npeers) tabs.push(["peers","Peer analysis",npeers]);
-  tabs.push(["ownership","Ownership & insiders"],["filings","Filings & news"],["notes","Notes"]);
+  tabs.push(["ownership","Ownership & insiders"],["advisors","Advisors",_advc||undefined],["filings","Filings & news"],["notes","Notes"]);
   const tabbar=tabs.map(t=>`<div class="cv-tab ${CURRENT_TAB===t[0]?"active":""}" onclick="switchTab('${t[0]}')">${t[1]}${t[2]?` <span class="cv-tabcount">${t[2]}</span>`:""}</div>`).join("");
   document.getElementById("companyView").innerHTML=`
     <div class="cv-back" onclick="showView(CURRENT_VIEW)"><i class="ti ti-arrow-left"></i> Back</div>
@@ -747,17 +748,42 @@ function pitchStrip(d){
     return `<div class="ctc"><div class="av">${esc(init)}</div><div><div class="nm">${esc(name||label)}</div><div class="rl">${esc(label)}</div></div><div class="det">${det}</div></div>`;
   };
   const irRow=ctRow("Investor Relations",ct.ir_name,ct.ir_email,ct.ir_phone);
-  const prRow=ctRow("Media / Comms",ct.comms_name,ct.comms_email,ct.comms_phone);
-  const reachHtml=(irRow||prRow) ? irRow+prRow
-    : `<span class="gov-note">No IR/Comms contact parsed yet — pulled from recent 8-K press releases on the daily run.</span>
+  // Comms firm intentionally lives on the Advisors tab now (it's a competitor, not an outreach
+  // target). "Who to reach" is the emailable IR contact only.
+  const reachHtml=irRow
+    ? irRow
+    : `<span class="gov-note">No IR contact parsed yet — pulled from recent 8-K press releases on the daily run.</span>
        <div class="links" style="margin-top:8px;"><a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations contact")}" target="_blank" rel="noopener">Search IR ↗</a></div>`;
-  const _adv=(d.advisors&&d.advisors.firms)?d.advisors.firms:[];
-  const advLine=_adv.length
-    ? `<div class="gov-note" style="margin-top:8px;">Recent advisors: ${_adv.map(a=>`<b>${esc(a.name)}</b>`).join(" · ")}${d.advisors.source_date?` <span style="color:var(--dim)">(named in a ${esc(String(d.advisors.source_date).slice(0,4))} 8-K)</span>`:""}</div>`
-    : "";
   return `<div class="strip2">
       <div><div class="mh3" style="margin:0 0 10px">Timing &amp; catalysts</div><div class="timing">${timingBody}</div></div>
-      <div><div class="mh3" style="margin:0 0 10px">Who to reach</div>${reachHtml}${advLine}</div></div>`;
+      <div><div class="mh3" style="margin:0 0 10px">Who to reach</div>${reachHtml}</div></div>`;
+}
+/* Advisors tab — who already advises this company (banks + law firms scanned from its deal 8-Ks,
+   plus the incumbent comms firm). Landscape/competitive intel, NOT an outreach list. */
+function advRow(name){
+  const init=(name||"").trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase();
+  return `<div class="ctc"><div class="av">${esc(init)}</div><div><div class="nm">${esc(name)}</div></div></div>`;
+}
+function advisorsHtml(d){
+  const adv=(d.advisors&&d.advisors.firms)?d.advisors.firms:[];
+  const banks=adv.filter(a=>a.type==="bank"), laws=adv.filter(a=>a.type==="law");
+  const ct=d.contacts||{}; const comms=ct.comms_name||"";
+  const advSrc=(d.advisors&&d.advisors.source_url)||null, advDate=(d.advisors&&d.advisors.source_date)||null;
+  const commsSrc=ct.contacts_source||null;
+  if(!banks.length&&!laws.length&&!comms){
+    return `<div class="empty">No advisors identified yet.<br><span style="color:var(--muted);font-size:13px;">The scan reads each tracked company's recent deal / strategic-review 8-Ks (Items 1.01, 2.01, 7.01, 8.01) and matches the banks and law firms named in them against a curated allowlist. Most companies have no recent deal, so this stays empty until one appears — coverage fills in over successive daily runs.</span></div>`;
+  }
+  // Every section links back to the exact SEC filing the names were pulled from.
+  const srcLink=(url,date)=>url?`<div class="gov-note" style="text-transform:none;letter-spacing:0;margin:6px 0 2px;">Source: <a class="extlink" href="${esc(url)}" target="_blank" rel="noopener">8-K press release${date?` · ${esc(fmtDateY(date))}`:""} ↗</a></div>`:`<div class="gov-note" style="text-transform:none;letter-spacing:0;margin:6px 0 2px;color:var(--dim)">Source filing link pending next refresh.</div>`;
+  const intro=`<div class="verdict" style="font-size:13.5px;">Who's already advising this company, pulled from its own recent SEC filings. This is <b>landscape intel, not an outreach list</b> — these are incumbents you'd be working alongside or displacing.</div>`;
+  const grp=(title,rows,note,footer)=>rows.length?`<div class="mh3">${title}</div>${note||""}<div class="panel" style="padding:4px 0;">${rows.join("")}</div>${footer||""}`:"";
+  // Banks + law come from the same deal 8-K (the scan records the newest filing that named them),
+  // so the source link sits under whichever of the two is shown last.
+  const bankB=grp("Financial advisors",banks.map(a=>advRow(a.name)),"",laws.length?"":srcLink(advSrc,advDate));
+  const lawB=grp("Legal advisors",laws.map(a=>advRow(a.name)),"",srcLink(advSrc,advDate));
+  const commsNote=`<div class="gov-note" style="text-transform:none;letter-spacing:0;margin:0 0 6px;">Incumbent comms firm — a competitor, not an outreach target.</div>`;
+  const commsB=comms?grp("Former Comms Advisor",[advRow(comms)],commsNote,srcLink(commsSrc,null)):"";
+  return intro+bankB+lawB+commsB;
 }
 
 /* ===== Pitch kit (home) ===== */
@@ -976,6 +1002,9 @@ function renderTab(){
       <div class="mh3">Screen signals</div><div class="sigchips">${chips||"—"}</div>
       ${o.description?`<div class="mh3">About the company</div><div class="desc">${esc(o.description)}</div>`:""}
       <div class="mh3">Quick links</div><div class="links">${L.join("")}</div>`;
+  }
+  else if(CURRENT_TAB==="advisors"){
+    body.innerHTML=advisorsHtml(d);
   }
   else if(CURRENT_TAB==="evidence"){
     body.innerHTML=pillarsHtml(d.evidence||[]);
