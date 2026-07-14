@@ -689,17 +689,27 @@ function agmIsPast(iso){
   const d=new Date(+p[0],+p[1]-1,+p[2]); const t=new Date(); t.setHours(0,0,0,0); return d<t;
 }
 function nomWindow(meetingISO,minD,maxD){
-  if(!meetingISO||!minD||!maxD) return null;
+  if(!meetingISO) return null;
   const p=String(meetingISO).split('-'); if(p.length<3) return null;
   const base=new Date(+p[0],+p[1]-1,+p[2]); if(isNaN(base)) return null;
+  // Exact day-counts come from the proxy's advance-notice bylaw when we can parse them; otherwise
+  // fall back to the standard 90–120-day window most US public companies use (labeled as such).
+  const exact=!!(minD&&maxD); minD=minD||90; maxD=maxD||120;
   const now=new Date(); now.setHours(0,0,0,0);
   const iso=x=>`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
   const minus=(x,n)=>{const y=new Date(x); y.setDate(y.getDate()-n); return y;};
   const anniv=new Date(base); anniv.setFullYear(now.getFullYear());
   let close=minus(anniv,minD),guard=0;
   while(close<now&&guard<4){ anniv.setFullYear(anniv.getFullYear()+1); close=minus(anniv,minD); guard++; }
-  return {open:iso(minus(anniv,maxD)), close:iso(close)};
+  return {open:iso(minus(anniv,maxD)), close:iso(close), exact:exact};
 }
+
+function daysUntil(iso){
+  if(!iso) return null; const p=String(iso).split('-'); if(p.length<3) return null;
+  const d=new Date(+p[0],+p[1]-1,+p[2]); if(isNaN(d)) return null;
+  const t=new Date(); t.setHours(0,0,0,0); return Math.round((d-t)/86400000);
+}
+function humanIn(n){ return n<=0?"today":(n===1?"tomorrow":"in "+n+" days"); }
 
 /* Shared: timing-&-catalysts + who-to-reach strip (used on profile overview + pitch kit) */
 function pitchStrip(d){
@@ -714,10 +724,17 @@ function pitchStrip(d){
   const nom=nomWindow(mtgDate,gov.nom_min_days,gov.nom_max_days);
   const tpills=[...(ernDate?["Earnings "+fmtDateMD(ernDate)]:[]),
                 ...(mtgDate?[(mtgPast?"Last AGM ":"Next AGM ")+fmtDateMD(mtgDate)]:[]),
+                ...(nom?["Nominate "+(nom.exact?"by ":"~")+fmtDateMD(nom.close)]:[]),
                 ...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
+  const _cands=[];
+  if(ernDate) _cands.push({label:"Earnings",d:daysUntil(ernDate)});
+  if(nom) _cands.push({label:"Nomination deadline",d:daysUntil(nom.close)});
+  if(mtgDate&&!mtgPast) _cands.push({label:"Annual meeting",d:daysUntil(mtgDate)});
+  const _next=_cands.filter(c=>c.d!=null&&c.d>=0).sort((a,b)=>a.d-b.d)[0];
   const timingLines=[
+    _next?`<b>Next catalyst:</b> ${esc(_next.label)} ${humanIn(_next.d)}.`:"",
     ernDate?`Next print <b>${esc(fmtDateY(ernDate))}</b> — often the most receptive window to reach out.`:"",
-    nom?`Director-nomination window <b>${esc(fmtDateY(nom.open))} – ${esc(fmtDateY(nom.close))}</b> (est., from advance-notice bylaw).`:""
+    nom?`Board-nomination window <b>${esc(fmtDateY(nom.open))} – ${esc(fmtDateY(nom.close))}</b> — the deadline for a dissident to nominate directors (${nom.exact?"per the company's bylaw":"standard 90–120-day window; confirm bylaws"}).`:""
   ].filter(Boolean).join("<br>");
   const timingBody=(ernDate||mtgDate||cat.length)
     ? `${tpills}${timingLines?`<br>${timingLines}`:""}`
@@ -914,7 +931,7 @@ function renderTab(){
     const ern=[
       (d.earnings&&d.earnings.next_date)?`<div class="timing"><i>◷</i> Next earnings <b>${esc(d.earnings.next_date)}</b> — often the most receptive window to reach out</div>`:"",
       mtgDate?`<div class="timing"><i>◷</i> ${mtgPast?"Last":"Next"} annual meeting <b>${esc(fmtDateY(mtgDate))}</b></div>`:"",
-      nom?`<div class="timing"><i>◷</i> Director-nomination window <b>${esc(fmtDateY(nom.open))} – ${esc(fmtDateY(nom.close))}</b> <span style="color:var(--dim)">(est., from advance-notice bylaw)</span></div>`:""
+      nom?`<div class="timing"><i>◷</i> Board-nomination window <b>${esc(fmtDateY(nom.open))} – ${esc(fmtDateY(nom.close))}</b> <span style="color:var(--dim)">${nom.exact?"(from advance-notice bylaw)":"(standard 90–120-day window; confirm in bylaws)"}</span></div>`:""
     ].join("");
     const gb=(on,t)=>`<span class="gov-badge ${on?'on':'off'}">${on?'●':'○'} ${t}</span>`;
     const anyGov=g.classified_board||g.poison_pill||g.dual_class;
