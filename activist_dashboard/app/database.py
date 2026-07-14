@@ -112,6 +112,9 @@ CREATE TABLE IF NOT EXISTS company_contacts (
     cik TEXT PRIMARY KEY, ir_name TEXT, ir_email TEXT, ir_phone TEXT,
     comms_name TEXT, comms_email TEXT, comms_phone TEXT, source_url TEXT, updated_at TEXT
 );
+CREATE TABLE IF NOT EXISTS advisors (
+    cik TEXT PRIMARY KEY, advisors_json TEXT, source_url TEXT, source_date TEXT, updated_at TEXT
+);
 CREATE TABLE IF NOT EXISTS manual_situations (
     cik TEXT PRIMARY KEY, status TEXT, actor TEXT, note TEXT, updated_at TEXT
 );
@@ -1177,6 +1180,24 @@ def upsert_company_contacts(cik, d):
 def get_company_contacts(cik):
     with get_conn() as conn:
         r = conn.execute("SELECT * FROM company_contacts WHERE cik=?", (cik,)).fetchone()
+        return dict(r) if r else {}
+
+
+def upsert_advisors(cik, advisors, source_url=None, source_date=None):
+    """advisors: list of {'name','type'}. Empty list is a valid 'scanned, none found' result."""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO advisors (cik, advisors_json, source_url, source_date, updated_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(cik) DO UPDATE SET advisors_json=excluded.advisors_json,
+                 source_url=excluded.source_url, source_date=excluded.source_date,
+                 updated_at=excluded.updated_at""",
+            (cik, json.dumps(advisors or []), source_url, source_date, now_iso()))
+
+
+def get_advisors(cik):
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM advisors WHERE cik=?", (cik,)).fetchone()
         return dict(r) if r else {}
 
 
