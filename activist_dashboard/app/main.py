@@ -425,6 +425,8 @@ def api_company(cik: str):
             "proxy_url": gov.get("proxy_url"),
             "proxy_date": gov.get("proxy_date"),
             "annual_meeting_date": gov.get("meeting_date"),
+            "nom_min_days": gov.get("nom_min_days"),
+            "nom_max_days": gov.get("nom_max_days"),
         },
         "insider": {
             "buy_value": ins.get("buy_value"),
