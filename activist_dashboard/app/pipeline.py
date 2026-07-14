@@ -1231,7 +1231,7 @@ CONTACTS_PER_RUN = 12
 # Advisors (law firms / banks) change only on a deal, so cache each company a long time and scan
 # just a few stale names per run. Free SEC data (reuses edgar's 8-K press-release text fetcher).
 ADVISORS_MAX_AGE_DAYS = 60
-ADVISORS_PER_RUN = 10
+ADVISORS_PER_RUN = 25
 
 
 def refresh_advisors():
