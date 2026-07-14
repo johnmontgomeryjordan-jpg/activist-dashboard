@@ -751,9 +751,13 @@ function pitchStrip(d){
   const reachHtml=(irRow||prRow) ? irRow+prRow
     : `<span class="gov-note">No IR/Comms contact parsed yet — pulled from recent 8-K press releases on the daily run.</span>
        <div class="links" style="margin-top:8px;"><a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations contact")}" target="_blank" rel="noopener">Search IR ↗</a></div>`;
+  const _adv=(d.advisors&&d.advisors.firms)?d.advisors.firms:[];
+  const advLine=_adv.length
+    ? `<div class="gov-note" style="margin-top:8px;">Recent advisors: ${_adv.map(a=>`<b>${esc(a.name)}</b>`).join(" · ")}${d.advisors.source_date?` <span style="color:var(--dim)">(named in a ${esc(String(d.advisors.source_date).slice(0,4))} 8-K)</span>`:""}</div>`
+    : "";
   return `<div class="strip2">
       <div><div class="mh3" style="margin:0 0 10px">Timing &amp; catalysts</div><div class="timing">${timingBody}</div></div>
-      <div><div class="mh3" style="margin:0 0 10px">Who to reach</div>${reachHtml}</div></div>`;
+      <div><div class="mh3" style="margin:0 0 10px">Who to reach</div>${reachHtml}${advLine}</div></div>`;
 }
 
 /* ===== Pitch kit (home) ===== */
