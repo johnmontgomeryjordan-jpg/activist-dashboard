@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS governance (
     cik TEXT PRIMARY KEY, classified_board INTEGER, poison_pill INTEGER,
     dual_class INTEGER, proxy_accn TEXT, proxy_date TEXT, proxy_url TEXT,
-    comp_json TEXT, peers_json TEXT, meeting_date TEXT, updated_at TEXT
+    comp_json TEXT, peers_json TEXT, meeting_date TEXT,
+    nom_min_days INTEGER, nom_max_days INTEGER, updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS insider_txn (
     accn TEXT PRIMARY KEY, cik TEXT, filed TEXT, name TEXT, role TEXT,
@@ -182,6 +183,10 @@ def init_db():
             conn.execute("ALTER TABLE governance ADD COLUMN peers_json TEXT")
         if "meeting_date" not in gcols:
             conn.execute("ALTER TABLE governance ADD COLUMN meeting_date TEXT")
+        if "nom_min_days" not in gcols:
+            conn.execute("ALTER TABLE governance ADD COLUMN nom_min_days INTEGER")
+        if "nom_max_days" not in gcols:
+            conn.execute("ALTER TABLE governance ADD COLUMN nom_max_days INTEGER")
         fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
         if "raw" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
@@ -848,7 +853,8 @@ def get_meta(key, default=None):
 
 
 # --- Governance (from DEF 14A proxies) ---------------------------------------
-def upsert_governance(cik, flags, accn, date, url, comp=None, peers=None, meeting_date=None):
+def upsert_governance(cik, flags, accn, date, url, comp=None, peers=None, meeting_date=None,
+                      nom_min=None, nom_max=None):
     # comp/peers are None when not yet attempted; {} / [] are "parsed, nothing found"
     # sentinels that stop us re-fetching the same proxy every run. Stored non-None once tried.
     comp_json = json.dumps(comp) if comp is not None else None
@@ -856,17 +862,18 @@ def upsert_governance(cik, flags, accn, date, url, comp=None, peers=None, meetin
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO governance
-               (cik,classified_board,poison_pill,dual_class,proxy_accn,proxy_date,proxy_url,comp_json,peers_json,meeting_date,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               (cik,classified_board,poison_pill,dual_class,proxy_accn,proxy_date,proxy_url,comp_json,peers_json,meeting_date,nom_min_days,nom_max_days,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(cik) DO UPDATE SET
                  classified_board=excluded.classified_board, poison_pill=excluded.poison_pill,
                  dual_class=excluded.dual_class, proxy_accn=excluded.proxy_accn,
                  proxy_date=excluded.proxy_date, proxy_url=excluded.proxy_url,
                  comp_json=excluded.comp_json, peers_json=excluded.peers_json,
-                 meeting_date=excluded.meeting_date, updated_at=excluded.updated_at""",
+                 meeting_date=excluded.meeting_date, nom_min_days=excluded.nom_min_days,
+                 nom_max_days=excluded.nom_max_days, updated_at=excluded.updated_at""",
             (cik, 1 if flags.get("classified_board") else 0,
              1 if flags.get("poison_pill") else 0, 1 if flags.get("dual_class") else 0,
-             accn, date, url, comp_json, peers_json, meeting_date, now_iso()),
+             accn, date, url, comp_json, peers_json, meeting_date, nom_min, nom_max, now_iso()),
         )
 
 
