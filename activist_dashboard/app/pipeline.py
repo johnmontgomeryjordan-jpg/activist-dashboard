@@ -40,7 +40,7 @@ from datetime import datetime
 
 from . import (config, database, universe, edgar, news, scoring, emailer,
                governance, insider, activist, earnings, votes, fmp, twelvedata,
-               contacts, reaction, longtsr, aithesis, spotlight)
+               contacts, advisors, reaction, longtsr, aithesis, spotlight)
 
 _UNIVERSE = None
 
@@ -1228,6 +1228,40 @@ CONTACTS_MAX_AGE_DAYS = 45        # re-check a company at most this often
 CONTACTS_RETRY_DAYS = 20          # but re-try a "found nothing" company sooner (new 8-Ks)
 CONTACTS_PER_RUN = 12
 
+# Advisors (law firms / banks) change only on a deal, so cache each company a long time and scan
+# just a few stale names per run. Free SEC data (reuses edgar's 8-K press-release text fetcher).
+ADVISORS_MAX_AGE_DAYS = 60
+ADVISORS_PER_RUN = 10
+
+
+def refresh_advisors():
+    """Scan tracked names' recent press-release / deal 8-Ks for allowlisted law firms and banks,
+    cached. Feeds the 'who to reach' advisor line. Free SEC data; bounded per run."""
+    now = datetime.utcnow()
+    fresh = (now - timedelta(days=ADVISORS_MAX_AGE_DAYS)).isoformat()
+    pairs = _tracked_pairs()
+    budget = ADVISORS_PER_RUN
+    done = cached = 0
+    for cik, ticker in pairs.items():
+        ex = database.get_advisors(cik)
+        if ex and (ex.get("updated_at") or "") >= fresh:
+            cached += 1
+            continue
+        if budget <= 0:
+            continue
+        budget -= 1
+        try:
+            res = advisors.advisors_for_cik(cik, ticker)
+        except Exception:
+            traceback.print_exc(); res = None
+        time.sleep(0.3)
+        if res is not None:
+            database.upsert_advisors(cik, res.get("advisors") or [],
+                                     res.get("source_url"), res.get("source_date"))
+            done += 1
+    print(f"[advisors] scanned {done} · cached {cached} (of {len(pairs)} tracked)")
+    return done
+
 
 def refresh_ir_contacts():
     """Parse IR + Media contacts from recent 8-K press-release exhibits for tracked names,
@@ -1332,6 +1366,7 @@ def daily_rescore_and_digest():
     refresh_sentiment()
     refresh_contacts()
     refresh_ir_contacts()
+    refresh_advisors()
     # Exec-reactions + multi-year TSR before the bulk chart pull so these rarer/cached event
     # & valuation signals aren't starved of Twelve Data credits on a tight day (free=800/day).
     refresh_exec_reactions()
@@ -1360,6 +1395,7 @@ def startup_full_refresh():
     refresh_sentiment()
     refresh_contacts()
     refresh_ir_contacts()
+    refresh_advisors()
     refresh_exec_reactions()       # before refresh_prices: protect event-signal credits
     refresh_long_tsr()
     refresh_prices()
