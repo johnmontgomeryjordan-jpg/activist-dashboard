@@ -327,6 +327,7 @@ def api_company(cik: str):
     fx = database.get_finnhub_extra(cik) or {}
     prof = database.get_company_profile(cik) or {}
     con = database.get_company_contacts(cik) or {}
+    adv = database.get_advisors(cik) or {}
     px = database.get_prices(cik) or {}
     aflag = database.get_activist_flag(cik) or {}
     market = database.get_company_market(cik)
@@ -492,6 +493,11 @@ def api_company(cik: str):
             "comms_phone": con.get("comms_phone"),
             "contacts_source": con.get("source_url"),
         },
+        "advisors": {
+            "firms": json.loads(adv.get("advisors_json") or "[]"),
+            "source_url": adv.get("source_url"),
+            "source_date": adv.get("source_date"),
+        },
         "prices": {"series": px.get("series") or [], "last_close": px.get("last_close")},
         "financials": {
             "revenue": fund.get("revenue"),
@@ -593,6 +599,7 @@ def api_run_enrichment():
                          ("sentiment", pipeline.refresh_sentiment),
                          ("contacts", pipeline.refresh_contacts),
                          ("ir-contacts", pipeline.refresh_ir_contacts),
+                         ("advisors", pipeline.refresh_advisors),
                          ("exec-reactions", pipeline.refresh_exec_reactions),
                          ("long-tsr", lambda: pipeline.refresh_long_tsr(force=True)),
                          ("prices", pipeline.refresh_prices),
