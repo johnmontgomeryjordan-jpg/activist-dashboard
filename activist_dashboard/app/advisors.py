@@ -36,7 +36,7 @@ BANKS = {
     "Barclays": r"barclays",
     "UBS": r"\bubs\b",
     "Deutsche Bank": r"deutsche bank",
-    "Wells Fargo Securities": r"wells fargo securities",
+    "Wells Fargo Securities": r"wells fargo(?: securities)?",
     "RBC Capital Markets": r"rbc capital",
     "Qatalyst Partners": r"qatalyst",
     "Ducera Partners": r"ducera",
@@ -58,6 +58,7 @@ LAW = {
     "Cleary Gottlieb": r"cleary gottlieb",
     "Gibson Dunn": r"gibson,?\s+dunn",
     "Sidley Austin": r"sidley",
+    "Goodwin Procter": r"goodwin procter",
     "Weil Gotshal": r"weil,?\s+gotshal",
     "Wilson Sonsini": r"wilson sonsini",
     "Cooley": r"cooley llp",
@@ -90,9 +91,32 @@ _CONTEXT = re.compile(
     r"is representing|represented by", re.I)
 
 
+# Banks whose names also commonly appear as LENDERS (credit agreements, revolvers) rather than
+# deal advisors. For these we require advisory language within ~90 chars of the name, not just
+# somewhere in the doc — so "Wells Fargo, as administrative agent" won't be mistaken for an advisor.
+_AMBIG = {"BofA Securities", "Wells Fargo Securities", "Citi", "Barclays",
+          "Deutsche Bank", "RBC Capital Markets", "UBS"}
+_NEAR = re.compile(r"advis|serving as|acting as|counsel|represent|advising", re.I)
+# Lender/agent language right after the name means it's a credit-agreement mention, not an advisor.
+_LENDER_NEAR = re.compile(
+    r"administrative agent|as agent|as (?:a |the )?lender|collateral agent|"
+    r"credit agreement|credit facility|revolv|as (?:the )?trustee|as issuing bank",
+    re.I)
+
+
+def _near_advice(t, m):
+    tail = t[m.end():m.end() + 45]
+    if _LENDER_NEAR.search(tail):
+        return False
+    a = max(0, m.start() - 70)
+    b = min(len(t), m.end() + 70)
+    return bool(_NEAR.search(t[a:b]))
+
+
 def scan(text):
     """Return [{'name','type'}] of allowlisted advisors named in `text` — but only when the text
-    also contains advisory language, so a passing brand mention (e.g. a bank as lender) is ignored."""
+    also contains advisory language, so a passing brand mention (e.g. a bank as lender) is ignored.
+    Lender-prone bank names additionally require advisory language *nearby* (not just doc-wide)."""
     t = text or ""
     if not t or not _CONTEXT.search(t):
         return []
@@ -101,8 +125,12 @@ def scan(text):
         if rx.search(t):
             out.append({"name": name, "type": "law"})
     for name, rx in _BANK_RE:
-        if rx.search(t):
-            out.append({"name": name, "type": "bank"})
+        m = rx.search(t)
+        if not m:
+            continue
+        if name in _AMBIG and not _near_advice(t, m):
+            continue
+        out.append({"name": name, "type": "bank"})
     return out
 
 
