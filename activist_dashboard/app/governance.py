@@ -46,7 +46,8 @@ DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
 #     single-token fix (drops "target"/"match"/etc. false peers, e.g. Target Corp on INSP).
 # v5: parse the annual-meeting date from the proxy (timing catalyst) — re-parse to backfill it.
 # v6: also parse the advance-notice director-nomination window (min/max days) from the proxy.
-GOV_PARSER_VERSION = "6"
+# v7: broaden the advance-notice parser (more section cues, "between X and Y days", known pairs).
+GOV_PARSER_VERSION = "7"
 
 
 def _pad(cik):
@@ -137,28 +138,55 @@ def annual_meeting_date(detagged):
 # than M days" before the anniversary of the prior annual meeting (N/M usually 90/120). We parse
 # the actual day-counts from the proxy; the frontend anchors them to the meeting date to show the
 # upcoming window. Precision over recall — only emit from a real nomination/advance-notice passage.
-_ADV_CUE = re.compile(r"advance notice|to be timely|stockholder'?s? notice|shareholder'?s? notice|"
-                      r"nomination of directors|director nominations|notice of nomination|"
-                      r"nominations? of persons|proposing (?:director )?nominations")
-_DAYNUM = re.compile(r"(\d{2,3})(?:st|nd|rd|th)?\s+(?:calendar\s+)?days?\b")
+_ADV_CUE = re.compile(
+    r"advance notice|to be timely|timely notice|stockholder'?s? notice|shareholder'?s? notice|"
+    r"nomination of directors|director nominations?|notice of nomination|nominations? of persons|"
+    r"proposing (?:director )?nominations|stockholder proposals|shareholder proposals|"
+    r"proposals (?:of|by) (?:stockholders|shareholders)|nominations? for .{0,25}?annual meeting|"
+    r"requirements for .{0,30}?(?:nomination|proposal)")
+# "\)?" lets a parenthesized count match ("one hundred twenty (120) days").
+_DAYNUM = re.compile(r"(\d{2,3})(?:st|nd|rd|th)?\s*\)?\s*(?:calendar\s+)?days?\b")
+_BETWEEN = re.compile(r"between\s+(\d{2,3})\s+and\s+(\d{2,3})\s+(?:calendar\s+)?days")
+# Captures BOTH counts in "not less than N … nor more than M days" even when N isn't itself
+# followed by "days" (shared unit), and skips spelled-out words to the parenthesized digit.
+_NM = re.compile(
+    r"(?:less|later|fewer)\s+than\s+[a-z()\s.\-]{0,40}?(\d{2,3})(?:st|nd|rd|th)?\s*\)?\s*(?:calendar\s+)?(?:days?)?"
+    r"[^.]{0,55}?(?:more|earlier|greater)\s+than\s+[a-z()\s.\-]{0,40}?(\d{2,3})(?:st|nd|rd|th)?\s*\)?\s*(?:calendar\s+)?days?")
+_WINDOW_KW = ("not less than", "not later than", "not more than", "not earlier than",
+              "nor less than", "nor later than", "nor more than", "nor earlier than",
+              "no later than", "no earlier than", "and not more than", "and no more than",
+              "between", "at least")
+# Advance-notice windows almost always use one of these day-count pairs; prefer them for precision.
+_KNOWN_PAIRS = ((90, 120), (120, 150), (60, 90), (75, 105), (90, 150), (45, 75), (100, 130))
+
+
+def _valid_window(a, b):
+    lo, hi = sorted((a, b))
+    return (lo, hi) if (45 <= lo and hi <= 200 and 15 <= hi - lo <= 90) else None
 
 
 def advance_notice_days(detagged):
     """(min_days, max_days) for the director-nomination advance-notice window, or None."""
     t = detagged or ""
     for cue in _ADV_CUE.finditer(t):
-        seg = t[cue.start(): cue.start() + 700]
-        if "anniversary" not in seg and "annual meeting" not in seg:
+        seg = t[cue.start(): cue.start() + 900]
+        if "anniversary" not in seg and "annual meeting" not in seg and "annual general meeting" not in seg:
             continue
-        if not any(k in seg for k in ("not less than", "not later than", "nor more than",
-                                      "nor earlier than", "no later than", "no earlier than")):
+        for rx in (_BETWEEN, _NM):                       # explicit two-number constructions first
+            mm = rx.search(seg)
+            if mm:
+                w = _valid_window(int(mm.group(1)), int(mm.group(2)))
+                if w:
+                    return w
+        if not any(k in seg for k in _WINDOW_KW):
             continue
-        nums = [int(m.group(1)) for m in _DAYNUM.finditer(seg)]
-        nums = [n for n in nums if 45 <= n <= 200]
-        if len(nums) >= 2:
-            lo, hi = min(nums), max(nums)
-            if 15 <= hi - lo <= 90:          # a plausible window width (e.g. 90..120)
-                return lo, hi
+        nums = {n for n in (int(m.group(1)) for m in _DAYNUM.finditer(seg)) if 45 <= n <= 200}
+        for pair in _KNOWN_PAIRS:                        # prefer a standard pair if both appear
+            if pair[0] in nums and pair[1] in nums:
+                return pair
+        distinct = sorted(nums)
+        if len(distinct) >= 2 and 15 <= distinct[-1] - distinct[0] <= 60:
+            return distinct[0], distinct[-1]
     return None
 
 
