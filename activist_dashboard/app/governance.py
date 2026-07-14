@@ -45,7 +45,8 @@ DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
 # v4: forces a full proxy re-parse so compensation.find_peers re-runs with the ambiguous
 #     single-token fix (drops "target"/"match"/etc. false peers, e.g. Target Corp on INSP).
 # v5: parse the annual-meeting date from the proxy (timing catalyst) — re-parse to backfill it.
-GOV_PARSER_VERSION = "5"
+# v6: also parse the advance-notice director-nomination window (min/max days) from the proxy.
+GOV_PARSER_VERSION = "6"
 
 
 def _pad(cik):
@@ -129,6 +130,36 @@ def annual_meeting_date(detagged):
         return f"{int(m.group(3)):04d}-{mo:02d}-{int(m.group(2)):02d}"
     except (ValueError, TypeError):
         return None
+
+
+# ---- director-nomination advance-notice window (the real deadline) ----------
+# Advance-notice bylaws state a window: nominations must be received "not less than N nor more
+# than M days" before the anniversary of the prior annual meeting (N/M usually 90/120). We parse
+# the actual day-counts from the proxy; the frontend anchors them to the meeting date to show the
+# upcoming window. Precision over recall — only emit from a real nomination/advance-notice passage.
+_ADV_CUE = re.compile(r"advance notice|to be timely|stockholder'?s? notice|shareholder'?s? notice|"
+                      r"nomination of directors|director nominations|notice of nomination|"
+                      r"nominations? of persons|proposing (?:director )?nominations")
+_DAYNUM = re.compile(r"(\d{2,3})(?:st|nd|rd|th)?\s+(?:calendar\s+)?days?\b")
+
+
+def advance_notice_days(detagged):
+    """(min_days, max_days) for the director-nomination advance-notice window, or None."""
+    t = detagged or ""
+    for cue in _ADV_CUE.finditer(t):
+        seg = t[cue.start(): cue.start() + 700]
+        if "anniversary" not in seg and "annual meeting" not in seg:
+            continue
+        if not any(k in seg for k in ("not less than", "not later than", "nor more than",
+                                      "nor earlier than", "no later than", "no earlier than")):
+            continue
+        nums = [int(m.group(1)) for m in _DAYNUM.finditer(seg)]
+        nums = [n for n in nums if 45 <= n <= 200]
+        if len(nums) >= 2:
+            lo, hi = min(nums), max(nums)
+            if 15 <= hi - lo <= 90:          # a plausible window width (e.g. 90..120)
+                return lo, hi
+    return None
 
 
 # Negations that turn a "match" into a NON-match when they appear just before the phrase.
@@ -222,6 +253,7 @@ def refresh_governance(ciks):
         detagged = _detag(html)
         flags = detect(detagged)
         mtg = annual_meeting_date(detagged)
+        nom = advance_notice_days(detagged)
         try:
             comp = compensation.parse_ceo_comp(html) or {}     # {} = attempted, none found
         except Exception:
@@ -234,7 +266,9 @@ def refresh_governance(ciks):
         nod = prx["accn"].replace("-", "")
         url = f"{ARCHIVE}/{int(cik10)}/{nod}/{prx['doc']}"
         database.upsert_governance(cik10, flags, prx["accn"], prx.get("date"), url,
-                                   comp, peers, meeting_date=mtg)
+                                   comp, peers, meeting_date=mtg,
+                                   nom_min=(nom[0] if nom else None),
+                                   nom_max=(nom[1] if nom else None))
         done += 1
         if comp:
             ncomp += 1
