@@ -682,6 +682,25 @@ function evCard(e){
   const sl=(e.source||e.url)?`<div class="evsrc">Source: ${src}</div>`:"";
   return `<div class="evrow"><div class="evtop"><span class="evlabel">${esc(e.label)}</span>${val}</div>${ctx}${math}${sl}</div>`;
 }
+/* Annual-meeting helpers: label past vs upcoming, and derive the upcoming director-nomination
+   window from the proxy's advance-notice day-counts (anchored to the meeting anniversary). */
+function agmIsPast(iso){
+  if(!iso) return false; const p=String(iso).split('-'); if(p.length<3) return false;
+  const d=new Date(+p[0],+p[1]-1,+p[2]); const t=new Date(); t.setHours(0,0,0,0); return d<t;
+}
+function nomWindow(meetingISO,minD,maxD){
+  if(!meetingISO||!minD||!maxD) return null;
+  const p=String(meetingISO).split('-'); if(p.length<3) return null;
+  const base=new Date(+p[0],+p[1]-1,+p[2]); if(isNaN(base)) return null;
+  const now=new Date(); now.setHours(0,0,0,0);
+  const iso=x=>`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+  const minus=(x,n)=>{const y=new Date(x); y.setDate(y.getDate()-n); return y;};
+  const anniv=new Date(base); anniv.setFullYear(now.getFullYear());
+  let close=minus(anniv,minD),guard=0;
+  while(close<now&&guard<4){ anniv.setFullYear(anniv.getFullYear()+1); close=minus(anniv,minD); guard++; }
+  return {open:iso(minus(anniv,maxD)), close:iso(close)};
+}
+
 /* Shared: timing-&-catalysts + who-to-reach strip (used on profile overview + pitch kit) */
 function pitchStrip(d){
   const sig=d.signals||""; const cat=[];
@@ -689,13 +708,16 @@ function pitchStrip(d){
   if(/earnings miss|guidance cut/i.test(sig)) cat.push("Earnings miss");
   if(/impairment/i.test(sig)) cat.push("Impairment");
   const ernDate=(d.earnings&&d.earnings.next_date)?d.earnings.next_date:null;
-  const mtgDate=(d.governance&&d.governance.annual_meeting_date)?d.governance.annual_meeting_date:null;
+  const gov=d.governance||{};
+  const mtgDate=gov.annual_meeting_date||null;
+  const mtgPast=agmIsPast(mtgDate);
+  const nom=nomWindow(mtgDate,gov.nom_min_days,gov.nom_max_days);
   const tpills=[...(ernDate?["Earnings "+fmtDateMD(ernDate)]:[]),
-                ...(mtgDate?["Annual mtg "+fmtDateMD(mtgDate)]:[]),
+                ...(mtgDate?[(mtgPast?"Last AGM ":"Next AGM ")+fmtDateMD(mtgDate)]:[]),
                 ...cat].map(x=>`<span class="pill2">${esc(x)}</span>`).join("");
   const timingLines=[
     ernDate?`Next print <b>${esc(fmtDateY(ernDate))}</b> — often the most receptive window to reach out.`:"",
-    mtgDate?`Annual meeting <b>${esc(fmtDateY(mtgDate))}</b> — the window to nominate directors ahead of a proxy fight.`:""
+    nom?`Director-nomination window <b>${esc(fmtDateY(nom.open))} – ${esc(fmtDateY(nom.close))}</b> (est., from advance-notice bylaw).`:""
   ].filter(Boolean).join("<br>");
   const timingBody=(ernDate||mtgDate||cat.length)
     ? `${tpills}${timingLines?`<br>${timingLines}`:""}`
@@ -887,9 +909,12 @@ function renderTab(){
     }
     const g=d.governance||{};
     const mtgDate=g.annual_meeting_date||null;
+    const mtgPast=agmIsPast(mtgDate);
+    const nom=nomWindow(mtgDate,g.nom_min_days,g.nom_max_days);
     const ern=[
       (d.earnings&&d.earnings.next_date)?`<div class="timing"><i>◷</i> Next earnings <b>${esc(d.earnings.next_date)}</b> — often the most receptive window to reach out</div>`:"",
-      mtgDate?`<div class="timing"><i>◷</i> Next annual meeting <b>${esc(fmtDateY(mtgDate))}</b> — the window to nominate directors ahead of a proxy fight</div>`:""
+      mtgDate?`<div class="timing"><i>◷</i> ${mtgPast?"Last":"Next"} annual meeting <b>${esc(fmtDateY(mtgDate))}</b></div>`:"",
+      nom?`<div class="timing"><i>◷</i> Director-nomination window <b>${esc(fmtDateY(nom.open))} – ${esc(fmtDateY(nom.close))}</b> <span style="color:var(--dim)">(est., from advance-notice bylaw)</span></div>`:""
     ].join("");
     const gb=(on,t)=>`<span class="gov-badge ${on?'on':'off'}">${on?'●':'○'} ${t}</span>`;
     const anyGov=g.classified_board||g.poison_pill||g.dual_class;
