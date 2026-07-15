@@ -644,7 +644,7 @@ function renderCompany(){
   }
   const star=WATCHLIST_SET.has(d.cik)?'★ On watchlist':'☆ Add to watchlist';
   const npeers=(d.peer_analysis&&d.peer_analysis.peers)?d.peer_analysis.peers.length:0;
-  const _advc=((d.advisors&&d.advisors.firms)?d.advisors.firms.length:0)+(((d.contacts||{}).comms_name)?1:0);
+  const _advc=((d.advisors&&d.advisors.firms)?d.advisors.firms.length:0)+(commsCompetitor((d.contacts||{}).comms_name)?1:0);
   const tabs=[["overview","Overview"],["evidence","Evidence",(d.evidence||[]).length],["financials","Financials"]];
   if(npeers) tabs.push(["peers","Peer analysis",npeers]);
   tabs.push(["ownership","Ownership & insiders"],["advisors","Advisors",_advc||undefined],["filings","Filings & news"],["notes","Notes"]);
@@ -758,8 +758,20 @@ function pitchStrip(d){
       <div><div class="mh3" style="margin:0 0 10px">Timing &amp; catalysts</div><div class="timing">${timingBody}</div></div>
       <div><div class="mh3" style="margin:0 0 10px">Who to reach</div>${reachHtml}</div></div>`;
 }
+/* External strategic-comms / IR firms (FGS competitors). We only surface an incumbent comms firm
+   when the parsed media contact IS one of these — an in-house media person or a parsing artifact
+   ("Customer Care", the company's own name, an individual) is not a comms advisor and must not show
+   here. FGS Global's own brands (Sard Verbinnen, Finsbury) are excluded so we never flag a client. */
+const _COMMS_RE=/\b(joele frank|wilkinson brimmer|edelman|icr|westwicke|brunswick group|kekst|teneo|abernathy macgregor|gladstone place|prosek|longacre square|collected strategies|reevemark|gasthalter|dukas linden|sloane (?:&|and) co|solebury trout|trout group|alpha ir|stanton prg|fti consulting|gagnier|h\/advisors)\b/i;
+function commsCompetitor(name){
+  const s=name||"";
+  if(!s) return "";
+  if(/fgs global|sard verbinnen|finsbury/i.test(s)) return "";   // FGS's own brands — not a competitor
+  return _COMMS_RE.test(s)?name:"";
+}
 /* Advisors tab — who already advises this company (banks + law firms scanned from its deal 8-Ks,
-   plus the incumbent comms firm). Landscape/competitive intel, NOT an outreach list. */
+   plus the incumbent comms firm when it's a recognized external firm). Landscape/competitive intel,
+   NOT an outreach list. */
 function advRow(name){
   const init=(name||"").trim().split(/\s+/).map(s=>s[0]).slice(0,2).join("").toUpperCase();
   return `<div class="ctc"><div class="av">${esc(init)}</div><div><div class="nm">${esc(name)}</div></div></div>`;
@@ -767,14 +779,14 @@ function advRow(name){
 function advisorsHtml(d){
   const adv=(d.advisors&&d.advisors.firms)?d.advisors.firms:[];
   const banks=adv.filter(a=>a.type==="bank"), laws=adv.filter(a=>a.type==="law");
-  const ct=d.contacts||{}; const comms=ct.comms_name||"";
+  const ct=d.contacts||{}; const comms=commsCompetitor(ct.comms_name);
   const advSrc=(d.advisors&&d.advisors.source_url)||null, advDate=(d.advisors&&d.advisors.source_date)||null;
   const commsSrc=ct.contacts_source||null;
   if(!banks.length&&!laws.length&&!comms){
     return `<div class="empty">No advisors identified yet.<br><span style="color:var(--muted);font-size:13px;">The scan reads each tracked company's recent deal / strategic-review 8-Ks (Items 1.01, 2.01, 7.01, 8.01) and matches the banks and law firms named in them against a curated allowlist. Most companies have no recent deal, so this stays empty until one appears — coverage fills in over successive daily runs.</span></div>`;
   }
   // Every section links back to the exact SEC filing the names were pulled from.
-  const srcLink=(url,date)=>url?`<div class="gov-note" style="text-transform:none;letter-spacing:0;margin:6px 0 2px;">Source: <a class="extlink" href="${esc(url)}" target="_blank" rel="noopener">8-K press release${date?` · ${esc(fmtDateY(date))}`:""} ↗</a></div>`:`<div class="gov-note" style="text-transform:none;letter-spacing:0;margin:6px 0 2px;color:var(--dim)">Source filing link pending next refresh.</div>`;
+  const srcLink=(url,date)=>url?`<div class="gov-note" style="text-transform:none;letter-spacing:0;margin:6px 0 2px;">Source: <a class="extlink" href="${esc(url)}" target="_blank" rel="noopener">SEC filing${date?` · ${esc(fmtDateY(date))}`:""} ↗</a></div>`:`<div class="gov-note" style="text-transform:none;letter-spacing:0;margin:6px 0 2px;color:var(--dim)">Source filing link pending next refresh.</div>`;
   const intro=`<div class="verdict" style="font-size:13.5px;">Who's already advising this company, pulled from its own recent SEC filings. This is <b>landscape intel, not an outreach list</b> — these are incumbents you'd be working alongside or displacing.</div>`;
   const grp=(title,rows,note,footer)=>rows.length?`<div class="mh3">${title}</div>${note||""}<div class="panel" style="padding:4px 0;">${rows.join("")}</div>${footer||""}`:"";
   // Banks + law come from the same deal 8-K (the scan records the newest filing that named them),
