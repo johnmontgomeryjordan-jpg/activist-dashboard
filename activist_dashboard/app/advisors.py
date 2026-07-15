@@ -82,13 +82,24 @@ _BANK_RE = [(k, re.compile(r"\b" + v + r"\b", re.I)) for k, v in BANKS.items()]
 _LAW_RE = [(k, re.compile(r"\b" + v + r"\b", re.I)) for k, v in LAW.items()]
 
 # 8-K items that typically carry a press release naming advisors (deals / strategic events).
-_ADVISOR_ITEMS = ("1.01", "2.01", "7.01", "8.01")
-# A real advisor mention sits near advisory language — guards against a stray brand mention.
+_DEAL_ITEMS = ("1.01", "2.01", "7.01", "8.01", "1.02")
+# Securities-offering filings name a company's UNDERWRITERS (its banks) on the cover page and its
+# outside legal COUNSEL in the "Legal Matters" section — a rich, common source even absent an M&A deal.
+_OFFERING_FORMS = ("424B1", "424B2", "424B3", "424B4", "424B5", "424B7", "424B8",
+                   "FWP", "S-1", "S-1/A", "S-4", "S-4/A", "S-11", "S-11/A")
+# Merger / contested proxies name the financial advisor and legal counsel in the background/fairness
+# sections. (Ordinary DEF 14A rarely names a banker, so we don't spend a fetch on it.)
+_PROXY_FORMS = ("DEFM14A", "PREM14A", "DEFC14A", "PREC14A")
+# A real advisor mention sits near advisory / underwriting / legal-matters language — guards against
+# a stray brand mention (e.g. a bank named only in a risk factor).
 _CONTEXT = re.compile(
     r"financial advisor|financial adviser|legal (?:advisor|adviser|counsel)|"
     r"acting as (?:advisor|adviser|counsel)|is serving as|served as|is acting as|"
     r"advising|counsel to|advisor to|adviser to|exclusive financial|lead financial|"
-    r"is representing|represented by", re.I)
+    r"is representing|represented by|"
+    r"underwrit|book-running|book running|bookrunning|joint bookrunner|joint book-runner|"
+    r"initial purchaser|representative[s]? of the underwriters|"
+    r"legal matters|passed upon|will pass upon", re.I)
 
 
 # Banks whose names also commonly appear as LENDERS (credit agreements, revolvers) rather than
@@ -96,7 +107,9 @@ _CONTEXT = re.compile(
 # somewhere in the doc — so "Wells Fargo, as administrative agent" won't be mistaken for an advisor.
 _AMBIG = {"BofA Securities", "Wells Fargo Securities", "Citi", "Barclays",
           "Deutsche Bank", "RBC Capital Markets", "UBS"}
-_NEAR = re.compile(r"advis|serving as|acting as|counsel|represent|advising", re.I)
+_NEAR = re.compile(r"advis|serving as|acting as|counsel|represent|advising|"
+                   r"underwrit|book-run|book run|bookrun|initial purchaser|"
+                   r"lead manager|sole manager|joint lead|managers?\b", re.I)
 # Lender/agent language right after the name means it's a credit-agreement mention, not an advisor.
 _LENDER_NEAR = re.compile(
     r"administrative agent|as agent|as (?:a |the )?lender|collateral agent|"
@@ -134,8 +147,16 @@ def scan(text):
     return out
 
 
-def advisors_for_cik(cik, ticker="", company="", days=730, max_docs=8):
-    """Scan a tracked company's recent press-release/deal 8-Ks for allowlisted advisors.
+def _wanted(form, codes):
+    """Which filings we bother fetching: deal-item 8-Ks, securities offerings, and merger proxies."""
+    if form == "8-K":
+        return any(c in codes for c in _DEAL_ITEMS)
+    return form in _OFFERING_FORMS or form in _PROXY_FORMS
+
+
+def advisors_for_cik(cik, ticker="", company="", days=1095, max_docs=12):
+    """Scan a tracked company's recent SEC filings for allowlisted advisors: deal 8-Ks (financial /
+    legal advisors), securities offerings (underwriters = banks, plus counsel), and merger proxies.
     Returns {'advisors': [{'name','type'}...], 'source_url': str|None, 'source_date': str|None}."""
     cik10 = edgar.pad_cik(cik)
     r = edgar._get(edgar.SUBMISSIONS_URL.format(cik10=cik10))
@@ -159,13 +180,11 @@ def advisors_for_cik(cik, ticker="", company="", days=730, max_docs=8):
     for i, f in enumerate(forms):
         if scanned >= max_docs:
             break
-        if f != "8-K":
-            continue
         filed = dates[i] if i < len(dates) else ""
         if filed < cutoff:
             continue
         codes = items_l[i] if i < len(items_l) else ""
-        if not any(c in codes for c in _ADVISOR_ITEMS):
+        if not _wanted(f, codes):
             continue
         acc = accs[i] if i < len(accs) else ""
         doc = docs[i] if i < len(docs) else ""
