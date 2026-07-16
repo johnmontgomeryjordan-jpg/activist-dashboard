@@ -341,15 +341,17 @@ function openFilingCat(key){ const items=FILING_GROUPS[key]||[]; const label=(FI
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeOverlay(); });
 
 /* ===== Active situations (tiered: confirmed / reported / manual) ===== */
-const TIER_ORDER=["confirmed","ma","reported","manual"];
+const TIER_ORDER=["confirmed","ma","reported","manual","settled"];
 function tierMeta(t){
   if(t==="confirmed") return {label:"Confirmed", col:"var(--hot)", desc:"An activist filing is on record with the SEC (13D or contested proxy) — authoritative."};
   if(t==="ma")        return {label:"M&A / control contest", col:"var(--accent)", desc:"A corporate bidder is running a takeover or proxy contest to acquire or control the company — an M&A fight, not a shareholder-activist campaign."};
   if(t==="reported")  return {label:"Reported",  col:"var(--warn)", desc:"Named in the press alongside a known activist — confirm before you rely on it."};
+  if(t==="settled")   return {label:"Recently settled", col:"var(--muted)", desc:"The activist and company signed a cooperation / settlement agreement — the campaign has stood down. Kept for context, not a live threat."};
   return {label:"Manual", col:"var(--accent)", desc:"Tagged by your team."};
 }
 function daysSince(d){ if(!d) return null; const t=Date.parse(d); if(isNaN(t)) return null; return Math.floor((Date.now()-t)/86400000); }
 function freshBadge(m){ const ds=daysSince(m&&m.date);
+  if(m&&(m.kind==="settled"||m.kind==="ma")) return "";   // a settled/M&A situation is not an "urgent defense lead"
   if(ds!=null && ds<=45 && (m.kind==="13d"||m.source==="SEC EDGAR")) return `<span class="as-fresh">⚡ fresh · ${ds}d — urgent defense lead</span>`;
   return ""; }
 function asRow(c){
@@ -373,7 +375,7 @@ async function loadActiveSituations(){
     const nav=document.getElementById("navActive"); if(nav) nav.textContent=ACTIVE.length?`(${ACTIVE.length})`:"";
     renderSummary();
     const el=document.getElementById("activeSit"); if(!el) return;
-    const groups={confirmed:[],ma:[],reported:[],manual:[]};
+    const groups={confirmed:[],ma:[],reported:[],manual:[],settled:[]};
     ACTIVE.forEach(c=>{ (groups[c.tier]||groups.manual).push(c); });
     Object.values(groups).forEach(g=>g.sort((a,b)=>
       (((b.meta&&b.meta.date)||"").localeCompare((a.meta&&a.meta.date)||"")) || ((b.vuln||0)-(a.vuln||0))));
