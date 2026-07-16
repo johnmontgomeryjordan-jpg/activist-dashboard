@@ -1232,11 +1232,18 @@ CONTACTS_PER_RUN = 12
 # just a few stale names per run. Free SEC data (reuses edgar's 8-K press-release text fetcher).
 ADVISORS_MAX_AGE_DAYS = 60
 ADVISORS_PER_RUN = 25
+# Bump when the scanner's coverage changes so cached rows written under the old logic get wiped and
+# re-scanned, instead of waiting out their 60-day freshness. (r1 = added offering/prospectus + proxy.)
+ADVISORS_VERSION = "2026-07-15-offerings-r1"
 
 
 def refresh_advisors():
-    """Scan tracked names' recent press-release / deal 8-Ks for allowlisted law firms and banks,
-    cached. Feeds the 'who to reach' advisor line. Free SEC data; bounded per run."""
+    """Scan tracked names' recent deal 8-Ks, securities offerings, and merger proxies for allowlisted
+    law firms and banks, cached. Feeds the Advisors tab. Free SEC data; bounded per run."""
+    if database.get_meta("advisors_ver") != ADVISORS_VERSION:
+        database.clear_advisors()
+        database.set_meta("advisors_ver", ADVISORS_VERSION)
+        print(f"[advisors] scanner bumped to {ADVISORS_VERSION} — cache cleared, full re-scan")
     now = datetime.utcnow()
     fresh = (now - timedelta(days=ADVISORS_MAX_AGE_DAYS)).isoformat()
     pairs = _tracked_pairs()
