@@ -1333,8 +1333,11 @@ def recompute_all():
             or (aflag.get("form") or "").upper().replace(" ", "") == "PX14A6G")
         # A corporate acquirer's takeover/control contest is its own tier ("ma"), NOT a
         # shareholder-activist campaign — keep it off the "authoritative activist" header.
+        # A SETTLED campaign (cooperation agreement) stands down into a muted "settled" tier.
         _is_ma = aflag is not None and (aflag.get("kind") == "ma")
-        _aflag_tier = "ma" if _is_ma else ("reported" if _exempt else "confirmed")
+        _is_settled = aflag is not None and (aflag.get("kind") == "settled")
+        _aflag_tier = ("settled" if _is_settled else "ma" if _is_ma
+                       else ("reported" if _exempt else "confirmed"))
         # Decide whether this name is an ACTIVE SITUATION and at what confidence tier:
         #   confirmed -> authoritative SEC activist filing (13D / contested proxy)
         #   reported  -> a news headline naming a known activist, OR an exempt solicitation
