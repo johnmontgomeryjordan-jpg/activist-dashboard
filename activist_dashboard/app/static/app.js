@@ -341,9 +341,10 @@ function openFilingCat(key){ const items=FILING_GROUPS[key]||[]; const label=(FI
 document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeOverlay(); });
 
 /* ===== Active situations (tiered: confirmed / reported / manual) ===== */
-const TIER_ORDER=["confirmed","reported","manual"];
+const TIER_ORDER=["confirmed","ma","reported","manual"];
 function tierMeta(t){
   if(t==="confirmed") return {label:"Confirmed", col:"var(--hot)", desc:"An activist filing is on record with the SEC (13D or contested proxy) — authoritative."};
+  if(t==="ma")        return {label:"M&A / control contest", col:"var(--accent)", desc:"A corporate bidder is running a takeover or proxy contest to acquire or control the company — an M&A fight, not a shareholder-activist campaign."};
   if(t==="reported")  return {label:"Reported",  col:"var(--warn)", desc:"Named in the press alongside a known activist — confirm before you rely on it."};
   return {label:"Manual", col:"var(--accent)", desc:"Tagged by your team."};
 }
@@ -372,7 +373,7 @@ async function loadActiveSituations(){
     const nav=document.getElementById("navActive"); if(nav) nav.textContent=ACTIVE.length?`(${ACTIVE.length})`:"";
     renderSummary();
     const el=document.getElementById("activeSit"); if(!el) return;
-    const groups={confirmed:[],reported:[],manual:[]};
+    const groups={confirmed:[],ma:[],reported:[],manual:[]};
     ACTIVE.forEach(c=>{ (groups[c.tier]||groups.manual).push(c); });
     Object.values(groups).forEach(g=>g.sort((a,b)=>
       (((b.meta&&b.meta.date)||"").localeCompare((a.meta&&a.meta.date)||"")) || ((b.vuln||0)-(a.vuln||0))));
