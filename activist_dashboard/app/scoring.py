@@ -1335,7 +1335,7 @@ def recompute_all():
         # shareholder-activist campaign — keep it off the "authoritative activist" header.
         # A SETTLED campaign (cooperation agreement) stands down into a muted "settled" tier.
         _is_ma = aflag is not None and (aflag.get("kind") == "ma")
-        _is_settled = aflag is not None and (aflag.get("kind") == "settled")
+        _is_settled = aflag is not None and (aflag.get("kind") in ("settled", "concluded"))
         _aflag_tier = ("settled" if _is_settled else "ma" if _is_ma
                        else ("reported" if _exempt else "confirmed"))
         # Decide whether this name is an ACTIVE SITUATION and at what confidence tier:
