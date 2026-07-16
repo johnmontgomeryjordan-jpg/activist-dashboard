@@ -346,12 +346,12 @@ function tierMeta(t){
   if(t==="confirmed") return {label:"Confirmed", col:"var(--hot)", desc:"An activist filing is on record with the SEC (13D or contested proxy) — authoritative."};
   if(t==="ma")        return {label:"M&A / control contest", col:"var(--accent)", desc:"A corporate bidder is running a takeover or proxy contest to acquire or control the company — an M&A fight, not a shareholder-activist campaign."};
   if(t==="reported")  return {label:"Reported",  col:"var(--warn)", desc:"Named in the press alongside a known activist — confirm before you rely on it."};
-  if(t==="settled")   return {label:"Recently settled", col:"var(--muted)", desc:"The activist and company signed a cooperation / settlement agreement — the campaign has stood down. Kept for context, not a live threat."};
+  if(t==="settled")   return {label:"Recently settled / concluded", col:"var(--muted)", desc:"The campaign has stood down — the company and activist signed a cooperation / settlement agreement, or the contested annual meeting has already been held. Kept for context, not a live threat."};
   return {label:"Manual", col:"var(--accent)", desc:"Tagged by your team."};
 }
 function daysSince(d){ if(!d) return null; const t=Date.parse(d); if(isNaN(t)) return null; return Math.floor((Date.now()-t)/86400000); }
 function freshBadge(m){ const ds=daysSince(m&&m.date);
-  if(m&&(m.kind==="settled"||m.kind==="ma")) return "";   // a settled/M&A situation is not an "urgent defense lead"
+  if(m&&(m.kind==="settled"||m.kind==="concluded"||m.kind==="ma")) return "";   // settled/concluded/M&A is not an "urgent defense lead"
   if(ds!=null && ds<=45 && (m.kind==="13d"||m.source==="SEC EDGAR")) return `<span class="as-fresh">⚡ fresh · ${ds}d — urgent defense lead</span>`;
   return ""; }
 function asRow(c){
