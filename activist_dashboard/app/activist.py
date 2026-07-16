@@ -199,8 +199,14 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
     hits = (j.get("hits", {}) or {}).get("hits", []) or []
     if not hits:
         return None
-    for best in hits:                      # newest-first when a ciks filter is used
-        src = best.get("_source", {})
+    # The newest valid hit drives date/form/url. But a company's OWN contested proxy carries no
+    # external filer in display_names, so on its own it reads "An activist". The dissident filed
+    # their own materials in a SEPARATE hit — so we scan ALL valid hits to RESOLVE the dissident's
+    # name (a known activist wins; else the first external filer seen) instead of giving up.
+    best_src = best_hit = None
+    resolved_who = None
+    for h in hits:                         # newest-first when a ciks filter is used
+        src = h.get("_source", {})
         ciks = src.get("ciks") or []
         if not ciks or ciks[0] != cik10:   # ciks[0] is the SUBJECT; if not us, we're the filer
             continue
@@ -208,31 +214,41 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
         filers = _filer_names(src, cik10)
         filer_known = any(activists.is_known_activist(f) for f in filers)
         # Filer gate: keep a noisy DFAN14A / PX14A6G only when a KNOWN activist filed it.
-        # Otherwise skip this hit and keep scanning (an older 13D by a real activist may
-        # still qualify the name).
         if _is_gated(form, src.get("root_forms")) and not filer_known:
             continue
-        kind, base = _kind_label(form)
-        who = filers[0] if filers else "An activist"
-        # Separate a corporate ACQUIRER's takeover/control contest from shareholder activism.
-        if _filer_type(who, filer_known) == "ma":
-            kind = "ma"
-            base = ("is running a takeover / control contest (M&A — a corporate bidder, "
-                    "not a shareholder activist)")
-        else:
-            # Stand down a SETTLED campaign: a cooperation/settlement 8-K filed after this filing
-            # means the activist agreed to a standstill -> show it in "Recently settled", not live.
-            settle = _settlement_after(cik10, src.get("file_date"))
-            if settle:
-                sdate, surl = settle
-                return {"kind": "settled", "form": form,
-                        "label": f"{who} — settled: cooperation agreement (filed {sdate})",
-                        "who": who, "filed": src.get("file_date"),
-                        "url": surl or _doc_url(best, cik10)}
-        label = f"{who} — {base}"
-        return {"kind": kind, "form": form, "label": label, "who": who,
-                "filed": src.get("file_date"), "url": _doc_url(best, cik10)}
-    return None                            # company only appears as a filer -> not a target
+        if best_src is None:               # newest valid hit -> drives date / form / url
+            best_src, best_hit = src, h
+        if filers:                         # resolve the dissident name across all valid hits
+            known = next((f for f in filers if activists.is_known_activist(f)), None)
+            if known:
+                resolved_who = known                       # a known activist wins outright
+            elif resolved_who is None:
+                resolved_who = filers[0]                   # else the first external filer we see
+    if best_src is None:
+        return None                        # company only appears as a filer -> not a target
+    src, form = best_src, (best_src.get("form") or (best_src.get("root_forms") or [""])[0])
+    own = _filer_names(src, cik10)
+    who = (own[0] if own else None) or resolved_who or "A dissident shareholder"
+    filer_known = activists.is_known_activist(who)
+    kind, base = _kind_label(form)
+    # Separate a corporate ACQUIRER's takeover/control contest from shareholder activism.
+    if _filer_type(who, filer_known) == "ma":
+        kind = "ma"
+        base = ("is running a takeover / control contest (M&A — a corporate bidder, "
+                "not a shareholder activist)")
+    else:
+        # Stand down a SETTLED campaign: a cooperation/settlement 8-K filed after this filing
+        # means the activist agreed to a standstill -> show it in "Recently settled", not live.
+        settle = _settlement_after(cik10, src.get("file_date"))
+        if settle:
+            sdate, surl = settle
+            return {"kind": "settled", "form": form,
+                    "label": f"{who} — settled: cooperation agreement (filed {sdate})",
+                    "who": who, "filed": src.get("file_date"),
+                    "url": surl or _doc_url(best_hit, cik10)}
+    label = f"{who} — {base}"
+    return {"kind": kind, "form": form, "label": label, "who": who,
+            "filed": src.get("file_date"), "url": _doc_url(best_hit, cik10)}
 
 
 def _sweep_one(cik, window_days, clear_missing):
