@@ -93,6 +93,37 @@ _MA_MARKERS = (
 )
 
 
+# A campaign that SETTLED (cooperation agreement / standstill) has stood down — the activist agreed
+# to support the board and stop agitating. We detect it from the company's OWN 8-K filed AFTER the
+# activist's filing that carries a cooperation / settlement agreement (Teradata↔Lynrock, Feb 2026).
+_SETTLE_PHRASES = ('"cooperation agreement"', '"settlement agreement"')
+
+
+def _settlement_after(cik10, after_date):
+    """Return (settle_date, url) of a cooperation/settlement 8-K the company filed AFTER
+    `after_date`, else None. Signals the activist campaign has stood down. (If the activist later
+    re-agitates, its newer filing post-dates the settlement, so latest_activist_filing won't mark
+    it settled — the date ordering handles re-engagement.)"""
+    if not after_date:
+        return None
+    from datetime import datetime, timedelta
+    try:                                    # start the day AFTER, so the filing itself never counts
+        start = (datetime.fromisoformat(str(after_date)).date() + timedelta(days=1)).isoformat()
+    except ValueError:
+        start = str(after_date)
+    end = datetime.utcnow().date().isoformat()
+    for q in _SETTLE_PHRASES:
+        j = _get({"q": q, "forms": "8-K", "ciks": cik10, "startdt": start, "enddt": end})
+        if not j:
+            continue
+        for h in (j.get("hits", {}) or {}).get("hits", []) or []:
+            src = h.get("_source", {}) or {}
+            ciks = src.get("ciks") or []
+            if ciks and ciks[0] == cik10:   # the company itself filed it (subject = filer)
+                return src.get("file_date"), _doc_url(h, cik10)
+    return None
+
+
 def _filer_type(name, known):
     """Return 'activist' (a fund / known activist) or 'ma' (a corporate acquirer running a
     takeover / control contest). Known activists and fund-named filers are always 'activist';
@@ -188,6 +219,16 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
             kind = "ma"
             base = ("is running a takeover / control contest (M&A — a corporate bidder, "
                     "not a shareholder activist)")
+        else:
+            # Stand down a SETTLED campaign: a cooperation/settlement 8-K filed after this filing
+            # means the activist agreed to a standstill -> show it in "Recently settled", not live.
+            settle = _settlement_after(cik10, src.get("file_date"))
+            if settle:
+                sdate, surl = settle
+                return {"kind": "settled", "form": form,
+                        "label": f"{who} — settled: cooperation agreement (filed {sdate})",
+                        "who": who, "filed": src.get("file_date"),
+                        "url": surl or _doc_url(best, cik10)}
         label = f"{who} — {base}"
         return {"kind": kind, "form": form, "label": label, "who": who,
                 "filed": src.get("file_date"), "url": _doc_url(best, cik10)}
