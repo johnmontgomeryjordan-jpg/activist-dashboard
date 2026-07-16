@@ -76,6 +76,37 @@ def _is_gated(form, root_forms):
     return any((str(x) or "").upper().replace(" ", "") in GATED_FORMS for x in cands if x)
 
 
+# A contested proxy can be filed by a shareholder ACTIVIST (a fund) or by a corporate ACQUIRER
+# running an M&A/control contest (UWM Holdings Corp bidding for Two Harbors; Paramount Skydance
+# Corp for Warner Bros. Discovery). The latter is a takeover fight, NOT shareholder activism, and
+# must not sit under a "an activist filing is on record" header. We tell them apart by the filer's
+# name: fund markers => activist; corporate/acquirer markers (and no fund marker) => M&A.
+_FUND_MARKERS = (
+    "capital", " management", " manage ", "partners", " fund", " funds", "advisor", "adviser",
+    "asset manage", " value ", " value,", "master fund", " lp", " l.p", "investment management",
+    "associates", " gp ", " holdings lp", "offshore", " ltd fund",
+)
+_MA_MARKERS = (
+    "corporation", " corp", " inc ", " inc,", " inc.", "incorporated", " plc", "bancorp",
+    "acquisition", "merger sub", " holdco", " bidco", " parent", " n.v", " s.a", " ag ",
+    " se ", " ltd", " limited", " company", " co.", " group ",
+)
+
+
+def _filer_type(name, known):
+    """Return 'activist' (a fund / known activist) or 'ma' (a corporate acquirer running a
+    takeover / control contest). Known activists and fund-named filers are always 'activist';
+    only a clearly corporate/acquirer filer with NO fund marker is treated as M&A."""
+    if known:
+        return "activist"
+    n = " " + (name or "").lower() + " "
+    if any(m in n for m in _FUND_MARKERS):
+        return "activist"
+    if any(m in n for m in _MA_MARKERS):
+        return "ma"
+    return "activist"          # unknown -> default to activist (never HIDE a possible real one)
+
+
 def _filer_names(src, subject_cik10):
     """Clean filer name(s) = the display_names that aren't the subject (index 0)."""
     dn = src.get("display_names") or []
@@ -152,6 +183,11 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
             continue
         kind, base = _kind_label(form)
         who = filers[0] if filers else "An activist"
+        # Separate a corporate ACQUIRER's takeover/control contest from shareholder activism.
+        if _filer_type(who, filer_known) == "ma":
+            kind = "ma"
+            base = ("is running a takeover / control contest (M&A — a corporate bidder, "
+                    "not a shareholder activist)")
         label = f"{who} — {base}"
         return {"kind": kind, "form": form, "label": label, "who": who,
                 "filed": src.get("file_date"), "url": _doc_url(best, cik10)}
