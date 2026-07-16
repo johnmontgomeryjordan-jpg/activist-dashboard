@@ -34,7 +34,7 @@ FORMS = {"8-K", "10-K", "10-Q"}
 # 2026-07-13: precise Item 5.02 — separate real departures from routine appointments so the
 #             standard term-of-office boilerplate ("...death, resignation or removal...") stops
 #             tagging appointments/annual-meeting 8-Ks as "Executive departure".
-CLASSIFIER_VERSION = "2026-07-13-item502-caption-strip-r3"
+CLASSIFIER_VERSION = "2026-07-15-item502-action-tied-officer-r6"
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
@@ -45,33 +45,41 @@ _TAG = re.compile(r"<[^>]+>")
 # catalysts activists key off (it forces board/audit-committee accountability).
 ITEM_DIRECT = {"2.06": "impairment", "2.05": "layoffs", "4.02": "restatement"}
 
-# Real-departure phrases. Deliberately EXCLUDES bare "resign"/"resignation"/"retire"/
-# "retirement"/"terminat"/"removal", which appear verbatim in the standard board-appointment
-# term-of-office boilerplate ("...to hold office until his earlier death, resignation or
-# removal...") and were tagging routine APPOINTMENTS as "Executive departure" (Amphastar,
-# Trade Desk) and annual-meeting/equity-plan 8-Ks too (INSP).
-DEPART_TERMS = [
-    "has resigned", "have resigned", "resigned as", "resigned from", "resigned effective",
-    "is resigning", "are resigning", "will resign", "tendered his resignation",
-    "tendered her resignation", "tendered their resignation", "step down", "stepping down",
-    "stepped down", "will step down", "to step down", "will retire", "to retire",
-    "intends to retire", "his retirement", "her retirement", "their retirement",
-    "retirement of", "departure of", "will depart", "departs", "no longer serve as",
-    "no longer be employed", "will leave the company", "to leave the company",
-    "terminated as", "termination of employment", "relieved of", "removed as",
-    "separation from the company", "ceases to serve", "mutual agreement to",
-]
-# New-director / new-officer appointment phrases. A 5.02 with an appointment but no departure
-# is a low-weight "leadership_change", NOT a departure. Routine annual RE-election language
-# ("were elected", "election of directors") is deliberately excluded so a 5.07 vote-results
-# 8-K doesn't read as a leadership event.
-APPOINT_TERMS = [
-    "appointed", "appointment of", "named to the board", "named as a director",
-    "joins the board", "joined the board", "increased the size of the board",
-    "increase the size of the board", "increased the number of directors",
-    "increase the number of directors", "newly created", "to fill the vacancy",
-    "appointed to serve", "to serve as a class",
-]
+# ---- Item 5.02 officer-change detection --------------------------------------------------------
+# The bar (per FGS): flag only C-SUITE + PRESIDENT + GENERAL COUNSEL changes — a company-level
+# officer, not a divisional EVP/SVP/VP, a board seat, or a committee assignment. And the title must
+# be tied to the actual ACTION ("appointed X AS Chief Financial Officer" / "CFO ... STEPPED DOWN"),
+# not merely present in the text. That distinction is what kills the false positives:
+#   * a director's résumé that mentions officer roles at OTHER companies (Shake Shack / Pendarvis);
+#   * employment-agreement severance boilerplate ("termination of employment", "for Cause") that
+#     rides along on a HIRING (Shake Shack / Hook);
+#   * a director resignation triggered by an ownership threshold (Concentrix);
+#   * annual-meeting equity-plan + director-election housekeeping (Teradata, INSP).
+# "vice president" is normalized out first so EVP/SVP/VP never satisfy the "president" alternative.
+_OFFICER = (
+    r"(?:chief\s+[a-z]+(?:\s+[a-z]+){0,2}\s+officer"          # chief [x][ y] officer
+    r"|chief\s+executive|chief\s+financial|chief\s+operating|chief\s+legal"
+    r"|principal\s+(?:executive|financial|accounting)\s+officer"
+    r"|general\s+counsel"
+    r"|president"                                             # VP variants stripped beforehand
+    r"|\bceo\b|\bcfo\b|\bcoo\b|\bcio\b|\bcto\b|\bclo\b|\bcao\b)"
+)
+_LINK = r"(?:\s+(?:the|its|a|an|our|new|interim|acting)\b)*\s+"   # optional articles between as/of & title
+# Appointment of an officer: an appoint/promote/hire verb whose assigned role is an officer title.
+_APPT_OFFICER = re.compile(
+    r"(?:appoint\w*|nam\w+|promot\w*|elevat\w*|hir\w*|elect\w*|assum\w*)\b[^.]{0,100}?"
+    r"\b(?:as|to\s+serve\s+as|to\s+be|role\s+of|position\s+of|office\s+of)\b" + _LINK + _OFFICER,
+    re.I)
+# Departure of an officer: "<officer> ... <leaves>" OR "<leaves> ... as <officer>".
+_DEP_A = (r"(?:resign\w*|step(?:s|ped|ping)?\s+(?:down|aside)|retir\w*|depart\w*|"
+          r"leav\w+\s+the\s+company|separat\w+\s+from\s+the\s+company|"
+          r"relieved\s+of|removed\s+as|no\s+longer\s+(?:serve|be\s+employed)|"
+          r"tender\w*\s+(?:his|her|their)\s+resignation)")
+_DEP_B = r"(?:resign\w*|step(?:s|ped|ping)?\s+down|retir\w*|depart\w*|terminat\w+|removed|relieved)"
+_DEP_OFFICER_A = re.compile(_OFFICER + r"[^.]{0,70}?\b" + _DEP_A, re.I)
+_DEP_OFFICER_B = re.compile(r"\b" + _DEP_B + r"\b[^.]{0,45}?\bas\b" + _LINK + _OFFICER, re.I)
+_VP_STRIP = re.compile(r"(?:executive\s+|senior\s+|sr\.?\s+|group\s+|first\s+|corporate\s+)?"
+                       r"vice[-\s]presidents?", re.I)
 MISS_TERMS = [
     "below expectations", "below consensus", "below estimates", "below the prior",
     "missed", "fell short", "falls short", "shortfall", "lowered guidance",
@@ -132,9 +140,13 @@ def classify(form, item_codes, text):
         tclean = re.sub(r"appointment of certain officers", " ", tclean)
         tclean = re.sub(r"compensatory arrangements of certain officers", " ", tclean)
         tclean = re.sub(r"death,?\s+resignation,?\s+or\s+removal", " ", tclean)
-        if any(d in tclean for d in DEPART_TERMS):
+        # Normalize VP variants out so EVP/SVP/VP never satisfy the "president" officer alternative.
+        tclean = _VP_STRIP.sub(" vp ", tclean)
+        # Flag only when a C-suite/President/GC title is tied to an actual departure or appointment
+        # ACTION. Departure outranks appointment (an outgoing + incoming CEO is a departure).
+        if _DEP_OFFICER_A.search(tclean) or _DEP_OFFICER_B.search(tclean):
             sigs.add("ceo_departure")
-        elif any(a in tclean for a in APPOINT_TERMS):
+        elif _APPT_OFFICER.search(tclean):
             sigs.add("leadership_change")
         # else: 5.02 with no actual departure or new appointment (equity-plan amendment,
         # bylaw/charter change, comp arrangement, annual-meeting housekeeping) → no signal.
