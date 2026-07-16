@@ -93,17 +93,21 @@ _MA_MARKERS = (
 )
 
 
-# A campaign that SETTLED (cooperation agreement / standstill) has stood down — the activist agreed
-# to support the board and stop agitating. We detect it from the company's OWN 8-K filed AFTER the
-# activist's filing that carries a cooperation / settlement agreement (Teradata↔Lynrock, Feb 2026).
+# A campaign STANDS DOWN two ways after the activist's filing, both detectable from the company's
+# OWN later 8-K:
+#   * SETTLED   -> a cooperation / settlement agreement (Teradata↔Lynrock, Feb 2026).
+#   * CONCLUDED -> the contested annual meeting was HELD (Item 5.07 "Submission of Matters to a Vote
+#                 of Security Holders"), so the proxy fight is decided — no longer "under way",
+#                 whether the dissident won, lost, or was ruled out (Eagle Bancorp).
+# If the activist re-agitates, its newer filing post-dates the 8-K, so the date ordering keeps it
+# live — a re-contest for the NEXT meeting won't be mistaken for the concluded one.
 _SETTLE_PHRASES = ('"cooperation agreement"', '"settlement agreement"')
+_MEETING_PHRASES = ('"submission of matters to a vote of security holders"',)
 
 
-def _settlement_after(cik10, after_date):
-    """Return (settle_date, url) of a cooperation/settlement 8-K the company filed AFTER
-    `after_date`, else None. Signals the activist campaign has stood down. (If the activist later
-    re-agitates, its newer filing post-dates the settlement, so latest_activist_filing won't mark
-    it settled — the date ordering handles re-engagement.)"""
+def _company_8k_after(cik10, after_date, phrases):
+    """(file_date, url) of the company's OWN 8-K filed AFTER `after_date` whose text matches any of
+    `phrases`, else None."""
     if not after_date:
         return None
     from datetime import datetime, timedelta
@@ -112,7 +116,7 @@ def _settlement_after(cik10, after_date):
     except ValueError:
         start = str(after_date)
     end = datetime.utcnow().date().isoformat()
-    for q in _SETTLE_PHRASES:
+    for q in phrases:
         j = _get({"q": q, "forms": "8-K", "ciks": cik10, "startdt": start, "enddt": end})
         if not j:
             continue
@@ -122,6 +126,14 @@ def _settlement_after(cik10, after_date):
             if ciks and ciks[0] == cik10:   # the company itself filed it (subject = filer)
                 return src.get("file_date"), _doc_url(h, cik10)
     return None
+
+
+def _settlement_after(cik10, after_date):
+    return _company_8k_after(cik10, after_date, _SETTLE_PHRASES)
+
+
+def _meeting_concluded_after(cik10, after_date):
+    return _company_8k_after(cik10, after_date, _MEETING_PHRASES)
 
 
 def _filer_type(name, known):
@@ -246,6 +258,16 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
                     "label": f"{who} — settled: cooperation agreement (filed {sdate})",
                     "who": who, "filed": src.get("file_date"),
                     "url": surl or _doc_url(best_hit, cik10)}
+        # Stand down a CONCLUDED proxy contest: the annual meeting has been held (Item 5.07 vote
+        # results filed after the contest), so it's no longer a fight "under way".
+        if kind == "proxy":
+            concl = _meeting_concluded_after(cik10, src.get("file_date"))
+            if concl:
+                cdate, curl = concl
+                return {"kind": "concluded", "form": form,
+                        "label": f"{who} — proxy contest concluded: annual meeting held ({cdate})",
+                        "who": who, "filed": src.get("file_date"),
+                        "url": curl or _doc_url(best_hit, cik10)}
     label = f"{who} — {base}"
     return {"kind": kind, "form": form, "label": label, "who": who,
             "filed": src.get("file_date"), "url": _doc_url(best_hit, cik10)}
