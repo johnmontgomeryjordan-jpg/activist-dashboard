@@ -1201,6 +1201,14 @@ def get_advisors(cik):
         return dict(r) if r else {}
 
 
+def clear_advisors():
+    """Wipe the advisors cache so every tracked name re-scans. Used on a scanner-version bump,
+    so a widened scanner (e.g. adding offering/prospectus filings) reaches names already cached
+    under the old, narrower logic instead of waiting out their 60-day freshness window."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM advisors")
+
+
 def upsert_prices(cik, series, last_close):
     with get_conn() as conn:
         conn.execute(
