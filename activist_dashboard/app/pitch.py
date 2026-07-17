@@ -195,12 +195,21 @@ def _derate_caveat(r, trig):
     trailing numbers don't show (the Intuit pattern), so the moat/thesis must be tested."""
     if "strategic_review" not in trig:
         return ""
+    raw = r.get("raw") or {}
+    ani = raw.get("annual_net_income")
     rg = r.get("revenue_growth")
     t1 = r.get("tsr_1y")
     if rg is not None and rg < 0:
         return ("One caveat to diligence first: the top line is shrinking alongside the stock, "
                 "so pressure-test whether this is a fixable de-rating or a structural decline "
                 "before pitching a sale.")
+    if ani is not None and ani < 0:
+        # Full-year GAAP loss (usually a big impairment/write-down): the fundamentals are impaired,
+        # not just the multiple — this is the case that must NOT read as a clean valuation gift.
+        return ("One caveat to diligence first: the company posted a full-year GAAP loss — often a "
+                "large impairment or write-down — so the fundamentals are impaired, not just the "
+                "multiple. Diligence what drove the loss before pitching this as a clean valuation "
+                "opportunity.")
     if t1 is not None and t1 <= -0.50:
         return ("One caveat to diligence first: a de-rating this sharp on a still-growing "
                 "business means the market is pricing a forward risk the trailing numbers "
