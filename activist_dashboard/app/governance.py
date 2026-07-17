@@ -32,6 +32,21 @@ _TAG = re.compile(r"<[^>]+>")
 CLASSIFIED = ["classified board", "staggered board", "divided into three classes",
               "three classes of directors", "elected for three-year terms",
               "board is divided into classes"]
+# A board being DECLASSIFIED — shareholders/board adopted a phased move to annual elections — is
+# still technically classified for a year or two, but it is NOT a durable entrenchment: the defense
+# is on a committed path to removal, so it must not read as a live "classified board" red flag
+# (INSP, AVAV: "phase out the classified board … annual election of ALL directors beginning 2029").
+# These phrases describe an ADOPTED phase-out (not a mere/failed proposal); they co-occur with
+# "classified board" in the same proxy, and _present() still applies the negation / What-We-Don't-Do
+# guards, so a "we do NOT provide for annual election" reads correctly as still-classified.
+DECLASSIFYING = ["phase out the classified", "phase out our classified",
+                 "phasing out the classified", "phase-out of the classified",
+                 "phase out of the classified", "phased declassification",
+                 "annual election of all directors", "annually elect all directors",
+                 "elect all directors annually", "declassify the board",
+                 "declassification of the board", "board will be declassified",
+                 "fully declassified", "eliminate the classified board",
+                 "eliminating the classified board"]
 POISON = ["poison pill", "shareholder rights plan", "stockholder rights plan",
           "preferred share purchase right", "preferred stock purchase right"]
 DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
@@ -47,7 +62,9 @@ DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
 # v5: parse the annual-meeting date from the proxy (timing catalyst) — re-parse to backfill it.
 # v6: also parse the advance-notice director-nomination window (min/max days) from the proxy.
 # v7: broaden the advance-notice parser (more section cues, "between X and Y days", known pairs).
-GOV_PARSER_VERSION = "7"
+# v8: suppress the classified-board flag when the board is being DECLASSIFIED / phased out to annual
+#     elections (INSP, AVAV) — a defense on a committed path to removal isn't a live entrenchment.
+GOV_PARSER_VERSION = "8"
 
 
 def _pad(cik):
@@ -243,8 +260,11 @@ def _present(text, phrases):
 
 def detect(text):
     t = text or ""
+    # A classified board that is being PHASED OUT (annual elections adopted) is not a live
+    # entrenchment — suppress the flag so it doesn't read as a durable defense (INSP, AVAV).
+    classified = _present(t, CLASSIFIED) and not _present(t, DECLASSIFYING)
     return {
-        "classified_board": _present(t, CLASSIFIED),
+        "classified_board": classified,
         "poison_pill": _present(t, POISON),
         "dual_class": _present(t, DUAL),
     }
