@@ -321,6 +321,9 @@ _NAME_STOP = _NAME_SUFFIX | {
     "next", "true", "core", "peak", "apex", "popular", "citizens", "peoples",
     "sovereign", "liberty", "freedom", "heritage", "pioneer", "frontier", "summit",
     "keystone", "cornerstone", "gateway", "horizon", "interstate", "regional",
+    # generic words that recur in activist/deal headlines -> a company key like "strategic" was
+    # matching "Strategic Review" and cross-tagging (Strategic Education <- a Compass Diversified item).
+    "strategic", "diversified", "consumer", "opportunity", "growth", "development", "value",
     # sector / industry words
     "financial", "finance", "capital", "bancorp", "bancshares", "bank", "banks",
     "banking", "energy", "power", "electric", "gas", "oil", "petroleum", "water",
@@ -382,14 +385,27 @@ def _activist_cue(headline):
             return "Proxy contest" if "proxy" in c or "nominee" in c or "dissident" in c \
                 or "nominate" in c else "Activist campaign"
     return None
+# Opinion / listicle / analyst headlines are commentary, not evidence of a real campaign — they
+# recur on any name "activists might target". Reject them from the Reported activist tier.
+_OPINION_RE = re.compile(
+    r"buy,?\s+sell,?\s+or\s+hold|\bis\b[^.]*\ba\s+buy\b|should you (?:buy|sell)|"
+    r"\ba look at\b|here'?s why|\b\d+\s+reasons\b|reasons to (?:buy|sell)|"
+    r"undervaluation|draws activist attention|draws activist interest|"
+    r"price target|analyst|upgrade|downgrade|\bwhy\b[^.]*\bis\b[^.]*\b(?:down|up|falling|rising|sinking|soaring)\b|"
+    r"time to buy|worth buying|stock (?:forecast|prediction|to buy|pick)|dividend",
+    re.I)
+
+
 def _activist_news_hit(ticker, name):
-    """Most recent news headline that names BOTH an activist and this company, or None."""
+    """Most recent news headline that names BOTH an activist and this company, or None. Opinion /
+    listicle / analyst pieces are excluded — they're commentary, not evidence of a live campaign."""
     _, keys = _company_keys(name)
     if not keys:
         return None
     for n in database.news_for_ticker_in_window(ticker, ACTIVIST_NEWS_WINDOW):
-        who = _activist_cue(n.get("headline"))
-        if who and _headline_about_company(n.get("headline"), keys):
+        hl = n.get("headline")
+        who = _activist_cue(hl)
+        if who and _headline_about_company(hl, keys) and not _OPINION_RE.search(hl or ""):
             return {"title": n["headline"], "url": n["url"], "who": who,
                     "date": (n.get("published_at") or "")[:10]}
     return None
