@@ -469,6 +469,19 @@ def _holder_material(h):
     return o >= config.OWNERSHIP_SOFT and w >= config.FUND_WEIGHT_CONV
 
 
+# Funds that are, for this activist-target screen, predominantly LONG-ONLY / concentrated holders
+# rather than agitators — a ≥5% stake by one of these is "smart-money long," not an activist threat,
+# so they're kept out of the activist-holder tiers. (Tunable; Soroban flagged in review.)
+_PASSIVE_13F_FUNDS = ("soroban",)
+# A stake this large is CONTROL, not activism (e.g. Icahn's ~71% of CVR Energy) — not a watch item.
+_CONTROL_OWNERSHIP = 0.50
+
+
+def _is_passive_13f(name):
+    n = (name or "").lower()
+    return any(p in n for p in _PASSIVE_13F_FUNDS)
+
+
 def accumulating():
     """The 'Accumulating' list: universe names where a known activist holds a MATERIAL stake
     (see _holder_material) but the name is NOT already an active situation (no 13D / contested
@@ -514,6 +527,11 @@ def accumulating():
         if tk in getattr(config, "MEGA_CAP_DENY", set()):
             continue                              # largest mega-caps: never a stealth accumulation
         material = [h for h in uniq if _holder_material(h)]
+        # Exclude CONTROL stakes (>=50% = control, not activism, e.g. Icahn/CVR) and predominantly
+        # PASSIVE funds (e.g. Soroban) — neither belongs in an "activist already a holder" tier.
+        material = [h for h in material
+                    if (h.get("ownership_pct") or 0) < _CONTROL_OWNERSHIP
+                    and not _is_passive_13f(h.get("fund"))]
         if not material:
             continue
         ci = comp.get(tk, {})
