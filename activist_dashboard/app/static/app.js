@@ -421,7 +421,9 @@ function fundLabel(f){
 
 /* ===== Disclosed holders (>=5%, 13D on file, no campaign in 18mo) — on Active Situations ===== */
 function disclosedRow(c){
-  const who=(c.holders||[]).map(h=>{
+  // This is the ≥5% tier, so only show holders that are THEMSELVES ≥5% (a sub-5% co-holder like a
+  // 2% stake doesn't belong under a "disclosed ≥5%" header).
+  const who=(c.holders||[]).filter(h=>(h.ownership_pct||0)>=0.05).map(h=>{
     const o=h.ownership_pct!=null?` <span class="ac-conv">${(h.ownership_pct*100).toFixed(1)}%</span>`:"";
     const url=h.fund_cik?`https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=${encodeURIComponent(h.fund_cik)}&type=13F-HR`:null;
     const nm=`<span class="ac-fund">${esc(fundLabel(h.fund))}</span>`;
@@ -431,7 +433,7 @@ function disclosedRow(c){
   const board=c.on_board?vulnChip(c.vuln):"";
   return `<div class="as-row" onclick="openCompany('${esc(c.cik)}')">
     <div><span class="co-link">${esc(c.company)}</span><div class="co-meta">${esc(c.ticker||"")}</div></div>
-    <div class="as-head">${who} <span class="ac-disc">13D on file</span>${q}</div>
+    <div class="as-head">${who} <span class="ac-disc" title="≥5% per the latest 13F — a Schedule 13D or 13G is on file (we haven't fetched which); this figure and link are the 13F">≥5% stake</span>${q}</div>
     <div>${board}</div>
     <div><button class="ghost as-mng" onclick="event.stopPropagation();openCompany('${esc(c.cik)}')">View</button></div>
   </div>`;
@@ -443,7 +445,7 @@ async function loadDisclosed(){
     if(!rows.length){ el.innerHTML=""; return; }
     rows.sort((a,b)=>((b.top_ownership||0)-(a.top_ownership||0)));
     const col="var(--accent)";
-    const desc="A known activist owns ≥5% (a Schedule 13D/13G is on file — already public), but no 13D/proxy in the last 18 months. A known holder to keep watch on, not a fresh accumulation.";
+    const desc="A known activist holds ≥5% per its latest 13F (so a Schedule 13D or 13G is on file — already public), but no NEW 13D / proxy in the last 18 months. A known holder to keep watch on, not a fresh accumulation. (Ownership is from the quarterly 13F, ~45-day lag.)";
     el.innerHTML=`<div class="as-section">
       <div class="as-section-h">
         <span class="as-tier-badge" style="background:color-mix(in srgb, ${col} 14%, transparent);color:${col};border-color:color-mix(in srgb, ${col} 45%, transparent)">Disclosed holder</span>
@@ -460,7 +462,7 @@ function accumFundRow(e){
   const stake=bits.length?`<span class="ac-conv">${bits.join(" · ")}</span>`:"";
   // A stake >=5% forced a Schedule 13D/13G filing, so it's already DISCLOSED — flag it so a
   // known public campaign (Elliott/Southwest) never reads as a stealth accumulation.
-  const disc=(e.own!=null && e.own>=0.05)?`<span class="ac-disc" title="≥5% stake — a Schedule 13D/13G is on file">13D on file</span>`:"";
+  const disc=(e.own!=null && e.own>=0.05)?`<span class="ac-disc" title="≥5% per 13F — a Schedule 13D or 13G is on file (already public)">≥5% stake</span>`:"";
   const q=e.quarter?`<span class="as-date">${esc(e.quarter)} 13F</span>`:"";
   const board=e.on_board?vulnChip(e.vuln):`<span class="ac-note">not yet on the board</span>`;
   return `<div class="as-row" onclick="openCompany('${esc(e.cik)}')">
