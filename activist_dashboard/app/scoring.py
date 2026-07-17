@@ -1067,8 +1067,12 @@ def _event_signals(cik, ticker, name):
         # per-ticker feed returns tangential roundups ("Toll Brothers upgraded, Lennar downgraded"
         # tagged to Ingredion). Reuse the same name-match the activist path uses.
         _, _keys = _company_keys(name)
+        # Also exclude analyst opinion / rating-change chatter (a downgrade, price target, "buy/sell/
+        # hold" piece) — those are commentary, not a company distress event, so they shouldn't read
+        # as a "negative press" catalyst (e.g. "Evercore downgrades INSP").
         neg = next((n for n in nws if _news.is_relevant(n.get("headline"))
-                    and _headline_about_company(n.get("headline"), _keys)), None)
+                    and _headline_about_company(n.get("headline"), _keys)
+                    and not _OPINION_RE.search(n.get("headline") or "")), None)
         if neg:
             triggered.add("news_negative")
             ev.setdefault("news_negative", {"title": neg["headline"], "url": neg["url"]})
