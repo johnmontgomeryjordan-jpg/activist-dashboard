@@ -857,6 +857,16 @@ def _forward_risk_derate(r):
     return (t1 is not None and t1 <= DERATE_EXTREME) and not _structural_decline(r)
 
 
+def _impaired_fundamentals(r):
+    """A de-rated name that posted a FULL-YEAR GAAP LOSS — usually a large goodwill impairment /
+    write-down (Concentrix: $1.5B Webhelp goodwill impairment, ~$1.3B FY net loss). Unlike a single
+    quarter dinged by a charge on top of a PROFITABLE year (which stays 'fallen-but-viable', e.g.
+    SMPL), a loss for the WHOLE year means the fundamentals are impaired — not merely the multiple —
+    so it is NOT a clean sale candidate. `annual_net_income` is the most-recent full-year net income."""
+    ani = (r.get("raw") or {}).get("annual_net_income")
+    return ani is not None and ani < 0
+
+
 def _strategic_evidence(key, r):
     ret = r.get("tsr_1y")
     val = _fmt_metric("tsr_1y", ret) if ret is not None else ""
@@ -869,6 +879,13 @@ def _strategic_evidence(key, r):
                f"contracting, not just the multiple. Treat as a possible structural decline / "
                f"falling knife, not a clean turnaround: diligence the revenue trajectory before "
                f"pitching a sale or strategic-review angle.")
+    elif _impaired_fundamentals(r):
+        lbl = "sharp de-rating — impaired fundamentals (full-year GAAP loss)"
+        ctx = (f"the stock is {drop}, but the company also posted a full-year GAAP loss (often a "
+               f"large impairment or write-down) — the fundamentals are impaired, not merely the "
+               f"multiple. This is NOT a clean fallen-but-viable sale candidate; diligence what "
+               f"drove the loss (the write-down and the acquisition or segment behind it) before "
+               f"pitching a valuation or strategic-review angle.")
     elif _forward_risk_derate(r):
         lbl = "sharp de-rating — sale candidate (thesis at risk)"
         ctx = (f"the stock is {drop} on a still-growing, still-viable business — the multiple "
