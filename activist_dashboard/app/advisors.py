@@ -154,18 +154,73 @@ def _wanted(form, codes):
     return form in _OFFERING_FORMS or form in _PROXY_FORMS
 
 
+def _filing_kind(form, codes):
+    """Classify the filing so we can tell a strategic-advisor context from a routine financing.
+    'offering'  = securities issuance / debt raise (underwriters, not M&A advisors):
+                  424B/S-1/FWP forms, or an 8-K carrying Item 2.03 (direct financial obligation).
+    'deal'      = an actual M&A / strategic event (8-K Item 2.01 completed acquisition, or a
+                  1.01/7.01/8.01 deal press release).
+    'proxy'     = a merger / contested proxy (financial advisor + counsel in the background)."""
+    codes = codes or ""
+    if form in _OFFERING_FORMS:
+        return "offering"
+    if form == "8-K":
+        if "2.03" in codes and "2.01" not in codes:
+            return "offering"          # a debt / securities raise -> the banks are underwriters
+        return "deal"
+    if form in _PROXY_FORMS:
+        return "proxy"
+    return "deal"
+
+
+def _finalize(contribs, cik10):
+    """Turn per-filing scan contributions into the advisor list. A BANK seen ONLY in
+    'offering' (underwriting) contexts is a bookrunner/underwriter on a securities or debt
+    raise — NOT a strategic/M&A advisor — so it is dropped (this is the ServiceNow bond-syndicate
+    case: 7 banks named on a debt 8-K were being presented as 'advisors'). Offering COUNSEL (law
+    firms) is kept — a company's outside counsel on its own offering is a genuine relationship.
+    Each kept advisor carries the strongest role it was seen in; the result records source_kind."""
+    kinds_by_name = {}
+    meta = {}
+    for c in contribs:
+        for h in c["hits"]:
+            kinds_by_name.setdefault(h["name"], set()).add(c["kind"])
+            meta.setdefault(h["name"], h)
+    kept = []
+    for name, kinds in kinds_by_name.items():
+        h = meta[name]
+        strategic = kinds - {"offering"}           # any deal/proxy context = a real advisor role
+        if h["type"] == "bank" and not strategic:
+            continue                               # underwriter-only bank -> not an advisor, drop
+        role = ("counsel" if h["type"] == "law"
+                else ("underwriter" if not strategic else "advisor"))
+        kept.append({"name": name, "type": h["type"], "role": role})
+    kept_names = {a["name"] for a in kept}
+    # Source = newest filing that named a KEPT advisor (so we don't cite the bond 8-K we just
+    # filtered out). contribs are already newest-first.
+    src_url = src_date = src_kind = None
+    for c in contribs:
+        if any(h["name"] in kept_names for h in c["hits"]):
+            src_url, src_date, src_kind = c["url"], c["filed"], c["kind"]
+            break
+    return {"advisors": sorted(kept, key=lambda x: (x["type"], x["name"])),
+            "source_url": src_url, "source_date": src_date, "source_kind": src_kind}
+
+
 def advisors_for_cik(cik, ticker="", company="", days=1095, max_docs=12):
     """Scan a tracked company's recent SEC filings for allowlisted advisors: deal 8-Ks (financial /
-    legal advisors), securities offerings (underwriters = banks, plus counsel), and merger proxies.
-    Returns {'advisors': [{'name','type'}...], 'source_url': str|None, 'source_date': str|None}."""
+    legal advisors) and merger proxies. Underwriters named only on a securities/debt offering are
+    classified as such and dropped (a bond syndicate is not a strategic advisor). Returns
+    {'advisors': [{'name','type','role'}...], 'source_url', 'source_date', 'source_kind'}."""
     cik10 = edgar.pad_cik(cik)
     r = edgar._get(edgar.SUBMISSIONS_URL.format(cik10=cik10))
+    empty = {"advisors": [], "source_url": None, "source_date": None, "source_kind": None}
     if not r:
-        return {"advisors": [], "source_url": None, "source_date": None}
+        return empty
     try:
         data = r.json()
     except ValueError:
-        return {"advisors": [], "source_url": None, "source_date": None}
+        return empty
     recent = data.get("filings", {}).get("recent", {})
     forms = recent.get("form", []) or []
     dates = recent.get("filingDate", []) or []
@@ -174,8 +229,7 @@ def advisors_for_cik(cik, ticker="", company="", days=1095, max_docs=12):
     items_l = recent.get("items", []) or []
     cutoff = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
 
-    found = {}
-    source_url = source_date = None
+    contribs = []          # newest-first, one entry per fetched filing that named an advisor
     scanned = 0
     for i, f in enumerate(forms):
         if scanned >= max_docs:
@@ -194,10 +248,8 @@ def advisors_for_cik(cik, ticker="", company="", days=1095, max_docs=12):
         text = edgar._doc_text(int(cik10), nod, doc)
         scanned += 1
         hits = scan(text)
-        for h in hits:
-            found.setdefault(h["name"], h)
-        if hits and source_url is None:          # remember the newest filing that named advisors
-            source_url = f"{edgar.ARCHIVE_BASE}/{int(cik10)}/{nod}/{doc}"
-            source_date = filed
-    return {"advisors": sorted(found.values(), key=lambda x: (x["type"], x["name"])),
-            "source_url": source_url, "source_date": source_date}
+        if hits:
+            contribs.append({"filed": filed, "kind": _filing_kind(f, codes),
+                             "url": f"{edgar.ARCHIVE_BASE}/{int(cik10)}/{nod}/{doc}",
+                             "hits": hits})
+    return _finalize(contribs, cik10)
