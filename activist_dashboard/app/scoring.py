@@ -1397,17 +1397,16 @@ def recompute_all():
                 is_active, tier = True, "reported"
             else:
                 is_active, tier = False, ""
-        # 13F activist-holder signal (early warning). A known activist already holds a MATERIAL
-        # stake but hasn't agitated (no 13D/proxy) -> the highest-conviction proactive setup:
-        # the smart money is in the stock, we bring the thesis. Suppressed once a name IS an
-        # active situation (aflag/news/manual) -- there the holding is redundant with the
-        # campaign. Adds points + an evidence card + a warm-intro pitch input.
-        if not is_active:
-            _mh = _material_holders(holders_by_ticker.get((r.get("ticker") or "").upper()))
-            if _mh:
-                r["_holders"] = _mh
-                trig.append("activist_holder")
-                total += STRUCT_POINTS["activist_holder"]
+        # 13F activist-holder signal REMOVED from the score (#156). A known activist already
+        # holding a stake is a lagging/coincident fact, not a forward "target" tell -- and,
+        # unfiltered, this trigger fired for control owners (Icahn/CVR), exited funds
+        # (Domino's/Ackman), settled campaigns (Teradata/Lynrock) and passive longs
+        # (Uber/Ackman). 13F holdings now live ONLY on the Accumulating tab
+        # (database.accumulating(), which applies the control/passive/settled filters); no 13F
+        # signal feeds the leaderboard, the evidence cards, the pitch, or the AI thesis. The
+        # helper fns (_material_holders / _holder_evidence) and the STRUCT_POINTS/LABELS entry
+        # are left in place, dead, so nothing else has to change -- they are simply never
+        # reached now that r["_holders"] is not set here.
         # Data-quality guard: a proactive lead with no market cap is data-incomplete
         # (its valuation signals can't be trusted and the card looks broken, e.g. IAC's
         # blank market cap). Drop it from the leads — but never drop an active situation.
