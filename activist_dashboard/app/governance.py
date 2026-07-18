@@ -46,11 +46,62 @@ DECLASSIFYING = ["phase out the classified", "phase out our classified",
                  "elect all directors annually", "declassify the board",
                  "declassification of the board", "board will be declassified",
                  "fully declassified", "eliminate the classified board",
-                 "eliminating the classified board"]
+                 "eliminating the classified board",
+                 # broadened (#116) — additional ADOPTED phase-out / all-directors-annual phrasings
+                 "all directors will be elected annually", "all directors to be elected annually",
+                 "all of our directors will be elected annually",
+                 "all of the directors will be elected annually",
+                 "entire board will be elected annually",
+                 "entire board of directors will be elected annually",
+                 "each director will be elected annually",
+                 "each of our directors will be elected annually",
+                 "directors will be elected to one-year terms",
+                 "elected to one-year terms", "elected annually to one-year terms",
+                 "no longer be classified", "no longer be divided into classes",
+                 "no longer be divided into three classes", "cease to be classified",
+                 "board will no longer be classified", "declassify our board",
+                 "declassifying our board", "declassify the board of directors",
+                 "phase out the classification", "phase-out of the classification"]
 POISON = ["poison pill", "shareholder rights plan", "stockholder rights plan",
-          "preferred share purchase right", "preferred stock purchase right"]
+          "stockholder protection rights", "shareholder protection rights"]
+# NOTE: the bare "preferred share/stock purchase right" phrases were REMOVED — they appear as
+# authorized-but-unadopted charter boilerplate (and in long-expired plans), which false-flagged
+# Chevron (its ChevronTexaco pill expired in 2003). An ACTIVE pill is described as a "rights
+# plan" / "poison pill", which the remaining phrases catch; _NEG still stands down redeemed /
+# terminated / "no rights plan" language.
 DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
-        "ten votes per share", "high-vote shares"]
+        "ten votes per share", "high-vote shares", "high vote shares"]
+# The most common super-voting structure isn't the phrase "super-voting" — it's a charter line
+# giving one class MANY votes per share ("each share of Class B common stock is entitled to 20
+# votes"). The phrase list missed all of those (Pinterest / Coinbase 20-vote, Block 10-vote), so
+# we ALSO scan for "<N> votes per share" / "<N> votes for each share" with N>=2 (see _supervoting).
+_VOTEWORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+              "eight": 8, "nine": 9, "ten": 10, "fifteen": 15, "twenty": 20,
+              "twenty-five": 25, "fifty": 50, "hundred": 100}
+_VOTES_PER = re.compile(
+    r"\b(?:(two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|twenty-five|fifty|hundred)"
+    r"|(\d{1,3}))\s*(?:\(\d{1,3}\)\s*)?votes?\s+(?:per\s+share|for\s+each\s+share|on\s+"
+    r"(?:each|all|any)\s+matter)")
+
+
+def _supervoting(text):
+    """True if the proxy gives some share class >1 votes per share (a super-voting / dual-class
+    structure). Excludes the ordinary 'one vote per share', cumulative-voting counts, and any
+    'no super-voting' / declassified-style absence advertised via the usual negation guards."""
+    for m in _VOTES_PER.finditer(text):
+        w, d = m.group(1), m.group(2)
+        n = _VOTEWORDS.get(w) if w else (int(d) if d and d.isdigit() else None)
+        if not n or n < 2:
+            continue
+        ctx = text[max(0, m.start() - 90):m.end() + 70]
+        if "cumulat" in ctx:                     # cumulative voting != super-voting (either side)
+            continue
+        if _NEG.search(text[max(0, m.start() - 120):m.start()]):
+            continue
+        if _in_dont_column(text, m.start()):
+            continue
+        return True
+    return False
 
 # Bump to force a one-time re-parse of every cached proxy (proxies are otherwise parsed once and
 # cached by accession, so a detector change wouldn't reach already-parsed names — e.g. Uber's
@@ -64,7 +115,11 @@ DUAL = ["super-voting", "supervoting", "multiple voting", "10 votes per share",
 # v7: broaden the advance-notice parser (more section cues, "between X and Y days", known pairs).
 # v8: suppress the classified-board flag when the board is being DECLASSIFIED / phased out to annual
 #     elections (INSP, AVAV) — a defense on a committed path to removal isn't a live entrenchment.
-GOV_PARSER_VERSION = "8"
+# v9: (a) votes-per-share super-voting detector (Class B = N votes) — fixes PINS/COIN/Block
+#     dual-class false negatives; (b) dropped expired/boilerplate "preferred purchase right" from
+#     the poison-pill list — fixes the Chevron false positive; (c) named-three-classes staggered
+#     cue (Block); (d) broadened declassification phrasings (#116 / Builders FirstSource).
+GOV_PARSER_VERSION = "9"
 
 
 def _pad(cik):
@@ -258,15 +313,23 @@ def _present(text, phrases):
     return False
 
 
+def _three_named_classes(text):
+    """A staggered board is often described only by its NAMED classes ('Class I Directors …
+    Class II Directors … Class III Directors') without the words 'classified'/'staggered' — the
+    phrase list missed those (Block). Require all three class-of-director labels to co-occur."""
+    return all(f"class {r} director" in text for r in ("i", "ii", "iii"))
+
+
 def detect(text):
     t = text or ""
     # A classified board that is being PHASED OUT (annual elections adopted) is not a live
-    # entrenchment — suppress the flag so it doesn't read as a durable defense (INSP, AVAV).
-    classified = _present(t, CLASSIFIED) and not _present(t, DECLASSIFYING)
+    # entrenchment — suppress the flag so it doesn't read as a durable defense (INSP, AVAV, BLDR).
+    classified_base = _present(t, CLASSIFIED) or _three_named_classes(t)
+    classified = classified_base and not _present(t, DECLASSIFYING)
     return {
         "classified_board": classified,
         "poison_pill": _present(t, POISON),
-        "dual_class": _present(t, DUAL),
+        "dual_class": _present(t, DUAL) or _supervoting(t),
     }
 
 
