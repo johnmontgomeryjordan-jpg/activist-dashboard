@@ -82,9 +82,28 @@ _STI = ["ShortTermInvestments"]
 # so a company filing its debt under "LongTermDebt" (BLDR — the $408.9M was just the current
 # portion) or a capital-lease tag was badly under-captured → a false "under-levered" signal AND an
 # understated EV/EBITDA. See _total_debt().
+# Funded-debt tags, grouped so _total_debt can prefer a single TOTAL, then a noncurrent TOTAL,
+# and finally SUM the instrument-level component tags (senior notes / convertible notes / notes
+# payable) — which is how issuers like ServiceNow report their debt ("Long-term debt, net" tagged
+# ConvertibleDebtNoncurrent / SeniorNotesNoncurrent) rather than under LongTermDebt(Noncurrent).
+# Missing those component tags left ServiceNow reading ~$0 funded debt -> a FALSE "under-levered
+# opportunity" (#3). Parts are summed only when no total/noncurrent-total tag reports at the same
+# date, so a company that files a proper total is never double-counted.
 _DEBT_TOTAL = ["LongTermDebt", "DebtLongtermAndShorttermCombinedAmount"]
-_DEBT_NONCUR = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"]
-_DEBT_CUR = ["LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent", "DebtCurrent"]
+_DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"]
+_DEBT_NC_PARTS = ["SeniorNotesNoncurrent", "ConvertibleDebtNoncurrent",
+                  "ConvertibleNotesPayableNoncurrent", "ConvertibleLongTermNotesPayable",
+                  "UnsecuredDebtNoncurrent", "SecuredDebtNoncurrent", "SecuredLongTermDebt",
+                  "NotesPayableNoncurrent", "LongTermNotesPayable", "LongTermLoansPayable",
+                  "OtherLongTermDebtNoncurrent", "MediumTermNotesNoncurrent"]
+_DEBT_CUR_TOTAL = ["LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent",
+                   "DebtCurrent"]
+_DEBT_CUR_PARTS = ["SeniorNotesCurrent", "ConvertibleDebtCurrent",
+                   "ConvertibleNotesPayableCurrent", "NotesPayableCurrent",
+                   "SecuredDebtCurrent", "ShortTermBorrowings"]
+# Back-compat aliases (some code/tests reference the old flat names).
+_DEBT_NONCUR = _DEBT_NC_TOTAL + _DEBT_NC_PARTS
+_DEBT_CUR = _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS
 _SHARES = ["EntityCommonStockSharesOutstanding"]
 _DEP = ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet",
         "DepreciationAndAmortization"]                       # cash-flow D&A -> EBITDA
@@ -197,7 +216,8 @@ def _total_debt(facts):
     debt ONLY from tags reporting at that date — a single total tag if present, else noncurrent +
     current components. Fixes the under-capture behind false 'under-levered' signals + understated EV."""
     dated = {}                                   # tag -> (end_date, value)
-    for t in _DEBT_TOTAL + _DEBT_NONCUR + _DEBT_CUR:
+    for t in (_DEBT_TOTAL + _DEBT_NC_TOTAL + _DEBT_NC_PARTS
+              + _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS):
         ed, v = _instant_dated(facts, t)
         if ed is not None and v is not None:
             dated[t] = (ed, v)
@@ -211,11 +231,23 @@ def _total_debt(facts):
                 return dated[t][1]
         return None
 
+    def sum_at_latest(tags):                     # sum of ALL component tags reporting at `latest`
+        vals = [dated[t][1] for t in tags if t in dated and dated[t][0] == latest]
+        return sum(vals) if vals else None
+
+    # A single all-in total tag (per US-GAAP LongTermDebt already includes current maturities).
     total = at_latest(_DEBT_TOTAL)
     if total is not None:
         return total
-    nc = at_latest(_DEBT_NONCUR)
-    cur = at_latest(_DEBT_CUR)
+    # Else build from noncurrent + current. Prefer a TOTAL tag on each side; only if none reports
+    # at the latest date do we SUM the instrument-level parts (so a proper total is never
+    # double-counted with its own components).
+    nc = at_latest(_DEBT_NC_TOTAL)
+    if nc is None:
+        nc = sum_at_latest(_DEBT_NC_PARTS)
+    cur = at_latest(_DEBT_CUR_TOTAL)
+    if cur is None:
+        cur = sum_at_latest(_DEBT_CUR_PARTS)
     if nc is None and cur is None:
         # nothing from our known tags at the latest date — use the most recent value we do have
         return max(dated.values(), key=lambda ev: ev[0])[1]
