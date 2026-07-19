@@ -81,7 +81,7 @@ _VOTEWORDS = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
 _VOTES_PER = re.compile(
     r"\b(?:(two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|twenty-five|fifty|hundred)"
     r"|(\d{1,3}))\s*(?:\(\d{1,3}\)\s*)?votes?\s+(?:per\s+share|for\s+each\s+share|on\s+"
-    r"(?:each|all|any)\s+matter)")
+    r"(?:each|all|any)\s+(?:matter|proposal))")
 
 
 def _supervoting(text):
@@ -119,7 +119,9 @@ def _supervoting(text):
 #     dual-class false negatives; (b) dropped expired/boilerplate "preferred purchase right" from
 #     the poison-pill list — fixes the Chevron false positive; (c) named-three-classes staggered
 #     cue (Block); (d) broadened declassification phrasings (#116 / Builders FirstSource).
-GOV_PARSER_VERSION = "9"
+# v10: votes-per-share detector also accepts "N votes on each PROPOSAL" (not just "matter") —
+#      catches Block's Class B ("10 votes on each proposal") that v9 missed.
+GOV_PARSER_VERSION = "10"
 
 
 def _pad(cik):
