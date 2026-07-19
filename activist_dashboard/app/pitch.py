@@ -95,7 +95,7 @@ def _catalyst_sentence(trig):
     if "exec_reaction_drop" in trig:
         return "The stock sold off on a recent leadership-change filing — the market has already lost confidence."
     if "ceo_departure" in trig:
-        return "A recent C-suite departure adds a leadership vacuum to exploit."
+        return "A recent C-suite departure — a leadership transition worth engaging on."
     if "weak_vote_support" in trig:
         return "Shareholders are already revolting on executive pay."
     if "overpaid_ceo" in trig:
@@ -246,11 +246,11 @@ def _thesis(r, trig):
             if d:
                 tail = f", down {d} over the past year"
         s1 = f"{name} {pbtxt}{tail}{gov}."
-        s2 = ("A cheap, underperforming asset — fertile ground for a value or "
+        s2 = ("A cheap asset relative to its peers — fertile ground for a value or "
               "break-up campaign.")
     elif arch == "governance":
         s1 = f"{name} {perf}, but its board is insulated by {_gov_list(trig)}."
-        s2 = ("An entrenched underperformer — a board-refresh or governance campaign "
+        s2 = ("An entrenched, unaccountable board — a board-refresh or governance campaign "
               "waits to be made.")
     else:
         s1 = f"{name} {perf}, screening in the worst quartile of its sector on several measures."
@@ -330,7 +330,7 @@ def _point(key, r):
     if key == "gov_dual":
         return "Super-voting insider stock concentrates control — a governance flashpoint."
     if key == "ceo_departure":
-        return "A recent C-suite departure leaves a leadership gap to exploit."
+        return "A recent C-suite departure — a leadership transition to watch."
     if key == "insider_selling":
         return "A cluster of insider selling — management is voting with its feet."
     if key == "weak_vote_support":
