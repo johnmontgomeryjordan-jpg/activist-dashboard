@@ -1061,11 +1061,10 @@ function renderTab(){
       : `<div class="gov-note">No open-market insider trades on record in the recent window.</div>`;
     const insiderEv=(d.evidence||[]).filter(e=>e.key==="insider_selling"||e.key==="insider_buying");
     const se=d.sentiment||{}; let sentHtml="";
-    if(se.mspr!=null){
-      const skew=se.mspr<=-20?"selling-skewed":se.mspr>=20?"buying-skewed":"balanced";
-      const col=se.mspr<=-20?"var(--hot)":se.mspr>=20?"var(--ok)":"var(--muted)";
-      sentHtml=`<div class="mh3">Insider sentiment</div><div class="verdict" style="font-size:13.5px;">MSPR <b style="color:${col}">${se.mspr.toFixed(0)}</b> · ${skew}${se.month?` <span class="gov-note">(${esc(se.month)})</span>`:""} <span class="gov-note">— Finnhub monthly insider buy/sell skew, −100…+100</span></div>`;
-    }
+    // MSPR (Finnhub monthly buy/sell skew) suppressed (#2): it repeatedly contradicted our own
+    // Form-4 flow on the same profile — showing "+100 buying-skewed" for ServiceNow while insiders
+    // sold $24M, and "-20 balanced" for Intuit amid $359M of net selling. We rely on the netted
+    // Form-4 aggregate above instead; leaving MSPR off rather than print a conflicting readout.
     const ct=d.contacts||{};
     const addr=[ct.address,[ct.city,ct.state].filter(Boolean).join(", "),ct.zip].filter(Boolean).join(" · ");
     const hasContacts=ct.ceo||ct.phone||addr||ct.website||ct.employees;
