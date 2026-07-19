@@ -1020,6 +1020,17 @@ def refresh_activist(full=False):
     # tracked-only sweep just adds/refreshes, so it can never erase a Confirmed situation
     # that lives outside the small tracked subset.
     n = activist.refresh_activist(ciks, clear_missing=full)
+    # Resolution sweep: disclosed-holder (13F) names that are actually being ACQUIRED or have SETTLED
+    # should leave the passive tier -> flag them so the rescore marks them active_situation and
+    # accumulating() drops them (Masimo/Danaher -> M&A pending acquisition; Teradata/Lynrock -> settled).
+    try:
+        disclosed = [(r["cik"], (r.get("holders") or [{}])[0].get("fund"))
+                     for r in database.accumulating()
+                     if r.get("disclosed") and r.get("cik")]
+        if disclosed:
+            activist.sweep_resolved(disclosed)
+    except Exception:
+        traceback.print_exc()
     try:
         scoring.recompute_all()
     except Exception:
