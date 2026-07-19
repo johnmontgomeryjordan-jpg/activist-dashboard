@@ -373,3 +373,46 @@ def refresh_activist(ciks, window_days=WINDOW_DAYS, clear_missing=True):
     print(f"[activist] swept {len(ciks)} names ({scope}); "
           f"{flagged} have an active activist filing{tail}")
     return flagged
+
+
+def sweep_resolved(pairs):
+    """`pairs`: [(cik, activist_name)] for DISCLOSED-HOLDER (13F) names. Flag any that have actually
+    RESOLVED so they leave the passive 'disclosed holder' tier: being ACQUIRED (a definitive merger
+    proxy on file -> M&A / pending acquisition, e.g. Masimo/Danaher), or the activist has SETTLED (a
+    cooperation-agreement 8-K in the window -> Recently settled, e.g. Teradata/Lynrock). The daily
+    rescore then marks these active_situation, so database.accumulating() drops them. Idempotent."""
+    from datetime import datetime, timedelta
+    win_start = (datetime.utcnow() - timedelta(days=WINDOW_DAYS)).date().isoformat()
+    n = 0
+    for cik, who in pairs:
+        cik10 = _pad(cik)
+        try:
+            acq = _acquired(cik10)
+        except Exception:
+            acq = None
+        if acq:
+            adate, aurl = acq
+            database.set_activist_flag(
+                cik, "ma", "DEFM14A",
+                ("Pending acquisition — a definitive merger proxy is on file "
+                 f"(filed {adate}); being taken out, not a shareholder-activist campaign"),
+                adate, aurl)
+            n += 1
+            time.sleep(0.2)
+            continue
+        try:
+            settle = _company_8k_after(cik10, win_start, _SETTLE_PHRASES)
+        except Exception:
+            settle = None
+        if settle:
+            sdate, surl = settle
+            nm = who or "A disclosed activist holder"
+            database.set_activist_flag(
+                cik, "settled", "8-K",
+                f"{nm} — settled: cooperation agreement (filed {sdate})",
+                sdate, surl)
+            n += 1
+        time.sleep(0.2)
+    if n:
+        print(f"[activist] resolution sweep flagged {n} disclosed-holder names (acquired / settled)")
+    return n
