@@ -213,6 +213,14 @@ EXCLUDE_PATTERNS = [
     "rally signals", "outperformance points", "big tech resurgence", "options opportunities",
     "options trade", " ndx ", "nasdaq 100", "dow jones", "premarket", "pre-market",
     "sector etf", "market rally", "stock market today",
+    # additional opinion / listicle / earnings-preview genres seen leaking into the broad feed
+    "buy, sell or hold", "buy, sell, or hold", "buy sell or hold", "sell or hold",
+    "hold the stock", "favorite stocks", "wall street's favorite", "wall streets favorite",
+    "most active stocks", "trending stock", "stocks that fall short", "falls short",
+    "beat estimates", "beat earnings", "top-ranked", "top ranked", "reasons to buy",
+    "reasons to sell", "3 reasons", "5 reasons", "curious about", "bargain",
+    "is it a buy", "cheap after", "fairly valued", "attractive risk-reward",
+    "here's what you need", "what you should know", "what you need to know",
 ]
 
 # Opinion / academic / legal-aggregator / hyper-local-news domains -- drop regardless of
@@ -509,17 +517,108 @@ def refresh_company_news(tickers, key, days=COMPANY_NEWS_DAYS, per_symbol=COMPAN
     return kept
 
 
+# Loose ticker/first-word matching cross-tagged the wrong company on the broad feed (M7): a
+# Gilead story -> PFE, chip stories -> INTC, "general" -> General Mills, or the 3-letter ticker
+# "ALL" matching the word "all". We now require a DISTINCTIVE token match with word boundaries
+# (the full multi-word name core, or a distinctive >=6-char name word that isn't a generic /
+# sector stopword), and only accept a raw ticker in an unambiguous context ($PFE, "(NYSE: PFE)",
+# or a >=4-char standalone ticker). Precision over recall — the broad feed is reference material.
+_TICK_SUFFIX = {"inc", "incorporated", "corp", "corporation", "co", "company", "companies",
+                "holdings", "holding", "group", "plc", "ltd", "limited", "lp", "llc", "sa",
+                "ag", "nv", "class", "the"}
+_TICK_STOP = _TICK_SUFFIX | {
+    "and", "for", "of", "north", "northern", "south", "southern", "east", "west", "western",
+    "eastern", "central", "pacific", "atlantic", "american", "america", "national",
+    "international", "global", "united", "states", "general", "standard", "premier", "allied",
+    "consolidated", "advanced", "dynamic", "prime", "select", "public", "federal", "mutual",
+    "community", "first", "new", "next", "true", "core", "liberty", "freedom", "heritage",
+    "pioneer", "frontier", "summit", "gateway", "horizon", "regional", "strategic",
+    "diversified", "consumer", "opportunity", "growth", "development", "value",
+    "financial", "finance", "capital", "bancorp", "bancshares", "bank", "banking", "energy",
+    "power", "electric", "gas", "oil", "petroleum", "water", "utilities", "utility", "health",
+    "healthcare", "medical", "pharma", "pharmaceutical", "pharmaceuticals", "therapeutics",
+    "technology", "technologies", "digital", "data", "cloud", "cyber", "software", "systems",
+    "networks", "network", "communications", "telecom", "media", "entertainment", "properties",
+    "property", "realty", "estate", "homes", "residential", "hotels", "resorts", "retail",
+    "stores", "foods", "food", "beverage", "brands", "products", "goods", "materials",
+    "chemical", "chemicals", "steel", "metals", "mining", "minerals", "motors", "auto",
+    "automotive", "airlines", "airways", "transport", "transportation", "logistics", "express",
+    "freight", "shipping", "marine", "defense", "aerospace", "industrial", "industries",
+    "manufacturing", "services", "service", "solutions", "partners", "resources", "enterprises",
+    "ventures", "insurance", "securities", "investments", "investment", "management", "trust"}
+_KEY_CACHE = {}
+
+
+def _company_keys(name):
+    """(core_phrase, {distinctive keys}) for a company name — the full multi-word core plus any
+    distinctive (>=6-char, non-stopword) single token. Empty when nothing distinctive remains."""
+    toks = re.findall(r"[a-z0-9&]+", (name or "").lower())
+    while toks and toks[-1] in _TICK_SUFFIX:
+        toks.pop()
+    if not toks:
+        return "", set()
+    keys = set()
+    core = " ".join(toks)
+    if len(toks) >= 2:
+        keys.add(core)
+    for t in toks:
+        if t in _TICK_STOP:
+            continue
+        if len(t) >= 6 or (len(toks) == 1 and len(t) >= 4):
+            keys.add(t)
+    return core, keys
+
+
+def _keys_for(c):
+    tk = c.get("ticker") or ""
+    cached = _KEY_CACHE.get(tk)
+    if cached is None:
+        cached = _company_keys(c.get("name") or "")
+        _KEY_CACHE[tk] = cached
+    return cached
+
+
+def _ticker_hit(norm_head, raw_head, tk):
+    """True only when the ticker appears unambiguously: a cashtag ($PFE), exchange-prefixed
+    ('(NYSE: PFE)', 'NASDAQ: PFE'), or a >=4-char ticker as a standalone word. Short 3-letter
+    tickers as bare words (ALL, GIS, HOG) are NOT accepted — too many English collisions."""
+    t = tk.lower()
+    if not t:
+        return False
+    low = raw_head.lower()
+    if re.search(r"\$" + re.escape(t) + r"\b", low):
+        return True
+    if re.search(r"(?:nasdaq|nyse|nyse american|amex|otc|cboe|bats)\s*:?\s*" + re.escape(t) + r"\b", low):
+        return True
+    if re.search(r"\(\s*(?:[a-z\. ]{0,10}:\s*)?" + re.escape(t) + r"\s*\)", low):
+        return True
+    if len(t) >= 4 and re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", norm_head):
+        return True
+    return False
+
+
 def _match_tickers(headline, companies):
-    text = headline.lower()
+    raw = headline or ""
+    norm = " " + re.sub(r"[^a-z0-9&]+", " ", raw.lower()) + " "
     matched = []
     for c in companies:
-        name = (c.get("name") or "").lower()
-        short = name.split()[0] if name else ""
-        ticker = (c.get("ticker") or "").lower()
-        if short and len(short) > 3 and short in text:
-            matched.append(c["ticker"])
-        elif ticker and f" {ticker} " in f" {text} ":
-            matched.append(c["ticker"])
+        tk = c.get("ticker")
+        if not tk:
+            continue
+        _core, keys = _keys_for(c)
+        hit = False
+        for k in keys:
+            if " " in k:                       # multi-word core: plain substring is safe
+                if k in norm:
+                    hit = True
+                    break
+            elif re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", norm):
+                hit = True
+                break
+        if not hit and _ticker_hit(norm, raw, tk):
+            hit = True
+        if hit:
+            matched.append(tk)
     return matched
 
 
