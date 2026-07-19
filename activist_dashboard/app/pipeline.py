@@ -1266,7 +1266,7 @@ ADVISORS_MAX_AGE_DAYS = 60
 ADVISORS_PER_RUN = 25
 # Bump when the scanner's coverage changes so cached rows written under the old logic get wiped and
 # re-scanned, instead of waiting out their 60-day freshness. (r1 = added offering/prospectus + proxy.)
-ADVISORS_VERSION = "2026-07-15-offerings-r1"
+ADVISORS_VERSION = "2026-07-18-underwriter-syndicate-r2"  # bumped: drop offering-only bank syndicates (#7)
 
 
 def refresh_advisors():
