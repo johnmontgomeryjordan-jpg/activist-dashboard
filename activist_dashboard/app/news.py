@@ -221,6 +221,9 @@ EXCLUDE_PATTERNS = [
     "reasons to sell", "3 reasons", "5 reasons", "curious about", "bargain",
     "is it a buy", "cheap after", "fairly valued", "attractive risk-reward",
     "here's what you need", "what you should know", "what you need to know",
+    "buy the dip", "run for the hills", "belongs on your shortlist", "on your shortlist",
+    "fairly priced", "looks fairly", "exit now", "back in growth mode", "still smack",
+    "contrarian opportunity", "before q2 earnings", "ahead of q2", "swing ahead",
 ]
 
 # Opinion / academic / legal-aggregator / hyper-local-news domains -- drop regardless of
