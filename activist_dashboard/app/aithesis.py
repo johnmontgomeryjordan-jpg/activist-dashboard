@@ -22,7 +22,7 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 # Bump when _SYSTEM / _prompt changes so cached re-voicings are invalidated and every name
 # re-voices under the new rules (the hash keys on draft content, not the prompt, so without
 # this a prompt change would only reach names whose facts also happened to change).
-_PROMPT_VERSION = 2
+_PROMPT_VERSION = 3
 
 _SYSTEM = (
     "You are a senior analyst at a shareholder-activism DEFENSE advisory firm. You turn an "
@@ -37,6 +37,15 @@ _SYSTEM = (
     "a 'peer cutoff' or 'bottom-quartile' threshold is NOT a 'median' or 'average'; keep terms "
     "like 'operating margin', 'return on assets', 'debt-to-assets' verbatim. If unsure what a "
     "figure is, use the draft's own wording rather than substituting a different term.\n"
+    "- Do NOT characterize the company or its STOCK as 'underperforming', 'lagging', "
+    "'declining', 'falling', or 'struggling' unless the draft EXPLICITLY contains a negative "
+    "stock-return or return-versus-index fact. A cheap valuation, weak revenue growth, a "
+    "goodwill mark, or a governance flag is NOT stock underperformance — a company can be cheap "
+    "or slow-growing while its stock has RISEN sharply. If the draft has no return-lag fact, do "
+    "not comment on stock or share-price performance at all.\n"
+    "- Describe an executive or leadership departure neutrally (e.g. 'a recent leadership "
+    "change' or 'a recent C-suite transition'); never call it a 'vacuum', a 'void', or "
+    "something to 'exploit'.\n"
     "- Be concrete and tight. Plain professional English.\n"
     "- Return STRICT JSON only, no preamble, no code fences."
 )
