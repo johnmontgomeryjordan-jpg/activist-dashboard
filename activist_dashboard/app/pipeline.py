@@ -102,6 +102,11 @@ _DEBT_CUR_PARTS = ["SeniorNotesCurrent", "ConvertibleDebtCurrent",
                    "ConvertibleNotesPayableCurrent", "NotesPayableCurrent",
                    "SecuredDebtCurrent", "ShortTermBorrowings"]
 # Back-compat aliases (some code/tests reference the old flat names).
+# If the newest funded-debt tag a company still files predates its current balance sheet by more
+# than this, the issuer STOPPED reporting funded debt -> it has been repaid or converted, and the
+# frozen figure must NOT be shown as current (ServiceNow abandoned LongTermDebtNoncurrent after its
+# 2018 converts settled in 2022; the stale 2021 $1.48B was surfacing mislabeled as Mar-2026 debt).
+_DEBT_STALE_DAYS = 550
 _DEBT_NONCUR = _DEBT_NC_TOTAL + _DEBT_NC_PARTS
 _DEBT_CUR = _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS
 _SHARES = ["EntityCommonStockSharesOutstanding"]
@@ -224,6 +229,17 @@ def _total_debt(facts):
     if not dated:
         return None
     latest = max(ed for ed, _v in dated.values())
+    # Staleness guard: anchor to the company's CURRENT balance sheet (the Assets date). If the
+    # newest debt tag is far older than that, the debt is gone (tag abandoned) -> report none.
+    _bs_ed, _bs_v = _instant_dated(facts, _ASSETS[0])
+    if _bs_ed:
+        try:
+            _gap = (datetime.strptime(_bs_ed[:10], "%Y-%m-%d")
+                    - datetime.strptime(str(latest)[:10], "%Y-%m-%d")).days
+        except (ValueError, TypeError):
+            _gap = 0
+        if _gap > _DEBT_STALE_DAYS:
+            return 0.0
 
     def at_latest(tags):                         # first tag (in preference order) reporting at `latest`
         for t in tags:
