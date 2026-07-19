@@ -31,7 +31,10 @@ from . import config, database
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
-WINDOW_DAYS = 120          # trailing window for the insider aggregate
+WINDOW_DAYS = 365          # trailing window for the insider aggregate. Widened 120 -> 365
+# (#2): a 120-day net was a window artifact — Intuit showed 'insiders buying / aligned' from a
+# single director buy while insiders had SOLD ~$359M over the trailing year, and ServiceNow's
+# short-window read contradicted 40 sells vs 1 buy. Netting over 12 months reflects reality.
 _session = requests.Session()
 _session.headers.update(HEADERS)
 
