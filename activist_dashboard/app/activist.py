@@ -136,6 +136,33 @@ def _meeting_concluded_after(cik10, after_date):
     return _company_8k_after(cik10, after_date, _MEETING_PHRASES)
 
 
+# A pending FRIENDLY acquisition takes the company out of play: once it has filed a definitive /
+# preliminary MERGER proxy (DEFM14A / PREM14A) it is being TAKEN OUT by a buyer, so it is no longer
+# a shareholder-activist target — even if an activist settled or agitated earlier. The buyer, not
+# the activist, now controls the outcome (Masimo/Danaher, Kenvue/Kimberly-Clark). We route these to
+# the M&A tier and out of the settled / disclosed-holder framing. (DEFM14A only exists for a merger
+# where THIS company is the target, so it is high-precision — a contested DEFC14A is NOT included.)
+_ACQ_FORMS = "DEFM14A,PREM14A"
+
+
+def _acquired(cik10):
+    """(file_date, url) if the company has a recent merger proxy on file (it is being acquired),
+    else None. High precision: a DEFM14A/PREM14A is filed only when the company is the merger
+    target."""
+    from datetime import datetime, timedelta
+    start = (datetime.utcnow() - timedelta(days=WINDOW_DAYS)).date().isoformat()
+    end = datetime.utcnow().date().isoformat()
+    j = _get({"q": "", "forms": _ACQ_FORMS, "ciks": cik10, "startdt": start, "enddt": end})
+    if not j:
+        return None
+    for h in (j.get("hits", {}) or {}).get("hits", []) or []:
+        src = h.get("_source", {}) or {}
+        ciks = src.get("ciks") or []
+        if ciks and ciks[0] == cik10:      # subject = the company itself -> it is being acquired
+            return src.get("file_date"), _doc_url(h, cik10)
+    return None
+
+
 def _filer_type(name, known):
     """Return 'activist' (a fund / known activist) or 'ma' (a corporate acquirer running a
     takeover / control contest). Known activists and fund-named filers are always 'activist';
@@ -249,6 +276,16 @@ def latest_activist_filing(cik, window_days=WINDOW_DAYS):
         base = ("is running a takeover / control contest (M&A — a corporate bidder, "
                 "not a shareholder activist)")
     else:
+        # A pending acquisition supersedes everything: the company is being taken out, so it is no
+        # longer a shareholder-activist pitch target. Route to the M&A tier (Kenvue/Kimberly-Clark).
+        acq = _acquired(cik10)
+        if acq:
+            adate, aurl = acq
+            return {"kind": "ma", "form": form,
+                    "label": ("Pending acquisition — a definitive merger proxy is on file "
+                              f"(filed {adate}); being taken out, not a shareholder-activist campaign"),
+                    "who": "Pending acquisition", "filed": src.get("file_date"),
+                    "url": aurl or _doc_url(best_hit, cik10)}
         # Stand down a SETTLED campaign: a cooperation/settlement 8-K filed after this filing
         # means the activist agreed to a standstill -> show it in "Recently settled", not live.
         settle = _settlement_after(cik10, src.get("file_date"))
