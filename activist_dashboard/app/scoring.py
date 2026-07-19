@@ -711,19 +711,25 @@ def _insider_evidence(key, r):
     ins = r.get("_insider") or {}
     buy, sell = ins.get("buy_value") or 0, ins.get("sell_value") or 0
     nb, ns = ins.get("n_buyers") or 0, ins.get("n_sellers") or 0
-    win = ins.get("window_days") or 120
+    win = ins.get("window_days") or 365
+    # Netted over the full window (12 months) so a single small trade in a short window can't
+    # invert the read — and we no longer editorialize a net buy as "alignment / a defense signal"
+    # (that claim, on a name where insiders were heavy net sellers over the year, was the worst
+    # distortion the benchmark found). Just state the net open-market flow. (#2)
+    winlbl = "the past 12 months" if win >= 350 else f"the past {win} days"
     if key == "insider_selling":
         net = sell - buy
         ctx = (f"{ns} insider{'s' if ns != 1 else ''} sold a net {_money(net)} of stock on "
-               f"the open market over the past {win} days — a crack in insider confidence")
+               f"the open market over {winlbl} — a crack in insider confidence")
         val = "-" + _money(net)
     else:
         net = buy - sell
         ctx = (f"{nb} insider{'s' if nb != 1 else ''} bought a net {_money(net)} of stock on "
-               f"the open market over the past {win} days — insiders are aligned (a defense signal)")
+               f"the open market over {winlbl} (net open-market buying)")
         val = "+" + _money(net)
+    period = "trailing 12 months" if win >= 350 else f"trailing {win} days"
     return {"key": key, "label": LABELS.get(key, key), "value": val,
-            "context": ctx, "inputs": "", "period": f"trailing {win} days",
+            "context": ctx, "inputs": "", "period": period,
             "source": "SEC Form 4", "url": ins.get("top_url")}
 def _vote_evidence(key, r):
     v = r.get("_votes") or {}
