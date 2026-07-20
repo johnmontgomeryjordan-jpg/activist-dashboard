@@ -101,7 +101,9 @@ _MA_MARKERS = (
 #                 whether the dissident won, lost, or was ruled out (Eagle Bancorp).
 # If the activist re-agitates, its newer filing post-dates the 8-K, so the date ordering keeps it
 # live — a re-contest for the NEXT meeting won't be mistaken for the concluded one.
-_SETTLE_PHRASES = ('"cooperation agreement"', '"settlement agreement"')
+_SETTLE_PHRASES = ('"cooperation agreement"', '"settlement agreement"',
+                  '"standstill agreement"', '"board representation agreement"',
+                  '"cooperation and support agreement"')
 _MEETING_PHRASES = ('"submission of matters to a vote of security holders"',)
 
 
@@ -153,8 +155,8 @@ def _acquired(cik10):
     start = (datetime.utcnow() - timedelta(days=WINDOW_DAYS)).date().isoformat()
     end = datetime.utcnow().date().isoformat()
     j = _get({"q": "", "forms": _ACQ_FORMS, "ciks": cik10, "startdt": start, "enddt": end})
-    if not j:
-        return None
+    if j is None:
+        return ERROR                       # query failed (rate-limit under load) -> retry, don't skip
     for h in (j.get("hits", {}) or {}).get("hits", []) or []:
         src = h.get("_source", {}) or {}
         ciks = src.get("ciks") or []
@@ -384,12 +386,24 @@ def sweep_resolved(pairs):
     from datetime import datetime, timedelta
     win_start = (datetime.utcnow() - timedelta(days=WINDOW_DAYS)).date().isoformat()
     n = 0
+    errored = []
+    def _flag_acq(cik, acq):
+        adate, aurl = acq
+        database.set_activist_flag(
+            cik, "ma", "DEFM14A",
+            ("Pending acquisition — a definitive merger proxy is on file "
+             f"(filed {adate}); being taken out, not a shareholder-activist campaign"),
+            adate, aurl)
     for cik, who in pairs:
         cik10 = _pad(cik)
         try:
             acq = _acquired(cik10)
         except Exception:
-            acq = None
+            acq = ERROR
+        if acq is ERROR:                   # transient query failure -> retry at the end
+            errored.append((cik, who))
+            time.sleep(0.2)
+            continue
         if acq:
             adate, aurl = acq
             database.set_activist_flag(
@@ -413,6 +427,18 @@ def sweep_resolved(pairs):
                 sdate, surl)
             n += 1
         time.sleep(0.2)
+    if errored:                            # second pass for names whose acquisition query timed out
+        time.sleep(2.0)
+        for cik, who in errored:
+            cik10 = _pad(cik)
+            try:
+                acq = _acquired(cik10)
+            except Exception:
+                acq = None
+            if acq and acq is not ERROR:
+                _flag_acq(cik, acq)
+                n += 1
+            time.sleep(0.3)
     if n:
         print(f"[activist] resolution sweep flagged {n} disclosed-holder names (acquired / settled)")
     return n
