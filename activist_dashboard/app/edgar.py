@@ -34,7 +34,7 @@ FORMS = {"8-K", "10-K", "10-Q"}
 # 2026-07-13: precise Item 5.02 — separate real departures from routine appointments so the
 #             standard term-of-office boilerplate ("...death, resignation or removal...") stops
 #             tagging appointments/annual-meeting 8-Ks as "Executive departure".
-CLASSIFIER_VERSION = "2026-07-15-item502-action-tied-officer-r6"
+CLASSIFIER_VERSION = "2026-07-20-item502-role-split-r7"  # r7: split material (CEO/CFO/COO/Pres) from GC/other -> leadership_change
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
@@ -78,6 +78,21 @@ _DEP_A = (r"(?:resign\w*|step(?:s|ped|ping)?\s+(?:down|aside)|retir\w*|depart\w*
 _DEP_B = r"(?:resign\w*|step(?:s|ped|ping)?\s+down|retir\w*|depart\w*|terminat\w+|removed|relieved)"
 _DEP_OFFICER_A = re.compile(_OFFICER + r"[^.]{0,70}?\b" + _DEP_A, re.I)
 _DEP_OFFICER_B = re.compile(r"\b" + _DEP_B + r"\b[^.]{0,45}?\bas\b" + _LINK + _OFFICER, re.I)
+# A MATERIAL leadership departure is the CEO / CFO / COO / President — the changes an activist
+# actually cares about. A General Counsel / Chief Legal / Chief [HR/Tech/...] Officer leaving is a
+# real officer change but NOT a leadership vulnerability, so it should read as a minor
+# "leadership change", not a "CEO/exec departure" (Intel's Chief Legal Officer departure was being
+# framed as a C-suite transition / activist opening). We keep the broad _OFFICER for the minor tier.
+_OFFICER_MATERIAL = (
+    r"(?:chief\s+executive(?:\s+officer)?"
+    r"|chief\s+financial(?:\s+officer)?"
+    r"|chief\s+operating(?:\s+officer)?"
+    r"|principal\s+(?:executive|financial)\s+officer"
+    r"|\bpresident\b"                                   # VP variants stripped beforehand
+    r"|\bceo\b|\bcfo\b|\bcoo\b)"
+)
+_DEP_MATERIAL_A = re.compile(_OFFICER_MATERIAL + r"[^.]{0,70}?\b" + _DEP_A, re.I)
+_DEP_MATERIAL_B = re.compile(r"\b" + _DEP_B + r"\b[^.]{0,45}?\bas\b" + _LINK + _OFFICER_MATERIAL, re.I)
 _VP_STRIP = re.compile(r"(?:executive\s+|senior\s+|sr\.?\s+|group\s+|first\s+|corporate\s+)?"
                        r"vice[-\s]presidents?", re.I)
 MISS_TERMS = [
@@ -144,8 +159,10 @@ def classify(form, item_codes, text):
         tclean = _VP_STRIP.sub(" vp ", tclean)
         # Flag only when a C-suite/President/GC title is tied to an actual departure or appointment
         # ACTION. Departure outranks appointment (an outgoing + incoming CEO is a departure).
-        if _DEP_OFFICER_A.search(tclean) or _DEP_OFFICER_B.search(tclean):
-            sigs.add("ceo_departure")
+        if _DEP_MATERIAL_A.search(tclean) or _DEP_MATERIAL_B.search(tclean):
+            sigs.add("ceo_departure")                 # CEO / CFO / COO / President left -> material
+        elif _DEP_OFFICER_A.search(tclean) or _DEP_OFFICER_B.search(tclean):
+            sigs.add("leadership_change")             # GC / other officer left -> minor, not a "CEO departure"
         elif _APPT_OFFICER.search(tclean):
             sigs.add("leadership_change")
         # else: 5.02 with no actual departure or new appointment (equity-plan amendment,
