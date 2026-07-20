@@ -17,7 +17,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from . import config, database, pipeline, emailer, scoring, spotlight, universe, thirteenf
+from . import config, database, pipeline, emailer, scoring, spotlight, universe, thirteenf, credibility
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -50,6 +50,18 @@ def _run_initial_13f():
         print(f"[startup] 13F populate failed: {e}")
 
 
+def _daily_rescore_then_audit():
+    """Daily rebuild + digest, then the Credibility Watch self-audit. The audit reads the DB
+    only and is fully isolated in its own try/except so it can NEVER affect the digest — it just
+    prints a one-line summary (and any HIGH/MED flags) to the deploy log. Log-only for now; email
+    to John (only) can be wired later. Runs after the rescore so it sees the fresh board."""
+    pipeline.daily_rescore_and_digest()
+    try:
+        credibility.run()
+    except Exception as e:  # pragma: no cover
+        print(f"[credibility] self-audit failed (non-fatal): {e}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
@@ -57,7 +69,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(pipeline.refresh_data,
                       IntervalTrigger(minutes=config.REFRESH_MINUTES),
                       id="refresh", replace_existing=True, max_instances=1)
-    scheduler.add_job(pipeline.daily_rescore_and_digest,
+    scheduler.add_job(_daily_rescore_then_audit,
                       CronTrigger(hour=config.DIGEST_HOUR_ET, minute=0,
                                   timezone=config.TIMEZONE),
                       id="digest", replace_existing=True, max_instances=1)
