@@ -1090,6 +1090,21 @@ def _event_signals(cik, ticker, name):
 def recompute_all():
     funds = database.get_all_fundamentals()
     companies = {_pad_cik(c["cik"]): c for c in database.get_companies()}
+    # Coverage (Phase 1): market cap gates a name onto the board (a null cap is dropped below),
+    # but companies.market_cap is only filled for the ~ENRICH_TOP enriched names -- so the
+    # ~1,400 fundamentals-only names never reach scoring. The entity master already holds market
+    # cap universe-wide (refreshed weekly), so fall back to it when companies.market_cap is null.
+    # This lets return-/fundamentals-driven targets clear the gate and score on their own merits
+    # (no new API calls -- the data already exists). Kill switch: COVERAGE_MCAP_FALLBACK=0.
+    ent_mcap = {}
+    if os.getenv("COVERAGE_MCAP_FALLBACK", "1") != "0":
+        try:
+            for e in database.get_all_entities():
+                mc = e.get("market_cap")
+                if mc is not None and e.get("cik"):
+                    ent_mcap[_pad_cik(e["cik"])] = mc
+        except Exception:
+            ent_mcap = {}
     recs = []
     for f in funds:
         cik = _pad_cik(f["cik"])
@@ -1099,7 +1114,7 @@ def recompute_all():
         except (ValueError, TypeError):
             raw = {}
         # EV/EBITDA (valuation) and goodwill/assets (M&A overpayment) from XBRL + price.
-        mcap = comp.get("market_cap")
+        mcap = comp.get("market_cap") or ent_mcap.get(cik)
         ebitda = raw.get("ebitda")
         ev_ebitda = None
         if mcap is not None and ebitda is not None and ebitda > 0:
@@ -1122,7 +1137,7 @@ def recompute_all():
             "cash_to_assets": f.get("cash_to_assets"), "debt_to_assets": f.get("debt_to_assets"),
             "pb_ratio": comp.get("pb_ratio"), "tsr_1y": comp.get("tsr_1y"),
             "tsr_3y": comp.get("tsr_3y"), "tsr_5y": comp.get("tsr_5y"),
-            "market_cap": comp.get("market_cap"),
+            "market_cap": comp.get("market_cap") or ent_mcap.get(cik),
             "ev_ebitda": ev_ebitda, "goodwill_to_assets": goodwill_to_assets,
             "name": comp.get("name") or f.get("ticker"), "raw": raw,
         })
