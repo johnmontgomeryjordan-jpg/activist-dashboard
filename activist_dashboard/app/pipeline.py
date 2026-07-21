@@ -89,8 +89,19 @@ _STI = ["ShortTermInvestments"]
 # Missing those component tags left ServiceNow reading ~$0 funded debt -> a FALSE "under-levered
 # opportunity" (#3). Parts are summed only when no total/noncurrent-total tag reports at the same
 # date, so a company that files a proper total is never double-counted.
-_DEBT_TOTAL = ["LongTermDebt", "DebtLongtermAndShorttermCombinedAmount"]
+_DEBT_TOTAL = ["LongTermDebt", "DebtLongtermAndShorttermCombinedAmount",
+               "DebtInstrumentCarryingAmount"]
 _DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"]
+# COMBINED instrument tags: each already includes BOTH current and noncurrent portions, so they
+# are NOT part of the noncurrent/current split above. Many issuers — especially REITs (Digital
+# Realty tags its ~$16B under plain "SeniorNotes", $432M under "UnsecuredDebt") — file only these
+# and none of the split tags, which left them reading $0 funded debt -> a FALSE "under-levered"
+# signal + understated EV. Summed ONLY as a fallback when the split tags yield nothing at the
+# latest balance-sheet date, so a proper total is never double-counted with its own components.
+_DEBT_COMBINED_PARTS = ["SeniorNotes", "UnsecuredDebt", "SecuredDebt", "NotesPayable",
+                        "LineOfCreditFacilityAmountOutstanding", "ConvertibleDebt",
+                        "SubordinatedDebt", "MediumTermNotes", "LongTermLineOfCredit",
+                        "OtherLongTermDebt", "MortgageLoansOnRealEstate"]
 _DEBT_NC_PARTS = ["SeniorNotesNoncurrent", "ConvertibleDebtNoncurrent",
                   "ConvertibleNotesPayableNoncurrent", "ConvertibleLongTermNotesPayable",
                   "UnsecuredDebtNoncurrent", "SecuredDebtNoncurrent", "SecuredLongTermDebt",
@@ -222,7 +233,7 @@ def _total_debt(facts):
     current components. Fixes the under-capture behind false 'under-levered' signals + understated EV."""
     dated = {}                                   # tag -> (end_date, value)
     for t in (_DEBT_TOTAL + _DEBT_NC_TOTAL + _DEBT_NC_PARTS
-              + _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS):
+              + _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS + _DEBT_COMBINED_PARTS):
         ed, v = _instant_dated(facts, t)
         if ed is not None and v is not None:
             dated[t] = (ed, v)
@@ -265,6 +276,13 @@ def _total_debt(facts):
     if cur is None:
         cur = sum_at_latest(_DEBT_CUR_PARTS)
     if nc is None and cur is None:
+        # No current/noncurrent-split tags reported at the latest date. Many issuers (esp. REITs)
+        # instead file only plain COMBINED instrument tags (SeniorNotes / UnsecuredDebt /
+        # SecuredDebt — each already current+noncurrent). Sum those at the latest date BEFORE the
+        # last-resort stale fallback so DLR/FR/JBGS et al. get real debt instead of a false $0.
+        combined = sum_at_latest(_DEBT_COMBINED_PARTS)
+        if combined is not None:
+            return combined
         # nothing from our known tags at the latest date — use the most recent value we do have
         return max(dated.values(), key=lambda ev: ev[0])[1]
     return (nc or 0) + (cur or 0)
