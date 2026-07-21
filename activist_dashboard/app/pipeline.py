@@ -676,6 +676,54 @@ def refresh_tsr():
     return done
 
 
+# Coverage / recall (Phase 1): the 1-yr return is the cheapest deep signal (one fast Finnhub
+# call) AND often the biggest vulnerability driver. The 30-min refresh_tsr above only covers the
+# top-ENRICH_TOP shortlist, which creates a chicken-and-egg: a return-driven target (down hard
+# but not cheap-on-fundamentals) never ranks top-60, so it never gets a return, so it never
+# surfaces. This nightly pass fetches the 1-yr return for a MUCH wider set (ordered by market
+# cap — the most pitchable names first) so those names finally get their return signal and can
+# clear the board bar on their own merits. Bounded + env-tunable so it can be ramped (60 -> 500
+# -> wider) or killed instantly. recompute_all() reads tsr_1y for every fundamentals row, so no
+# scoring change is needed — feeding more names their return is the entire mechanism.
+BROAD_TSR_TOP = int(os.getenv("BROAD_TSR_TOP", "500"))   # 0 or negative disables the pass
+BROAD_TSR_SLEEP = float(os.getenv("BROAD_TSR_SLEEP", "1.0"))  # 60/min Finnhub free tier
+
+
+def refresh_tsr_broad():
+    """Universe-wide 1-yr relative return pre-screen (Phase 1 coverage). Fetches the 1-yr return
+    for up to BROAD_TSR_TOP names (by market cap desc) so return-driven targets surface. Runs in
+    the nightly rebuild only — never the 30-min cycle — and degrades gracefully (rate-limited /
+    missing names simply keep their prior value and retry next night)."""
+    key = os.getenv("FINNHUB_API_KEY", "")
+    if not key or BROAD_TSR_TOP <= 0:
+        print(f"[tsr-broad] skipped (key={'yes' if key else 'no'}, cap={BROAD_TSR_TOP})")
+        return 0
+    spy = _finnhub_metric_1y("SPY", key); time.sleep(BROAD_TSR_SLEEP)
+    if spy is not None:
+        database.set_meta("spy_1y", spy)
+    # Order the universe by market cap desc (most pitchable first); names with no cap sort last.
+    mcaps = {}
+    try:
+        for c in database.get_companies():
+            mc = c.get("market_cap")
+            if mc is not None:
+                mcaps[_pad(c["cik"])] = mc
+    except Exception:
+        traceback.print_exc()
+    cand = [c for c in get_universe() if c.get("ticker") and c.get("cik")]
+    cand.sort(key=lambda c: mcaps.get(_pad(c["cik"]), -1.0), reverse=True)
+    if BROAD_TSR_TOP > 0:
+        cand = cand[:BROAD_TSR_TOP]
+    done = 0
+    for c in cand:
+        ret = _finnhub_metric_1y(c["ticker"], key); time.sleep(BROAD_TSR_SLEEP)
+        if ret is not None:
+            database.set_company_market(_unpad(c["cik"]), tsr_1y=ret)
+            done += 1
+    print(f"[tsr-broad] updated {done}/{len(cand)} names (cap={BROAD_TSR_TOP}, S&P 1y={spy})")
+    return done
+
+
 def refresh_data(max_companies=None):
     uni = get_universe()
     try:
@@ -1423,6 +1471,7 @@ def refresh_ai_thesis():
 
 def daily_rescore_and_digest():
     refresh_data()
+    refresh_tsr_broad()      # Phase 1 coverage: wide 1-yr return pre-screen before the nightly rescore
     refresh_fundamentals()
     refresh_governance()
     refresh_insider()
@@ -1450,6 +1499,7 @@ def daily_rescore_and_digest():
 def startup_full_refresh():
     print("[boot] VERSION=F3-exec-reaction+F2-payperf+F1-evebitda-goodwill  starting refresh")
     refresh_data()
+    refresh_tsr_broad()      # Phase 1 coverage: wide 1-yr return pre-screen before the nightly rescore
     refresh_fundamentals()
     refresh_governance()
     refresh_insider()
