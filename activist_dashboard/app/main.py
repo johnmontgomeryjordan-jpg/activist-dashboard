@@ -196,13 +196,36 @@ def report_preview():
 
 
 @app.api_route("/api/report/send-test", methods=["GET", "POST"])
-def report_send_test():
-    """Build + send the biweekly report now (to the report recipients / subscribers). Manual
-    trigger so a partner can send an issue without waiting for the biweekly cron."""
-    sent = emailer.send_report()
-    return {"ok": True, "sent": sent,
-            "message": f"Biweekly report sent to {sent} recipient(s)." if sent
-                       else "No recipients configured (add an email on the dashboard, or set REPORT_RECIPIENTS)."}
+def report_send_test(to: str = "", confirm: int = 0):
+    """Send the biweekly report. GUARDED — a bare call is a genuine test and reaches exactly ONE
+    inbox, never the distribution list:
+
+        /api/report/send-test                  -> first recipient only, subject tagged [TEST]
+        /api/report/send-test?to=you@fgs.com   -> that one address, subject tagged [TEST]
+        /api/report/send-test?confirm=1        -> THE REAL SEND: every recipient, untagged
+
+    This endpoint previously called send_report() directly, so a click meant as a dry run mailed
+    the whole live list (an issue went to five people that way). The default is now the safe path
+    and mailing everyone requires typing confirm=1, which is hard to do by accident."""
+    recipients = config.REPORT_RECIPIENTS or database.get_subscribers()
+    if not recipients and not to:
+        return {"ok": False, "sent": 0, "test": True,
+                "message": "No recipients configured. Add an email on the dashboard, set "
+                           "REPORT_RECIPIENTS in Render, or call this with ?to=you@example.com."}
+    if confirm:
+        sent = emailer.send_report()
+        return {"ok": bool(sent), "sent": sent, "test": False,
+                "recipients": len(recipients),
+                "message": f"REAL SEND — biweekly report sent to {sent} recipient(s)." if sent
+                           else "Real send requested but nothing went out; check the email provider config."}
+    target = (to or "").strip() or recipients[0]
+    ok = emailer.send_test_report(target)
+    return {"ok": ok, "sent": 1 if ok else 0, "test": True, "recipient": target,
+            "held_back": max(len(recipients) - 1, 0),
+            "message": (f"TEST send to {target} only (subject tagged [TEST]). "
+                        f"{max(len(recipients) - 1, 0)} other recipient(s) were NOT mailed. "
+                        f"Add ?confirm=1 to send the real issue to everyone.") if ok
+                       else f"Test send to {target} failed — check the email provider config and logs."}
 
 
 @app.get("/api/feed")
@@ -711,15 +734,35 @@ def api_sweep_activists():
 
 
 @app.api_route("/api/send-test-digest", methods=["GET", "POST"])
-def api_send_test_digest():
+def api_send_test_digest(to: str = "", confirm: int = 0):
+    """Send the daily digest. GUARDED the same way as /api/report/send-test, because this is the
+    same shape of hazard: send_digest() mails the entire subscriber list the moment the URL is
+    opened. The daily digest cron is PAUSED (pipeline.daily_rescore_and_digest returns 0 without
+    sending), so this endpoint is now the ONLY way a digest can go out — which makes an accidental
+    click here mail everyone with no other safety net.
+
+        /api/send-test-digest                 -> first subscriber only (a real test)
+        /api/send-test-digest?to=you@x.com    -> that one address
+        /api/send-test-digest?confirm=1       -> the whole subscriber list
+
+    Note the digest has no per-recipient subject line to tag, so the guard is purely about WHO
+    receives it, not about labelling; the default reaches exactly one inbox."""
     subs = database.get_subscribers()
-    if not subs:
-        return {"ok": False, "message": "No subscribers yet. Add your email on "
-                "the dashboard first, then try again."}
-    sent = emailer.send_digest()
-    return {"ok": True, "sent": sent,
-            "message": f"Digest sent to {sent} of {len(subs)} subscriber(s). "
-                       f"Check your inbox (and spam folder)."}
+    if not subs and not to:
+        return {"ok": False, "sent": 0, "test": True,
+                "message": "No subscribers yet. Add your email on the dashboard first, or call "
+                           "this with ?to=you@example.com to preview."}
+    if confirm:
+        sent = emailer.send_digest()
+        return {"ok": bool(sent), "sent": sent, "test": False, "recipients": len(subs),
+                "message": f"REAL SEND — digest sent to {sent} of {len(subs)} subscriber(s)."}
+    target = (to or "").strip() or subs[0]
+    ok = emailer.send_test_digest(target)
+    return {"ok": ok, "sent": 1 if ok else 0, "test": True, "recipient": target,
+            "held_back": max(len(subs) - 1, 0),
+            "message": (f"TEST digest to {target} only. {max(len(subs) - 1, 0)} other "
+                        f"subscriber(s) were NOT mailed. Add ?confirm=1 to send to everyone.") if ok
+                       else f"Test digest to {target} failed — check the email provider config."}
 
 
 @app.get("/api/thirteenf/stats")
