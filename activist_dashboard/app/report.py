@@ -182,24 +182,37 @@ def assemble_board(rows, *, get_catalyst, get_ai_pitch, get_governance,
     return cards
 
 
-def assemble_headlines(board, *, get_news, is_relevant, rank_relevant, per_ticker=2, total=6):
-    """Relevant, per-ticker headlines for the board names — reusing the news filters, not the
-    GDELT firehose. Ranked by activist-relevance, de-duplicated, trimmed to `total`."""
+def assemble_headlines(board, *, get_news, get_broad, is_relevant, rank_relevant,
+                       per_ticker=1, total=5):
+    """Relevant headlines for the issue. Lead with the board names' own headlines (reusing the
+    news filters, not the GDELT firehose), then BACKFILL from the broad relevance-curated feed so
+    the section always fills to `total` even when a fortnight is quiet on the board — off-profile
+    items are welcome. Ranked by activist-relevance, de-duplicated."""
     collected, seen = [], set()
+
+    def _add(n, ticker, company, on_board):
+        uid = n.get("url") or n.get("headline")
+        if not uid or uid in seen:
+            return
+        seen.add(uid)
+        collected.append({"ticker": ticker, "company": company, "on_board": on_board,
+                          "headline": n.get("headline"), "source": n.get("source"),
+                          "date": (n.get("published_at") or "")[:10], "url": n.get("url")})
+
     for card in board:
         tkr = card.get("ticker")
         if not tkr:
             continue
         rows = [n for n in (get_news(tkr) or []) if is_relevant(n.get("headline"))]
         for n in rank_relevant(rows, per_ticker):
-            uid = n.get("url") or n.get("headline")
-            if uid in seen:
-                continue
-            seen.add(uid)
-            collected.append({"ticker": tkr, "company": card.get("company"),
-                              "headline": n.get("headline"), "source": n.get("source"),
-                              "date": (n.get("published_at") or "")[:10], "url": n.get("url")})
-    # Already per-ticker relevance-ranked; keep insertion order and trim.
+            _add(n, tkr, card.get("company"), True)
+            if len(collected) >= total:
+                return collected[:total]
+    # Backfill from the broad relevance-curated feed (already relevant_only) to reach `total`.
+    for n in rank_relevant(get_broad() or [], total * 4):
+        if len(collected) >= total:
+            break
+        _add(n, (n.get("matched_tickers") or "").split(",")[0], None, False)
     return collected[:total]
 
 
@@ -229,8 +242,9 @@ def assemble_radar(board, *, get_earnings, get_governance, today, horizon_days=1
     return items
 
 
-def assemble(database, catalyst, news, *, limit=5, today=None):
-    """Pull the full report model from the DB. `catalyst` and `news` are the modules."""
+def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None):
+    """Pull the full report model from the DB. `catalyst` and `news` are the modules.
+    `summarize(text, kind)->str` optionally glosses each headline/filing (the Haiku layer)."""
     from datetime import datetime
     today = today or datetime.utcnow()
     rows = database.get_scores(limit=80)
@@ -250,16 +264,55 @@ def assemble(database, catalyst, news, *, limit=5, today=None):
     headlines = assemble_headlines(
         board,
         get_news=lambda tk: database.get_news_for_ticker(tk, limit=12),
+        get_broad=lambda: database.recent_news(limit=40, relevant_only=True),
         is_relevant=news.is_relevant, rank_relevant=news.rank_relevant,
     )
     radar = assemble_radar(board, get_earnings=database.get_earnings,
                            get_governance=database.get_governance, today=today)
-    filings = [f for f in (database.recent_filings(limit=25) or []) if (f.get("signals") or "").strip()][:5]
+    # Fill filings to 5: event-signal 8-Ks first, then backfill with any recent filing.
+    recent = database.recent_filings(limit=40) or []
+    filings = [f for f in recent if (f.get("signals") or "").strip()][:5]
+    if len(filings) < 5:
+        have = {f.get("url") for f in filings}
+        for f in recent:
+            if len(filings) >= 5:
+                break
+            if f.get("url") not in have:
+                filings.append(f)
+
+    # Optional one-line AI summaries under each headline + filing (the Haiku layer). Best-effort:
+    # if aithesis isn't available or has no summariser, items simply render without a gloss.
+    _summ = summarize or _load_summarizer()
+    if _summ:
+        _attach_summaries(headlines, "headline", _summ, kind="headline")
+        _attach_summaries(filings, "title", _summ, kind="filing")
+
     issue_date = f"{today.strftime('%B')} {today.day}, {today.year}" if hasattr(today, "strftime") else ""
     return {
         "issue_date": issue_date,
         "board": board, "headlines": headlines, "radar": radar, "filings": filings,
     }
+
+
+def _load_summarizer():
+    """Best-effort handle to the Haiku layer's one-line summariser. Expected interface:
+    aithesis.summarize_line(text, kind) -> short str (or None). Returns None if unavailable."""
+    try:
+        from . import aithesis
+    except Exception:
+        return None
+    fn = getattr(aithesis, "summarize_line", None)
+    return fn if callable(fn) else None
+
+
+def _attach_summaries(items, textkey, summarize, kind):
+    for it in items or []:
+        try:
+            s = summarize(it.get(textkey) or "", kind)
+        except Exception:
+            s = None
+        if s:
+            it["summary"] = s.strip()
 
 
 # ---- rendering (Brief palette, mirrors the pitch kit) ---------------------------------
@@ -314,8 +367,14 @@ padding:12px 15px;margin:16px 0 4px;font-size:13.5px;line-height:1.55;}
 .metric .mv{font-family:var(--serif);font-size:20px;font-weight:500;margin-top:4px;}
 .chip{font-size:9px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;padding:2px 7px;border-radius:4px;white-space:nowrap;}
 .chip.bad{background:#f4e4e2;color:var(--hot);}.chip.opp{background:#f1e7d4;color:var(--warn);}.chip.mid{background:var(--panel2);color:var(--muted);}
-.evsrc{color:var(--dim);font-size:10.5px;margin-top:14px;text-transform:uppercase;letter-spacing:.06em;}
+.pk-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;flex-wrap:wrap;}
+.evsrc{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;}
 .evsrc a{color:var(--accent);text-decoration:none;}
+.pk-profile{display:inline-block;background:var(--brand);color:#fff;text-decoration:none;padding:8px 15px;
+border-radius:6px;font-size:12.5px;font-weight:600;white-space:nowrap;}
+.pk-profile:hover{background:#0f5c3c;}
+.isum{color:var(--muted);font-size:12px;line-height:1.5;margin-top:5px;font-style:italic;}
+.isum b{color:var(--brand);font-style:normal;font-weight:700;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px;}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
 @media (max-width:820px){.row{grid-template-columns:1fr;}}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;}
@@ -360,6 +419,11 @@ def _render_card(card, lead=False):
     src = ""
     if cat and cat.get("url"):
         src = f'<div class="evsrc">Catalyst: <a href="{_esc(cat["url"])}">SEC 8-K, {_esc(cat.get("date_pretty"))}</a> &middot; Financials: SEC filings</div>'
+    else:
+        src = '<div class="evsrc">Financials: SEC filings</div>'
+    # Profile button: deep-links into the app's company profile. target=_top so it works both
+    # standalone and inside the landing-page iframe; app.js reads ?company= on load.
+    profile = f'<a class="pk-profile" target="_top" href="/?company={_esc(card.get("cik"))}">View full profile &rarr;</a>' if card.get("cik") else ""
     return f"""
   <div class="pk{' lead' if lead else ''}">
     <div class="pk-top">
@@ -376,7 +440,7 @@ def _render_card(card, lead=False):
     {caveat_html}
     {pts_html}
     {mets_html}
-    {src}
+    <div class="pk-actions">{src}{profile}</div>
   </div>"""
 
 
@@ -385,17 +449,28 @@ def render_html(model):
     cards = "".join(_render_card(c, lead=(i == 0)) for i, c in enumerate(board)) \
         or '<div class="empty">No qualifying names this issue.</div>'
 
-    hl = "".join(
-        f'<div class="item"><a href="{_esc(h.get("url"))}">{_esc(h.get("headline"))}</a>'
-        f'<div class="meta"><span class="tag cov">{_esc(h.get("ticker"))} &middot; on board</span>'
-        f'<span>{_esc(h.get("source"))}</span><span>{_esc(h.get("date"))}</span></div></div>'
-        for h in (model.get("headlines") or [])) or '<div class="empty">No relevant headlines.</div>'
+    def _isum(it):
+        return f'<div class="isum"><b>AI</b>{_esc(it["summary"])}</div>' if it.get("summary") else ""
 
-    fl = "".join(
-        f'<div class="item"><a href="{_esc(f.get("url"))}">{_esc(f.get("company"))} — {_esc(f.get("title"))}</a>'
-        f'<div class="meta"><span class="tag sig">{_esc((f.get("signals") or "").split(",")[0].replace("_"," ").title())}</span>'
-        f'<span>{_esc(f.get("filed_at"))}</span></div></div>'
-        for f in (model.get("filings") or [])) or '<div class="empty">No notable filings.</div>'
+    def _hl_item(h):
+        if h.get("on_board") and h.get("ticker"):
+            tag = f'<span class="tag cov">{_esc(h.get("ticker"))} &middot; on board</span>'
+        elif h.get("ticker"):
+            tag = f'<span class="tag">{_esc(h.get("ticker"))}</span>'
+        else:
+            tag = ""
+        return (f'<div class="item"><a href="{_esc(h.get("url"))}">{_esc(h.get("headline"))}</a>'
+                f'{_isum(h)}<div class="meta">{tag}<span>{_esc(h.get("source"))}</span>'
+                f'<span>{_esc(h.get("date"))}</span></div></div>')
+
+    def _fl_item(f):
+        sig = (f.get("signals") or "").split(",")[0].replace("_", " ").title() or "Filing"
+        return (f'<div class="item"><a href="{_esc(f.get("url"))}">{_esc(f.get("company"))} — {_esc(f.get("title"))}</a>'
+                f'{_isum(f)}<div class="meta"><span class="tag sig">{_esc(sig)}</span>'
+                f'<span>{_esc(f.get("filed_at"))}</span></div></div>')
+
+    hl = "".join(_hl_item(h) for h in (model.get("headlines") or [])) or '<div class="empty">No relevant headlines.</div>'
+    fl = "".join(_fl_item(f) for f in (model.get("filings") or [])) or '<div class="empty">No notable filings.</div>'
 
     radar_rows = "".join(
         f'<tr><td class="when">{_esc(r.get("date"))}</td><td><b>{_esc(r.get("company"))}</b></td>'

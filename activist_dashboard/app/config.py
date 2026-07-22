@@ -131,6 +131,23 @@ REFRESH_MINUTES = int(os.getenv("REFRESH_MINUTES", "30"))   # data refresh caden
 DIGEST_HOUR_ET = int(os.getenv("DIGEST_HOUR_ET", "6"))      # 06:00 ET = 6am ET
 TIMEZONE = "America/New_York"
 
+# --- Biweekly report (the fortnightly "Activist Vulnerability" issue) ---------
+# The daily email digest is PAUSED (pipeline.daily_rescore_and_digest no longer sends); the
+# product is now a curated biweekly report — an in-app /report page + an emailed issue. The
+# nightly rescore still runs so the board stays fresh; only the CADENCE of the email changed.
+REPORT_ENABLED = os.getenv("REPORT_ENABLED", "1") == "1"
+REPORT_HOUR_ET = int(os.getenv("REPORT_HOUR_ET", "8"))       # 08:00 ET send
+REPORT_DAY = os.getenv("REPORT_DAY", "wed")                  # day_of_week to send
+REPORT_WEEK_STEP = os.getenv("REPORT_WEEK_STEP", "*/2")      # every 2nd ISO week = biweekly
+REPORT_BOARD_SIZE = int(os.getenv("REPORT_BOARD_SIZE", "5")) # names featured on the board
+# Structural disqualifiers to keep OFF the proactive board (government stakes, etc.) beyond the
+# built-in list in report.py. Comma-separated tickers. INTC (U.S. government stake) is built in.
+REPORT_EXCLUDE_TICKERS = {t.strip().upper() for t in
+                          os.getenv("REPORT_EXCLUDE_TICKERS", "").split(",") if t.strip()}
+# The report goes to the SAME small subscriber list as the (paused) digest unless a dedicated
+# comma-separated recipient list is set here.
+REPORT_RECIPIENTS = [e.strip() for e in os.getenv("REPORT_RECIPIENTS", "").split(",") if e.strip()]
+
 # --- Database ----------------------------------------------------------------
 DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "data.db"))
 

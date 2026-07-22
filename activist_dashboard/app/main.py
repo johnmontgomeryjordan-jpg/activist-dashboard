@@ -62,6 +62,15 @@ def _daily_rescore_then_audit():
         print(f"[credibility] self-audit failed (non-fatal): {e}", flush=True)
 
 
+def _biweekly_report():
+    """Build + email the fortnightly report. Isolated so a send failure never crashes the
+    scheduler. The nightly rescore keeps the board fresh; this only assembles + sends."""
+    try:
+        emailer.send_report()
+    except Exception as e:  # pragma: no cover
+        print(f"[report] biweekly send failed (non-fatal): {e}", flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
@@ -73,6 +82,15 @@ async def lifespan(app: FastAPI):
                       CronTrigger(hour=config.DIGEST_HOUR_ET, minute=0,
                                   timezone=config.TIMEZONE),
                       id="digest", replace_existing=True, max_instances=1)
+    # Biweekly report: every 2nd ISO week on REPORT_DAY at REPORT_HOUR_ET (default Wed 8 AM ET).
+    # The daily digest email is paused (pipeline); this is the new outbound cadence. John previews
+    # the night before via /report or /api/report/preview.
+    if config.REPORT_ENABLED:
+        scheduler.add_job(_biweekly_report,
+                          CronTrigger(day_of_week=config.REPORT_DAY, hour=config.REPORT_HOUR_ET,
+                                      minute=0, week=config.REPORT_WEEK_STEP,
+                                      timezone=config.TIMEZONE),
+                          id="biweekly_report", replace_existing=True, max_instances=1)
     # Weekly (Sun 05:00): refresh S&P 1500 membership from iShares. Fails safe --
     # keeps the committed universe.csv on any fetch failure or sanity-gate rejection.
     scheduler.add_job(universe.rebuild_universe_csv,
@@ -132,7 +150,9 @@ async def _gate_and_secure(request: Request, call_next):
                             headers={"WWW-Authenticate": 'Basic realm="FGS Activist Dashboard"'})
     resp = await call_next(request)
     resp.headers["X-Content-Type-Options"] = "nosniff"
-    resp.headers["X-Frame-Options"] = "DENY"
+    # SAMEORIGIN (not DENY) so the landing page can embed the /report page in an iframe; still
+    # blocks external sites from framing the tool (clickjacking).
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     resp.headers["X-Robots-Tag"] = "noindex, nofollow"   # keep it out of search engines
     return resp
@@ -144,6 +164,33 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/report", response_class=HTMLResponse)
+def report_page():
+    """The biweekly Activist Vulnerability report as a standalone page — rendered in the app's
+    Brief palette, embedded on the landing tab via an iframe, and emailed on the biweekly cron."""
+    try:
+        return emailer.build_report_html()
+    except Exception as e:  # pragma: no cover
+        return HTMLResponse(f"<p style='font-family:sans-serif;padding:24px'>Report temporarily "
+                            f"unavailable: {e}</p>", status_code=500)
+
+
+@app.get("/api/report/preview", response_class=HTMLResponse)
+def report_preview():
+    """Identical HTML to /report — a distinct URL for the night-before preview."""
+    return report_page()
+
+
+@app.post("/api/report/send-test")
+def report_send_test():
+    """Build + send the biweekly report now (to the report recipients / subscribers). Manual
+    trigger so a partner can send an issue without waiting for the biweekly cron."""
+    sent = emailer.send_report()
+    return {"ok": True, "sent": sent,
+            "message": f"Biweekly report sent to {sent} recipient(s)." if sent
+                       else "No recipients configured (add an email on the dashboard, or set REPORT_RECIPIENTS)."}
 
 
 @app.get("/api/feed")

@@ -248,3 +248,34 @@ def send_digest():
             sent += 1
     print(f"[email] pitch kit sent to {sent}/{len(subs)} subscribers")
     return sent
+
+
+def build_report_html():
+    """Assemble + render the biweekly report HTML (also used by the /report page + preview)."""
+    from . import report, catalyst, aithesis
+    model = report.assemble(database, catalyst, news,
+                            limit=config.REPORT_BOARD_SIZE,
+                            summarize=aithesis.summarize_line)
+    return report.render_html(model)
+
+
+def send_report(recipients=None):
+    """Build the biweekly report and email it. Recipients default to the configured report list,
+    else the subscriber list (the same small distribution as the paused daily digest). Returns
+    the count sent. Safe: no-op with a printed notice when there are no recipients."""
+    to = recipients or config.REPORT_RECIPIENTS or database.get_subscribers()
+    if not to:
+        print("[report] no recipients; nothing to send")
+        return 0
+    from . import report, catalyst, aithesis
+    model = report.assemble(database, catalyst, news,
+                            limit=config.REPORT_BOARD_SIZE,
+                            summarize=aithesis.summarize_line)
+    body = report.render_html(model)
+    subject = f"FGS — Activist Vulnerability (biweekly) · {model.get('issue_date')}"
+    sent = 0
+    for email in to:
+        if send_one(email, subject, body):
+            sent += 1
+    print(f"[report] biweekly report sent to {sent}/{len(to)}")
+    return sent

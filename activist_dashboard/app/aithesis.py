@@ -117,3 +117,58 @@ def revoice(name, pitch, facts, api_key=None, mdl=None, timeout=30):
     if not thesis:
         return None
     return {"thesis": thesis, "points": points}
+
+
+# --- One-line gloss for the biweekly report's headlines / filings --------------------------------
+# A short, plain-English "why this matters" beneath each headline and filing in the report. Same
+# discipline as revoice(): use ONLY the given text, invent nothing. Cheap (a handful of Haiku calls
+# per report build) and cached per (kind, text) for the process, so previews don't re-bill.
+_SUMMARY_SYSTEM = (
+    "You are a senior analyst at a shareholder-activism DEFENSE advisory firm. In ONE short "
+    "sentence, explain why an item (a news headline or an SEC filing) matters for spotting or "
+    "defending against shareholder activism.\n"
+    "ABSOLUTE RULES:\n"
+    "- Use ONLY what the given text states. NEVER invent a number, name, date, or event not in it.\n"
+    "- No hype words, no exaggeration. Plain professional English.\n"
+    "- Do not call a stock 'underperforming'/'lagging' unless the text itself says so.\n"
+    "- Return ONLY the one sentence — no preamble, no quotation marks, no label."
+)
+_summary_cache = {}
+
+
+def summarize_line(text, kind="headline", api_key=None, mdl=None, timeout=20):
+    """One-sentence analyst gloss of a report headline/filing, or None on any failure/no key.
+    Grounded strictly in `text`; safe/additive (the report renders without it if unavailable)."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    api_key = api_key or key()
+    if not api_key:
+        return None
+    ck = (kind, text)
+    if ck in _summary_cache:
+        return _summary_cache[ck]
+    prompt = (f"In ONE sentence (max ~22 words), explain to an activist-defense analyst why this "
+              f"{kind} matters, using ONLY the {kind} text and inventing nothing.\n\n"
+              f"{kind.upper()}: {text}")
+    body = {
+        "model": mdl or model(),
+        "max_tokens": 90,
+        "system": _SUMMARY_SYSTEM,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    try:
+        r = requests.post(API_URL, timeout=timeout, json=body, headers={
+            "x-api-key": api_key, "anthropic-version": "2023-06-01",
+            "content-type": "application/json"})
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        out = "".join(b.get("text", "") for b in data.get("content", [])
+                      if b.get("type") == "text").strip()
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return None
+    out = out.strip().strip('"').replace("\n", " ").strip()
+    out = out or None
+    _summary_cache[ck] = out
+    return out
