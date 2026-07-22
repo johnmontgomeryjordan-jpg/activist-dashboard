@@ -370,7 +370,8 @@
 
 <nav class="nav">
   <div class="nav-tabs">
-    <button class="navtab active" id="nt-pitchkit" onclick="showView('pitchkit')">Pitch kit</button>
+    <button class="navtab active" id="nt-report" onclick="showView('report')">Report</button>
+    <button class="navtab" id="nt-pitchkit" onclick="showView('pitchkit')">Pitch kit</button>
     <button class="navtab" id="nt-dashboard" onclick="showView('dashboard')">Dashboard</button>
     <button class="navtab" id="nt-active" onclick="showView('active')">Active situations <span class="navcount" id="navActive"></span></button>
     <button class="navtab" id="nt-accumulating" onclick="showView('accumulating')">Accumulating <span class="navcount" id="navAccum"></span></button>
@@ -381,8 +382,14 @@
   </div>
 </nav>
 
-<!-- PITCH KIT (home) -->
-<div class="wrap page" id="page-pitchkit">
+<!-- BIWEEKLY REPORT (landing page) -->
+<div class="page" id="page-report">
+  <iframe id="reportFrame" title="Biweekly Activist Vulnerability report" src="/report"
+    style="width:100%;height:calc(100vh - 118px);border:none;background:#f6f4ee;display:block;"></iframe>
+</div>
+
+<!-- PITCH KIT -->
+<div class="wrap page" id="page-pitchkit" style="display:none;">
   <div class="pk-head">
     <div class="pk-kicker">The Daily Pitch Kit</div>
     <div class="pk-date" id="pkDate"></div>

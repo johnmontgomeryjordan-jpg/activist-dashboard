@@ -22,11 +22,11 @@ const secUrl = cik => `https://www.sec.gov/cgi-bin/browse-edgar?action=getcompan
 let SHORTLIST=[], ACTIVE=[], STATUS={}, FEED={news:[],filings:[]};
 let WATCHLIST_SET=new Set(), COMPANY_INFO={};
 let FILTER="all", SORT={key:"vuln", dir:-1};
-let CURRENT_VIEW="pitchkit", CURRENT_CIK=null, CURRENT_DATA=null, CURRENT_TAB="overview";
+let CURRENT_VIEW="report", CURRENT_CIK=null, CURRENT_DATA=null, CURRENT_TAB="overview";
 function regInfo(c){ if(c && c.cik) COMPANY_INFO[c.cik]={ticker:c.ticker, company:c.company}; }
 
 /* ===== View routing ===== */
-const VIEWS=["pitchkit","dashboard","active","accumulating","watchlist","feed","about","admin","company"];
+const VIEWS=["report","pitchkit","dashboard","active","accumulating","watchlist","feed","about","admin","company"];
 function showView(name){
   VIEWS.forEach(v=>{ const p=document.getElementById("page-"+v); if(p) p.style.display = v===name?"block":"none"; });
   document.querySelectorAll(".navtab").forEach(b=>b.classList.remove("active"));
@@ -1146,3 +1146,6 @@ async function refreshAll(){
   const u=document.getElementById("updated"); if(u) u.textContent="Last updated "+new Date().toLocaleTimeString();
 }
 refreshAll(); setInterval(refreshAll, 5*60*1000);
+/* Deep-link: /?company=CIK opens that company's profile directly. Used by the biweekly report's
+   "View full profile" buttons (which target the top window from inside the landing-page iframe). */
+try{ const _co=new URLSearchParams(location.search).get("company"); if(_co) openCompany(_co); }catch(e){}
