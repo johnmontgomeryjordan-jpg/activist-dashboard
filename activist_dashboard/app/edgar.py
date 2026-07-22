@@ -34,7 +34,11 @@ FORMS = {"8-K", "10-K", "10-Q"}
 # 2026-07-13: precise Item 5.02 — separate real departures from routine appointments so the
 #             standard term-of-office boilerplate ("...death, resignation or removal...") stops
 #             tagging appointments/annual-meeting 8-Ks as "Executive departure".
-CLASSIFIER_VERSION = "2026-07-20-item502-role-split-r7"  # r7: split material (CEO/CFO/COO/Pres) from GC/other -> leadership_change
+# 2026-07-22: read EX-99.1 for Item 2.02. An Item 2.02 8-K's primary document is only a cover page
+#             ("...furnished as Exhibit 99.1"), so the miss/guidance language was NEVER visible to
+#             the classifier — `earnings_miss` was unreachable universe-wide and every results 8-K
+#             fell through to note-only `results_update`. Re-classification is required to re-tag.
+CLASSIFIER_VERSION = "2026-07-22-item202-exhibit991-r8"  # r8: classify 2.02 on the press-release exhibit
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
@@ -97,13 +101,43 @@ _VP_STRIP = re.compile(r"(?:executive\s+|senior\s+|sr\.?\s+|group\s+|first\s+|co
                        r"vice[-\s]presidents?", re.I)
 MISS_TERMS = [
     "below expectations", "below consensus", "below estimates", "below the prior",
-    "missed", "fell short", "falls short", "shortfall", "lowered guidance",
+    # TIGHTENED for exhibit-scanning: bare "missed" / "shortfall" were safe against a one-page
+    # 8-K cover but are far too loose against a full press release — "shortfalls related to
+    # stock-based compensation" is routine tax-accounting boilerplate (it appears verbatim in
+    # Inspire's Q1-2026 release) and would spuriously tag an earnings miss universe-wide.
+    "missed expectations", "missed estimates", "missed consensus", "missed the",
+    "fell short", "falls short", "revenue shortfall", "earnings shortfall",
+    "lowered guidance",
     "lower guidance", "lowers guidance", "lowering guidance", "reduced guidance",
     "reduces guidance", "cut guidance", "cuts guidance", "cutting guidance",
     "lowered its outlook", "lowered outlook", "reduced outlook", "cut its outlook",
     "profit warning", "weaker than expected", "lower than expected",
     "reduced its full-year", "lowered its full-year", "disappointing",
     "decline in revenue", "revenue decline", "below its prior",
+    # Downward-revision language, now reachable because we read the EX-99.1 press release.
+    # DELIBERATELY EXCLUDES neutral verbs ("updates guidance", "revises guidance", "narrows
+    # guidance") — a guidance RAISE uses exactly those words, and a false "earnings miss" on a
+    # partner-facing report is far worse than a missed tag. Every phrase below is one-directional.
+    "below prior guidance", "below previous guidance", "below our prior",
+    "lowering our full-year", "lowering full-year", "lowering its full-year",
+    "reducing our full-year", "reducing full-year", "reduces its full-year",
+    "cuts its full-year", "cutting its full-year", "lowers its full-year",
+    "lowers outlook", "lowers its outlook", "lowering outlook", "lowering its outlook",
+    "reduces outlook", "reduces its outlook", "reduced its guidance", "lowered its guidance",
+    "withdraws guidance", "withdrawing guidance", "withdrew its guidance",
+    "suspends guidance", "suspending guidance", "withdraws its outlook",
+    "revised lower", "revising lower", "revised downward", "revising downward",
+    "trims guidance", "trimmed guidance", "trims its outlook", "trimmed its outlook",
+    "expects revenue to decline", "expect revenue to decline", "revenue to decline",
+    "lower than previously", "less than previously expected", "below prior expectations",
+    # The pattern a real guidance cut actually uses. Inspire's Q1-2026 release reads: "revising
+    # its previously announced revenue outlook to ... which REPRESENTS A DECLINE of 4% to 10%
+    # compared to 2025" — none of the phrasings above catch that, so the cut read as routine.
+    # "revising/updating guidance" alone stays out (a RAISE says the same); the decline framing
+    # is the one-directional part.
+    "represents a decline", "representing a decline", "represents a decrease",
+    "representing a decrease", "reflects a decline", "below the low end",
+    "below the midpoint", "lowering our outlook", "reducing our outlook",
 ]
 
 
@@ -135,8 +169,56 @@ def _doc_text(cik_int, accession_nodash, primary_doc):
     return _TAG.sub(" ", r.text).lower()[:120000]
 
 
-def classify(form, item_codes, text):
-    """Return sorted list of signal keys for this filing."""
+# --- Item 2.02: the earnings language lives in the EXHIBIT, not the 8-K -------------------------
+# An Item 2.02 8-K's primary document is only a cover page: "the Company issued a press release
+# announcing its financial results... furnished as Exhibit 99.1". None of the miss/guidance language
+# is ever in it. Classifying on the primary doc alone therefore made `earnings_miss` unreachable —
+# EVERY results 8-K fell through to the note-only `results_update` (Inspire's May-2026 guidance cut
+# read as a routine result). We now also read EX-99.1 for 2.02 filings and scan that for MISS_TERMS.
+# Two extra requests per NEW 2.02 filing, bounded by the same "skip already-stored" gate.
+_EX_PRIORITY = ("ex991", "ex99", "991", "press", "earn")
+
+
+def _exhibit_text(cik_int, accession_nodash):
+    """Text of the EX-99.1 press release for a filing, via the free filing-index JSON.
+    Exhibit filenames vary a lot (insp-ex991_6.htm, d123dex991.htm, a991pressrelease.htm), so we
+    normalise and score candidates by priority. Returns "" when nothing plausible is found."""
+    r = _get(f"{ARCHIVE_BASE}/{cik_int}/{accession_nodash}/index.json")
+    time.sleep(0.1)
+    if not r:
+        return ""
+    try:
+        items = (r.json() or {}).get("directory", {}).get("item", []) or []
+    except ValueError:
+        return ""
+    best, best_rank = None, len(_EX_PRIORITY)
+    for it in items:
+        name = it.get("name") or ""
+        low = name.lower()
+        if not low.endswith((".htm", ".html", ".txt")):
+            continue
+        norm = low.replace("-", "").replace("_", "")
+        for rank, cue in enumerate(_EX_PRIORITY):
+            if cue in norm and rank < best_rank:
+                best, best_rank = name, rank
+                break
+    if not best:
+        return ""
+    r2 = _get(f"{ARCHIVE_BASE}/{cik_int}/{accession_nodash}/{best}")
+    time.sleep(0.1)
+    if not r2 or not r2.text:
+        return ""
+    return _TAG.sub(" ", r2.text).lower()[:120000]
+
+
+def classify(form, item_codes, text, exhibit_text=""):
+    """Return sorted list of signal keys for this filing.
+
+    `text` is the 8-K primary document; `exhibit_text` is the EX-99.1 press release (2.02 only).
+    The 5.02 officer-change logic reads ONLY the primary document on purpose — a results press
+    release is full of executive quotes and "transition"/"CEO" language that would otherwise
+    manufacture false departure tags. The 2.02 miss test reads both, since the guidance language
+    is only ever in the exhibit."""
     sigs = set()
     codes = re.findall(r"\d+\.\d+", item_codes or "")
     for c in codes:
@@ -168,7 +250,10 @@ def classify(form, item_codes, text):
         # else: 5.02 with no actual departure or new appointment (equity-plan amendment,
         # bylaw/charter change, comp arrangement, annual-meeting housekeeping) → no signal.
     if "2.02" in codes:
-        sigs.add("earnings_miss" if any(m in t for m in MISS_TERMS)
+        # Scan the cover page AND the press-release exhibit — the miss/guidance language is
+        # essentially always in the exhibit, never the cover.
+        results_text = t + " " + (exhibit_text or "")
+        sigs.add("earnings_miss" if any(m in results_text for m in MISS_TERMS)
                  else "results_update")
     return sorted(sigs)
 
@@ -228,7 +313,10 @@ def fetch_recent_filings_for_cik(cik, ticker, company, days, existing):
 
         need_text = form == "8-K" and ("5.02" in codes or "2.02" in codes)
         text = _doc_text(int(cik), acc_nodash, doc) if need_text else ""
-        sigs = classify(form, codes, text)
+        # For results filings, also pull EX-99.1 — the miss/guidance language is only there.
+        ex_text = (_exhibit_text(int(cik), acc_nodash)
+                   if (form == "8-K" and "2.02" in codes) else "")
+        sigs = classify(form, codes, text, ex_text)
 
         if form != "8-K" and not sigs:
             continue  # keep 8-Ks for the feed; skip routine 10-K/10-Q
