@@ -166,15 +166,27 @@ def index():
     return (STATIC_DIR / "index.html").read_text(encoding="utf-8")
 
 
+# The report is regenerated from live data on every request, so it must NEVER be cached. Without
+# these headers the browser happily reuses the landing-page iframe, which silently showed a stale
+# issue after a deploy (fixes appeared to "not deploy" when they were actually live). A stale
+# report in front of a partner is a real risk — always serve fresh.
+_REPORT_NOCACHE = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
 @app.get("/report", response_class=HTMLResponse)
 def report_page():
     """The biweekly Activist Vulnerability report as a standalone page — rendered in the app's
     Brief palette, embedded on the landing tab via an iframe, and emailed on the biweekly cron."""
     try:
-        return emailer.build_report_html()
+        body = emailer.build_report_html()
     except Exception as e:  # pragma: no cover
         return HTMLResponse(f"<p style='font-family:sans-serif;padding:24px'>Report temporarily "
-                            f"unavailable: {e}</p>", status_code=500)
+                            f"unavailable: {e}</p>", status_code=500, headers=_REPORT_NOCACHE)
+    return HTMLResponse(body, headers=_REPORT_NOCACHE)
 
 
 @app.get("/api/report/preview", response_class=HTMLResponse)
