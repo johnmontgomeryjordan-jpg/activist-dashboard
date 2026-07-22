@@ -183,7 +183,7 @@ def report_preview():
     return report_page()
 
 
-@app.post("/api/report/send-test")
+@app.api_route("/api/report/send-test", methods=["GET", "POST"])
 def report_send_test():
     """Build + send the biweekly report now (to the report recipients / subscribers). Manual
     trigger so a partner can send an issue without waiting for the biweekly cron."""
