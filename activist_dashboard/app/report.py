@@ -44,6 +44,28 @@ _VERDICT = {"bad": ("bad", "Weak"), "opp": ("opp", "Lever"), "mid": ("mid", "In 
 _METRIC_PRIORITY = ["cash_to_assets", "ev_ebitda", "pb_ratio", "operating_margin",
                     "revenue_growth", "goodwill_to_assets", "roa", "sga_pct", "debt_to_assets"]
 
+# Timing-radar copy, keyed by the card's archetype, so five upcoming prints don't all carry the
+# same sentence — each reads against the thesis that actually put the name on the board.
+_EARNINGS_WHY = {
+    "Cash Laggard": "Next earnings — another soft quarter strengthens the case that idle cash should be returned rather than sat on.",
+    "Turnaround": "Next earnings — the margin trajectory is the whole thesis; a miss hands a dissident the operating argument.",
+    "Value": "Next earnings — a weak print deepens the discount and the pressure for a strategic review.",
+    "Governance": "Next earnings — a soft quarter adds fuel to the board-accountability case ahead of the annual meeting.",
+}
+_EARNINGS_WHY_DEFAULT = "Next earnings — a soft print sharpens the thesis and the timing of any outreach."
+
+# Filing materiality for the "Filings of note" panel, most → least activist-relevant. A routine
+# "results_update" is deliberately absent: padding the panel with generic quarterly-results 8-Ks
+# from uncovered companies is noise (and makes the AI gloss collapse into boilerplate).
+_FILING_RANK = {"restatement": 0, "ceo_departure": 1, "earnings_miss": 2,
+                "impairment": 3, "layoffs": 4, "leadership_change": 5}
+
+
+def _filing_rank(sig_csv):
+    """Best (lowest) materiality rank among a filing's signals, or None if nothing material."""
+    keys = [s.strip() for s in (sig_csv or "").split(",") if s.strip() in _FILING_RANK]
+    return min((_FILING_RANK[k] for k in keys), default=None)
+
 
 def _esc(s):
     return html.escape(str(s or ""))
@@ -208,11 +230,17 @@ def assemble_headlines(board, *, get_news, get_broad, is_relevant, rank_relevant
             _add(n, tkr, card.get("company"), True)
             if len(collected) >= total:
                 return collected[:total]
-    # Backfill from the broad relevance-curated feed (already relevant_only) to reach `total`.
-    for n in rank_relevant(get_broad() or [], total * 4):
+    # Backfill from the broad relevance-curated feed to reach `total`. The item must match a
+    # company in OUR universe (matched_tickers), otherwise the international GDELT feed fills the
+    # section with unactionable foreign names — a UK pub chain, a Singapore retailer, a French
+    # locker business. Off-BOARD is welcome and useful; off-UNIVERSE is not.
+    for n in rank_relevant(get_broad() or [], total * 6):
         if len(collected) >= total:
             break
-        _add(n, (n.get("matched_tickers") or "").split(",")[0], None, False)
+        tk = (n.get("matched_tickers") or "").split(",")[0].strip()
+        if not tk:
+            continue
+        _add(n, tk, None, False)
     return collected[:total]
 
 
@@ -232,7 +260,7 @@ def assemble_radar(board, *, get_earnings, get_governance, today, horizon_days=1
         nd = _d(ear.get("next_date"))
         if nd and today <= nd <= horizon:
             items.append({"date": ear["next_date"][:10], "company": f"{co} ({tkr})",
-                          "why": "Next earnings — a soft print sharpens the thesis and the timing of any outreach."})
+                          "why": _EARNINGS_WHY.get(card.get("archetype"), _EARNINGS_WHY_DEFAULT)})
         gov = get_governance(cik) or {}
         md = _d(gov.get("meeting_date"))
         if md and today <= md <= horizon + timedelta(days=30):
@@ -269,23 +297,47 @@ def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None):
     )
     radar = assemble_radar(board, get_earnings=database.get_earnings,
                            get_governance=database.get_governance, today=today)
-    # Fill filings to 5: event-signal 8-Ks first, then backfill with any recent filing.
-    recent = database.recent_filings(limit=40) or []
-    filings = [f for f in recent if (f.get("signals") or "").strip()][:5]
+    # Filings of note: MATERIAL events first (restatement > CEO exit > miss > impairment > ...),
+    # ranked by materiality then recency. If that yields fewer than 5 we pad ONLY with filings from
+    # companies on this issue's board — never with routine quarterly-results 8-Ks from uncovered
+    # names, which read as filler and make the AI gloss generic.
+    recent = database.recent_filings(limit=60) or []
+    board_tickers = {(c.get("ticker") or "").upper() for c in board if c.get("ticker")}
+    board_names = {(c.get("company") or "").strip().lower() for c in board if c.get("company")}
+    material = [f for f in recent if _filing_rank(f.get("signals")) is not None]
+    material.sort(key=lambda f: (f.get("filed_at") or ""), reverse=True)   # recency
+    material.sort(key=lambda f: _filing_rank(f.get("signals")))            # then materiality (stable)
+    filings = material[:5]
     if len(filings) < 5:
         have = {f.get("url") for f in filings}
         for f in recent:
             if len(filings) >= 5:
                 break
-            if f.get("url") not in have:
+            if f.get("url") in have:
+                continue
+            if ((f.get("ticker") or "").upper() in board_tickers
+                    or (f.get("company") or "").strip().lower() in board_names):
                 filings.append(f)
 
     # Optional one-line AI summaries under each headline + filing (the Haiku layer). Best-effort:
     # if aithesis isn't available or has no summariser, items simply render without a gloss.
     _summ = summarize or _load_summarizer()
     if _summ:
-        _attach_summaries(headlines, "headline", _summ, kind="headline")
-        _attach_summaries(filings, "title", _summ, kind="filing")
+        def _h_ctx(h):
+            who = h.get("ticker") or "not identified"
+            where = ("This company IS on our activist-vulnerability board this issue."
+                     if h.get("on_board") else "This company is NOT on our board this issue.")
+            return f"Company/ticker: {who}. {where}"
+
+        def _f_ctx(f):
+            sig = (f.get("signals") or "none").replace("_", " ")
+            on = ((f.get("ticker") or "").upper() in board_tickers
+                  or (f.get("company") or "").strip().lower() in board_names)
+            return (f"Company: {f.get('company') or 'unknown'}. Filing signal: {sig}. "
+                    f"{'On our board this issue.' if on else 'Not on our board.'}")
+
+        _attach_summaries(headlines, "headline", _summ, kind="headline", ctx_fn=_h_ctx)
+        _attach_summaries(filings, "title", _summ, kind="filing", ctx_fn=_f_ctx)
 
     issue_date = f"{today.strftime('%B')} {today.day}, {today.year}" if hasattr(today, "strftime") else ""
     return {
@@ -305,10 +357,20 @@ def _load_summarizer():
     return fn if callable(fn) else None
 
 
-def _attach_summaries(items, textkey, summarize, kind):
+def _attach_summaries(items, textkey, summarize, kind, ctx_fn=None):
+    """Attach a one-line AI gloss to each item. `ctx_fn(item) -> str` supplies the factual
+    context (company, signal, on/off board) that keeps summaries specific rather than boilerplate.
+    Degrades safely: falls back to a context-free call, then to no summary at all."""
     for it in items or []:
+        s = None
         try:
-            s = summarize(it.get(textkey) or "", kind)
+            ctx = ctx_fn(it) if ctx_fn else None
+            s = summarize(it.get(textkey) or "", kind, context=ctx)
+        except TypeError:
+            try:                                  # summariser without a context parameter
+                s = summarize(it.get(textkey) or "", kind)
+            except Exception:
+                s = None
         except Exception:
             s = None
         if s:
