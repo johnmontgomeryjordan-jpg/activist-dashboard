@@ -38,7 +38,7 @@ FORMS = {"8-K", "10-K", "10-Q"}
 #             ("...furnished as Exhibit 99.1"), so the miss/guidance language was NEVER visible to
 #             the classifier — `earnings_miss` was unreachable universe-wide and every results 8-K
 #             fell through to note-only `results_update`. Re-classification is required to re-tag.
-CLASSIFIER_VERSION = "2026-07-22-item202-exhibit991-r8"  # r8: classify 2.02 on the press-release exhibit
+CLASSIFIER_VERSION = "2026-07-22-miss-tiered-anchored-r9"  # r8: classify 2.02 on the press-release exhibit
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
@@ -99,46 +99,108 @@ _DEP_MATERIAL_A = re.compile(_OFFICER_MATERIAL + r"[^.]{0,70}?\b" + _DEP_A, re.I
 _DEP_MATERIAL_B = re.compile(r"\b" + _DEP_B + r"\b[^.]{0,45}?\bas\b" + _LINK + _OFFICER_MATERIAL, re.I)
 _VP_STRIP = re.compile(r"(?:executive\s+|senior\s+|sr\.?\s+|group\s+|first\s+|corporate\s+)?"
                        r"vice[-\s]presidents?", re.I)
-MISS_TERMS = [
-    "below expectations", "below consensus", "below estimates", "below the prior",
-    # TIGHTENED for exhibit-scanning: bare "missed" / "shortfall" were safe against a one-page
-    # 8-K cover but are far too loose against a full press release — "shortfalls related to
-    # stock-based compensation" is routine tax-accounting boilerplate (it appears verbatim in
-    # Inspire's Q1-2026 release) and would spuriously tag an earnings miss universe-wide.
-    "missed expectations", "missed estimates", "missed consensus", "missed the",
-    "fell short", "falls short", "revenue shortfall", "earnings shortfall",
-    "lowered guidance",
-    "lower guidance", "lowers guidance", "lowering guidance", "reduced guidance",
-    "reduces guidance", "cut guidance", "cuts guidance", "cutting guidance",
-    "lowered its outlook", "lowered outlook", "reduced outlook", "cut its outlook",
-    "profit warning", "weaker than expected", "lower than expected",
-    "reduced its full-year", "lowered its full-year", "disappointing",
-    "decline in revenue", "revenue decline", "below its prior",
-    # Downward-revision language, now reachable because we read the EX-99.1 press release.
-    # DELIBERATELY EXCLUDES neutral verbs ("updates guidance", "revises guidance", "narrows
-    # guidance") — a guidance RAISE uses exactly those words, and a false "earnings miss" on a
-    # partner-facing report is far worse than a missed tag. Every phrase below is one-directional.
-    "below prior guidance", "below previous guidance", "below our prior",
-    "lowering our full-year", "lowering full-year", "lowering its full-year",
-    "reducing our full-year", "reducing full-year", "reduces its full-year",
-    "cuts its full-year", "cutting its full-year", "lowers its full-year",
-    "lowers outlook", "lowers its outlook", "lowering outlook", "lowering its outlook",
-    "reduces outlook", "reduces its outlook", "reduced its guidance", "lowered its guidance",
-    "withdraws guidance", "withdrawing guidance", "withdrew its guidance",
-    "suspends guidance", "suspending guidance", "withdraws its outlook",
-    "revised lower", "revising lower", "revised downward", "revising downward",
-    "trims guidance", "trimmed guidance", "trims its outlook", "trimmed its outlook",
-    "expects revenue to decline", "expect revenue to decline", "revenue to decline",
-    "lower than previously", "less than previously expected", "below prior expectations",
-    # The pattern a real guidance cut actually uses. Inspire's Q1-2026 release reads: "revising
-    # its previously announced revenue outlook to ... which REPRESENTS A DECLINE of 4% to 10%
-    # compared to 2025" — none of the phrasings above catch that, so the cut read as routine.
-    # "revising/updating guidance" alone stays out (a RAISE says the same); the decline framing
-    # is the one-directional part.
-    "represents a decline", "representing a decline", "represents a decrease",
-    "representing a decrease", "reflects a decline", "below the low end",
-    "below the midpoint", "lowering our outlook", "reducing our outlook",
+# --- earnings_miss vocabulary --------------------------------------------------------------------
+# TWO TIERS. This split exists because reading EX-99.1 changed the target from a ~1-page 8-K cover
+# to a ~20-page press release full of segment tables, and a flat substring list does not survive
+# that. Verified failure: Moody's Q1-2026 release — headline "ACHIEVED RECORD RESULTS", guidance
+# REAFFIRMED — contains "Transactional revenue declined 54%..." and "Leveraged loan revenue declined
+# year-over-year". The old bare term "revenue decline" substring-matched "revenue declined" and
+# tagged a record quarter as an earnings miss. Philip Morris (beat EPS and revenue, guidance
+# maintained) failed the same way. Some segment ALWAYS declines, so that term was a universal
+# false positive once we scanned the exhibit.
+#
+# STRONG: one-directional and self-sufficient. A raise/beat never phrases itself this way.
+MISS_TERMS_STRONG = [
+    "below expectations", "below consensus", "below estimates",
+    "missed expectations", "missed estimates", "missed consensus",
+    "fell short of expectations", "fell short of estimates", "fell short of consensus",
+    "profit warning", "disappointing",
+    "below prior guidance", "below previous guidance", "below our prior guidance",
+    "revised downward", "revising downward", "guidance revised lower",
 ]
+
+# The guidance-cut family is a REGEX, not a string list. Enumerating variants silently missed real
+# cuts: the list had "reducing our full-year" and "reducing full-year" but not "reducing ITS
+# full-year", so a genuine cut phrased that way read as routine. One pattern covers the whole
+# verb x determiner x noun space. Strictly one-directional — a raise never uses these verbs.
+_CUT_VERB = (r"(?:lower(?:s|ed|ing)?|reduc(?:e|es|ed|ing)|cut(?:s|ting)?|"
+             r"trim(?:s|med|ming)?|slash(?:es|ed|ing)?|withdraw(?:s|n|ing|ew)?|"
+             r"suspend(?:s|ed|ing)?)")
+_GUIDE_NOUN = r"(?:guidance|outlook|forecast|full[-\s]?year|fiscal[-\s]\d{4})"
+_CUT_GUIDANCE = re.compile(
+    _CUT_VERB + r"\s+(?:its|our|their|the)?\s*" + _GUIDE_NOUN, re.I)
+
+# WEAK: real miss language, but each one also appears verbatim in routine segment commentary,
+# tables and tax footnotes. Only counts when it sits within _GUIDANCE_WINDOW characters of a
+# forward-guidance anchor. This is the same header-anchoring discipline that fixed the governance
+# "What We Don't Do" false positives — proximity, not presence.
+#
+# DELETED OUTRIGHT (unfixable even with an anchor, because they match ordinary reporting):
+#   "revenue decline" / "decline in revenue"  -> match "revenue declined" in any segment table
+#   "missed the"                              -> matches "missed the deadline" and similar
+#   "fell short" / "falls short" (bare)       -> kept only in the "fell short of <bar>" forms above
+#   "shortfall" (bare, earlier fix)           -> "shortfalls related to stock-based compensation"
+MISS_TERMS_WEAK = [
+    "represents a decline", "representing a decline", "represents a decrease",
+    "representing a decrease", "reflects a decline",
+    "below the low end", "below the midpoint", "below the prior", "below its prior",
+    "expects revenue to decline", "expect revenue to decline", "revenue to decline",
+    "weaker than expected", "lower than expected", "lower than previously",
+    "less than previously expected", "below prior expectations",
+    "revised lower", "revising lower",
+    "revenue shortfall", "earnings shortfall",
+]
+
+# Kept as a flat union for any caller that still imports MISS_TERMS.
+MISS_TERMS = MISS_TERMS_STRONG + MISS_TERMS_WEAK
+
+_GUIDANCE_ANCHORS = ("guidance", "outlook", "now expects", "now expect",
+                     "full-year", "full year", "fiscal year")
+_GUIDANCE_WINDOW = 260
+
+# A release that RAISED or REAFFIRMED guidance cannot be tagged a miss on weak evidence alone.
+# Strong evidence still wins (a company can beat on EPS and still say "below consensus" on revenue).
+# REAFFIRM/MAINTAIN matter as much as RAISE: Philip Morris beat on both lines and said "reaffirms
+# its full-year 2026 adjusted diluted EPS growth guidance" — but its routine "cigarette shipment
+# volume ... representing a decline of 1.5%" sat inside the guidance proximity window, so anchoring
+# alone still tagged it a miss. The window is deliberately wide (8 intervening words) because the
+# bias here is one-sided: missing a tag costs us a signal, a false tag costs us credibility.
+_HELD_OR_RAISED = (r"(?:rais\w*|increas\w*|lift\w*|reaffirm\w*|reiterat\w*|maintain\w*|"
+                   r"confirm\w*|unchanged|on track)")
+_RAISE_NEAR_GUIDANCE = re.compile(
+    _HELD_OR_RAISED + r"\s+(?:\S+\s+){0,8}?(?:guidance|outlook)"
+    r"|(?:guidance|outlook)\s+(?:\S+\s+){0,8}?" + _HELD_OR_RAISED, re.I)
+
+
+def _weak_miss_hit(t):
+    """True if a weak miss phrase sits near forward-guidance language.
+
+    Inspire's real Q1-2026 cut reads: '...revising its previously announced revenue OUTLOOK to a
+    range of $X to $Y, which REPRESENTS A DECLINE of 4% to 10%...' — anchor and phrase ~60 chars
+    apart, so it fires. Moody's 'Leveraged loan revenue declined year-over-year' has no guidance
+    anchor anywhere near it, so it does not.
+    """
+    for term in MISS_TERMS_WEAK:
+        start = 0
+        while True:
+            i = t.find(term, start)
+            if i == -1:
+                break
+            window = t[max(0, i - _GUIDANCE_WINDOW): i + len(term) + _GUIDANCE_WINDOW]
+            if any(a in window for a in _GUIDANCE_ANCHORS):
+                return True
+            start = i + 1
+    return False
+
+
+def is_earnings_miss(results_text):
+    """Tiered miss detection over the 8-K cover page + EX-99.1 press release."""
+    t = results_text or ""
+    if any(m in t for m in MISS_TERMS_STRONG) or _CUT_GUIDANCE.search(t):
+        return True
+    if _RAISE_NEAR_GUIDANCE.search(t):
+        return False
+    return _weak_miss_hit(t)
 
 
 def _get(url):
@@ -253,8 +315,7 @@ def classify(form, item_codes, text, exhibit_text=""):
         # Scan the cover page AND the press-release exhibit — the miss/guidance language is
         # essentially always in the exhibit, never the cover.
         results_text = t + " " + (exhibit_text or "")
-        sigs.add("earnings_miss" if any(m in results_text for m in MISS_TERMS)
-                 else "results_update")
+        sigs.add("earnings_miss" if is_earnings_miss(results_text) else "results_update")
     return sorted(sigs)
 
 
