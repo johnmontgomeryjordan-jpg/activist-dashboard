@@ -136,21 +136,25 @@ _SUMMARY_SYSTEM = (
 _summary_cache = {}
 
 
-def summarize_line(text, kind="headline", api_key=None, mdl=None, timeout=20):
+def summarize_line(text, kind="headline", context=None, api_key=None, mdl=None, timeout=20):
     """One-sentence analyst gloss of a report headline/filing, or None on any failure/no key.
-    Grounded strictly in `text`; safe/additive (the report renders without it if unavailable)."""
+    Grounded strictly in `text` (+ the factual `context` line the caller supplies: company,
+    signal type, whether it's a covered name). Context is what stops five routine "Results"
+    8-Ks all collapsing to the same boilerplate sentence."""
     text = (text or "").strip()
     if not text:
         return None
     api_key = api_key or key()
     if not api_key:
         return None
-    ck = (kind, text)
+    ck = (kind, text, context or "")
     if ck in _summary_cache:
         return _summary_cache[ck]
+    ctx = f"\nCONTEXT (factual, use it): {context}" if context else ""
     prompt = (f"In ONE sentence (max ~22 words), explain to an activist-defense analyst why this "
-              f"{kind} matters, using ONLY the {kind} text and inventing nothing.\n\n"
-              f"{kind.upper()}: {text}")
+              f"{kind} matters, using ONLY the {kind} text and the context below, inventing nothing. "
+              f"Be specific to THIS company — do not write a generic sentence that would fit any "
+              f"company.\n\n{kind.upper()}: {text}{ctx}")
     body = {
         "model": mdl or model(),
         "max_tokens": 90,
