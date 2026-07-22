@@ -551,6 +551,51 @@ _TICK_STOP = _TICK_SUFFIX | {
     "ventures", "insurance", "securities", "investments", "investment", "management", "trust"}
 _KEY_CACHE = {}
 
+# Common English words that are ALSO real tickers. A bare standalone word like "five" or "open"
+# in a headline is far more likely the ordinary word than a reference to Five Below (FIVE) or
+# Opendoor (OPEN) -- so these are NOT accepted via the bare-ticker path in _ticker_hit(). They can
+# still match with an UNAMBIGUOUS ticker context ($FIVE, "(NASDAQ: FIVE)") or via the company's
+# NAME appearing in the headline ("Five Below"), which is the correct anchor. This is what fixes
+# 'UK retailers issue FIVE profit warnings' being tagged Five Below, and the same class of error
+# for any word-like ticker. Extend freely -- membership only ever REMOVES a weak bare-word match,
+# never a name/cashtag/exchange match, so adding a word here cannot cause a wrong tag.
+_COMMON_WORD_TICKERS = {
+    "five", "four", "nine", "open", "love", "well", "play", "fast", "good", "best", "real",
+    "true", "free", "safe", "edge", "peak", "path", "gold", "iron", "cost", "rent", "loan",
+    "cash", "ride", "work", "live", "life", "care", "home", "hood", "plug", "boom", "wise",
+    "rise", "move", "grow", "news", "time", "pool", "wave", "leap", "step", "gain", "lock",
+    "seat", "roof", "book", "read", "post", "sign", "wall", "road", "lane", "park", "farm",
+    "seed", "corn", "fuel", "coal", "mine", "ship", "boat", "lift", "beam", "bolt", "bond",
+    "hunt", "camp", "dock", "port", "fort", "peak", "wing", "star", "moon", "atom", "cell",
+    "gene", "flow", "loop", "node", "byte", "chip", "code", "link", "mode", "unit", "beta",
+    "buzz", "deck", "dice", "duo", "epic", "flex", "grid", "halo", "hero", "ionq", "jazz",
+    "aura", "onto", "very", "sofi", "upst",
+    # 5+ letter common words that are tickers
+    "block", "smart", "prime", "swift", "sharp", "solid", "clear", "trade", "stock", "share",
+    "value", "yield", "money", "trust", "power", "spark", "pulse", "vital", "quest", "focus",
+    "bloom", "cargo", "crown", "eagle", "field", "flash", "flint", "frost", "globe", "grace",
+    "amble", "match", "media", "arena", "asset", "audio", "bench", "boost", "brave", "bumble",
+}
+# Only length >= 4 tickers ever reach the bare-word path, so 3-letter words don't need listing.
+
+# Bump this string whenever the matcher logic changes. On the first ingest after deploy, every
+# stored headline is re-checked with the current matcher (see _retag_stored_if_needed), so stale
+# tags from an older matcher -- e.g. an ADBE tag on a ServiceNow headline -- clear at once instead
+# of lingering up to ~21 days until the row ages out.
+MATCHER_VERSION = "2026-07-22-commonword-guard-r1"
+
+# The broad feed and per-company (Finnhub) headlines live in the SAME `news` table with no column
+# recording which feed a row came from. A per-company row is deliberately tagged with its ticker
+# even when the headline never repeats the company name, so a blanket "drop every tag the matcher
+# no longer reproduces" would silently un-link legitimate profile headlines. Hence the re-tag is
+# CONSERVATIVE by default: it only drops a stale tag when that ticker is a common English word
+# (the exact class the new guard fixes, e.g. FIVE) -- which can never be a real standalone
+# per-company tag surviving on its own. Flip this env flag to also clear NON-common-word ghosts
+# (the ADBE-on-a-ServiceNow-headline case); that clears more but can briefly un-link the odd
+# legitimate headline until the next company-news refresh re-adds it. Start conservative, read the
+# retag count in the logs, then decide.
+RETAG_CLEAR_ALL_UNMATCHED = os.getenv("RETAG_CLEAR_ALL_UNMATCHED", "0") == "1"
+
 
 def _company_keys(name):
     """(core_phrase, {distinctive keys}) for a company name — the full multi-word core plus any
@@ -595,7 +640,11 @@ def _ticker_hit(norm_head, raw_head, tk):
         return True
     if re.search(r"\(\s*(?:[a-z\. ]{0,10}:\s*)?" + re.escape(t) + r"\s*\)", low):
         return True
-    if len(t) >= 4 and re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", norm_head):
+    # A >=4-char ticker as a bare standalone word -- but NOT when that "ticker" is really a common
+    # English word (five, open, cost, ...), which collides far more often than it refers to the
+    # company. Those must arrive via a cashtag/exchange/paren (handled above) or the company name.
+    if (len(t) >= 4 and t not in _COMMON_WORD_TICKERS
+            and re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", norm_head)):
         return True
     return False
 
@@ -659,8 +708,58 @@ def _prune_stored():
         return 0
 
 
+def _retag_stored_if_needed(companies):
+    """One-time re-tag of stored headlines after a matcher change, gated by MATCHER_VERSION and
+    mirroring edgar's version-bump re-parse: it runs on the first ingest after a deploy that
+    changed the version string, then no-ops on every later run. For each row it re-runs the
+    current matcher and DROPS a stale tag the matcher no longer produces -- but, per the note on
+    RETAG_CLEAR_ALL_UNMATCHED, only for common-word tickers by default so legitimate per-company
+    tags are preserved. It never adds tags and never deletes rows (pruning stays in
+    _prune_stored). Best-effort: any DB error is swallowed so a cleanup hiccup can't stall the
+    feed."""
+    if not companies:
+        return 0
+    try:
+        with database.get_conn() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS news_meta (key TEXT PRIMARY KEY, val TEXT)")
+            cur = conn.execute(
+                "SELECT val FROM news_meta WHERE key='matcher_version'").fetchone()
+            if cur is not None and cur["val"] == MATCHER_VERSION:
+                return 0
+            rows = conn.execute("SELECT id, headline, matched_tickers FROM news").fetchall()
+            changed = 0
+            for r in rows:
+                old = [t for t in (r["matched_tickers"] or "").split(",") if t]
+                if not old:
+                    continue                       # untagged broad rows: nothing to clean
+                newset = set(_match_tickers(r["headline"], companies))
+                keep = []
+                for t in old:
+                    if t in newset:
+                        keep.append(t)             # still a valid match — keep
+                    elif t.lower() in _COMMON_WORD_TICKERS or RETAG_CLEAR_ALL_UNMATCHED:
+                        continue                   # stale common-word (or, if flagged, any) — drop
+                    else:
+                        keep.append(t)             # preserve: may be a legit per-company tag
+                newval = ",".join(keep)
+                if newval != (r["matched_tickers"] or ""):
+                    conn.execute("UPDATE news SET matched_tickers=? WHERE id=?",
+                                 (newval, r["id"]))
+                    changed += 1
+            conn.execute(
+                "INSERT OR REPLACE INTO news_meta(key, val) VALUES('matcher_version', ?)",
+                (MATCHER_VERSION,))
+        print(f"[news] retag {MATCHER_VERSION}: cleaned {changed} stale-tag row(s) "
+              f"(clear_all_unmatched={RETAG_CLEAR_ALL_UNMATCHED})", flush=True)
+        return changed
+    except Exception as e:  # noqa: BLE001 - never let a cleanup error stall ingestion
+        print(f"[news] retag skipped (non-fatal): {e}", flush=True)
+        return 0
+
+
 def ingest(companies, limit=40):
     provider = (config.NEWS_PROVIDER or "newsapi").lower()
+    _retag_stored_if_needed(companies)   # one-time stale-tag cleanup after a matcher-version bump
     articles = fetch_headlines(limit)
     seen, kept = set(), 0
     for a in articles:
