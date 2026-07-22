@@ -506,7 +506,20 @@ def _render_card(card, lead=False):
   </div>"""
 
 
-def render_html(model):
+def render_html(model, email=False, site_url=None):
+    """Render the report model to HTML.
+
+    email=False (default) -> the /report web page: a <style> block driving CSS grid/flexbox.
+      This is the path the site and /api/report/preview use and it is deliberately unchanged.
+    email=True            -> the inbox-safe render (inline styles, <table> layout, absolute
+      URLs resolved against SITE_URL). Gmail strips <style> blocks outright, which is why the
+      web markup cannot simply be reused in an email.
+
+    The flag is a thin switch, not a fork in the rendering logic: both modes consume the exact
+    same model, so the emailed issue and the web page cannot drift apart in substance.
+    """
+    if email:
+        return render_email_html(model, site_url=site_url)
     board = model.get("board") or []
     cards = "".join(_render_card(c, lead=(i == 0)) for i, c in enumerate(board)) \
         or '<div class="empty">No qualifying names this issue.</div>'
@@ -571,3 +584,274 @@ def render_html(model):
     <p><b>FGS Global</b> &middot; Situations &amp; Shareholder Advisory &middot; Internal — not for external distribution.</p>
   </div>
 </div></body></html>"""
+
+
+# ---- email rendering (inline styles, table layout) -------------------------------------
+# render_html() above targets the /report web page: a <style> block driving CSS grid/flexbox,
+# which most mail clients (Outlook/Gmail app strip <style>, ignore grid/flex) will mangle. This
+# is the email-safe twin: same model, same content and section order, but every rule is inlined
+# on the element and layout runs on <table> instead of div/grid. Internal links (the profile deep
+# link) are resolved to absolute URLs via SITE_URL since a relative href is meaningless once the
+# HTML is lifted out of the browser and into an inbox.
+_EBAND_CSS = {"v3": ("#f4e4e2", "#b23b32"), "v2": ("#f1e7d4", "#9a6a18"), "v1": ("#e6eef7", "#2f5fa6")}
+_ECHIP_CSS = {"bad": ("#f4e4e2", "#b23b32"), "opp": ("#f1e7d4", "#9a6a18"), "mid": ("#f1eee4", "#79766b")}
+
+
+def _abs_url(url, site_url):
+    """Resolve a possibly-relative URL against SITE_URL. Filing/news links from SEC/press
+    sources already arrive absolute; this only matters for in-app links like the profile deep
+    link, which are relative by design on the web page."""
+    if not url:
+        return url
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    return f"{(site_url or '').rstrip('/')}/{str(url).lstrip('/')}"
+
+
+def _render_metrics_email(metrics, per_row=2):
+    """Metric cards as a fixed-width table grid. The web page lays these out 4-across via CSS
+    grid and collapses to 2-across under 640px; an email IS that narrow, so 2-across is the
+    faithful equivalent rather than a compromise. Odd counts are padded with an empty cell —
+    without it a lone metric stretches to full width and reads like a rendering fault."""
+    if not metrics:
+        return ""
+    cells = []
+    for m in metrics:
+        bg, fg = _ECHIP_CSS.get(m.get("chip_class"), _ECHIP_CSS["mid"])
+        cells.append(f"""
+        <td width="{int(100 / per_row)}%" valign="top" style="padding:5px;">
+          <table role="presentation" width="100%" style="background:#f6f4ee;border:1px solid #e3ded2;border-radius:8px;border-collapse:separate;">
+            <tr><td style="padding:10px 12px;">
+              <table role="presentation" width="100%" style="border-collapse:collapse;"><tr>
+                <td valign="top" style="font-size:9.5px;line-height:1.3;letter-spacing:.06em;text-transform:uppercase;color:#79766b;font-weight:600;">{_esc(m["label"])}</td>
+                <td valign="top" align="right" style="white-space:nowrap;padding-left:6px;"><span style="font-size:9px;letter-spacing:.06em;text-transform:uppercase;font-weight:700;padding:2px 7px;border-radius:4px;background:{bg};color:{fg};">{_esc(m["chip_label"])}</span></td>
+              </tr></table>
+              <div style="font-family:Georgia,'Times New Roman',serif;font-size:19px;font-weight:500;margin-top:3px;color:#1c1b18;">{_esc(m["value"])}</div>
+            </td></tr>
+          </table>
+        </td>""")
+    filler = f'<td width="{int(100 / per_row)}%" style="padding:5px;">&nbsp;</td>'
+    rows = ""
+    for i in range(0, len(cells), per_row):
+        chunk = cells[i:i + per_row]
+        rows += f'<tr>{"".join(chunk)}{filler * (per_row - len(chunk))}</tr>'
+    return (f'<table role="presentation" width="100%" style="border-collapse:collapse;'
+            f'margin-top:12px;table-layout:fixed;">{rows}</table>')
+
+
+def _render_points_email(points):
+    if not points:
+        return ""
+    rows = "".join(
+        f'''<tr>
+          <td width="24" valign="top" style="padding:11px 0;{'border-top:1px solid #e3ded2;' if i > 1 else ''}">
+            <span style="font-family:Georgia,'Times New Roman',serif;font-size:16px;font-weight:600;color:#15724e;">{i}</span>
+          </td>
+          <td valign="top" style="padding:11px 0 11px 12px;font-size:14px;line-height:1.55;color:#1c1b18;{'border-top:1px solid #e3ded2;' if i > 1 else ''}">{_esc(p)}</td>
+        </tr>'''
+        for i, p in enumerate(points, 1)
+    )
+    return f'<table role="presentation" width="100%" style="border-collapse:collapse;margin-top:8px;">{rows}</table>'
+
+
+def _render_card_email(card, site_url, lead=False):
+    band_bg, band_fg = _EBAND_CSS.get(card.get("band_cls"), _EBAND_CSS["v1"])
+    border_left = "border-left:3px solid #15724e;" if lead else ""
+
+    cat = card.get("catalyst")
+    cat_html = ""
+    if cat and cat.get("sentence"):
+        link = (f' <a href="{_esc(_abs_url(cat.get("url"), site_url))}" style="color:#2f5fa6;text-decoration:none;">filing &rarr;</a>'
+                if cat.get("url") else "")
+        cat_html = f"""
+      <tr><td style="padding:12px 15px;background:#f7f1e3;border:1px solid #e6d9b6;border-left:3px solid #9a6a18;border-radius:0 8px 8px 0;font-size:13.5px;line-height:1.55;color:#1c1b18;">
+        <span style="display:block;color:#9a6a18;text-transform:uppercase;font-size:10px;letter-spacing:.12em;font-weight:700;margin-bottom:4px;">Catalyst &middot; {_esc(cat.get("date_pretty"))}</span>
+        {_esc(cat.get("sentence"))}{link}
+      </td></tr>
+      <tr><td style="height:12px;line-height:12px;font-size:0;">&nbsp;</td></tr>"""
+
+    caveat_html = ""
+    if card.get("caveat"):
+        caveat_html = f"""
+      <tr><td style="padding:9px 13px;background:#eef3f8;border:1px solid #d8e2ee;border-radius:8px;font-size:12.5px;color:#2f5fa6;">{_esc(card["caveat"])}</td></tr>
+      <tr><td style="height:6px;line-height:6px;font-size:0;">&nbsp;</td></tr>"""
+
+    arch_html = (f'<span style="display:inline-block;margin-top:9px;font-size:10.5px;font-weight:700;letter-spacing:.08em;'
+                f'text-transform:uppercase;background:#f1eee4;color:#79766b;border-radius:4px;padding:3px 10px;">{_esc(card["archetype"])}</span>'
+                if card.get("archetype") else "")
+
+    pts_html = _render_points_email(card.get("points") or [])
+    mets_html = _render_metrics_email(card.get("metrics") or [])
+
+    src = (f'Catalyst: <a href="{_esc(_abs_url(cat["url"], site_url))}" style="color:#2f5fa6;text-decoration:none;">SEC 8-K, {_esc(cat.get("date_pretty"))}</a> &middot; Financials: SEC filings'
+           if cat and cat.get("url") else "Financials: SEC filings")
+    profile = ""
+    if card.get("cik"):
+        profile_url = _abs_url(f"/?company={card.get('cik')}", site_url)
+        profile = (f'<a href="{_esc(profile_url)}" style="background:#15724e;color:#ffffff;text-decoration:none;'
+                  f'padding:8px 15px;border-radius:6px;font-size:12.5px;font-weight:600;white-space:nowrap;">View full profile &rarr;</a>')
+
+    return f"""
+  <table role="presentation" width="100%" style="background:#fffdf8;border:1px solid #e3ded2;{border_left}border-radius:10px;border-collapse:separate;margin:0 0 16px;">
+    <tr><td style="padding:22px 24px;">
+      <table role="presentation" width="100%" style="border-collapse:collapse;">
+        <tr>
+          <td valign="top">
+            <div style="font-family:Georgia,'Times New Roman',serif;font-size:22px;color:#1c1b18;">
+              <span style="color:#15724e;">{_esc(card.get('ticker'))}</span> &middot; {_esc(card.get('company'))}
+            </div>
+            <div style="color:#79766b;font-size:12.5px;margin-top:5px;">mkt cap {_esc(card.get('market_cap'))}</div>
+            {arch_html}
+          </td>
+          <td valign="top" align="center" width="90">
+            <table role="presentation" style="margin-left:auto;"><tr><td align="center" style="background:{band_bg};color:{band_fg};border-radius:6px;padding:6px 12px;font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:20px;">{_esc(card.get('vuln'))}</td></tr></table>
+            <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;margin-top:5px;color:{band_fg};">{_esc(card.get('band'))}</div>
+            <div style="font-size:10px;color:#9a978b;margin-top:2px;">Rating</div>
+          </td>
+        </tr>
+      </table>
+      <table role="presentation" width="100%" style="border-collapse:collapse;margin-top:14px;">
+        {cat_html}
+        <tr><td style="font-family:Georgia,'Times New Roman',serif;font-size:17px;line-height:1.6;color:#1c1b18;">{_esc(card.get('thesis'))}</td></tr>
+        {caveat_html}
+      </table>
+      {pts_html}
+      {mets_html}
+      <table role="presentation" width="100%" style="border-collapse:collapse;margin-top:16px;"><tr>
+        <td style="color:#9a978b;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;">{src}</td>
+        <td align="right">{profile}</td>
+      </tr></table>
+    </td></tr>
+  </table>"""
+
+
+def _hl_item_email(h, site_url):
+    if h.get("on_board") and h.get("ticker"):
+        tag = f'<span style="font-size:11px;padding:1px 8px;border-radius:4px;background:#e7f0ea;color:#15724e;">{_esc(h.get("ticker"))} &middot; on board</span>'
+    elif h.get("ticker"):
+        tag = f'<span style="font-size:11px;padding:1px 8px;border-radius:4px;background:#f1eee4;color:#79766b;">{_esc(h.get("ticker"))}</span>'
+    else:
+        tag = ""
+    isum = (f'<div style="color:#79766b;font-size:12px;line-height:1.5;margin-top:5px;font-style:italic;">'
+           f'<b style="color:#15724e;font-style:normal;font-weight:700;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px;">AI</b>{_esc(h["summary"])}</div>'
+           if h.get("summary") else "")
+    return f"""
+      <tr><td style="padding:13px 18px;border-bottom:1px solid #e3ded2;">
+        <a href="{_esc(_abs_url(h.get('url'), site_url))}" style="color:#1c1b18;text-decoration:none;font-weight:500;">{_esc(h.get('headline'))}</a>
+        {isum}
+        <div style="color:#9a978b;font-size:11.5px;margin-top:5px;">{tag}&nbsp;&nbsp;{_esc(h.get('source'))} &middot; {_esc(h.get('date'))}</div>
+      </td></tr>"""
+
+
+def _fl_item_email(f, site_url):
+    sig = (f.get("signals") or "").split(",")[0].replace("_", " ").title() or "Filing"
+    isum = (f'<div style="color:#79766b;font-size:12px;line-height:1.5;margin-top:5px;font-style:italic;">'
+           f'<b style="color:#15724e;font-style:normal;font-weight:700;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px;">AI</b>{_esc(f["summary"])}</div>'
+           if f.get("summary") else "")
+    return f"""
+      <tr><td style="padding:13px 18px;border-bottom:1px solid #e3ded2;">
+        <a href="{_esc(_abs_url(f.get('url'), site_url))}" style="color:#1c1b18;text-decoration:none;font-weight:500;">{_esc(f.get('company'))} — {_esc(f.get('title'))}</a>
+        {isum}
+        <div style="color:#9a978b;font-size:11.5px;margin-top:5px;">
+          <span style="font-size:11px;padding:1px 8px;border-radius:4px;background:#f1e7d4;color:#9a6a18;">{_esc(sig)}</span>
+          &nbsp;&nbsp;{_esc(f.get('filed_at'))}
+        </div>
+      </td></tr>"""
+
+
+def render_email_html(model, site_url=None):
+    """Email-safe render of the biweekly report model: inline styles + <table> layout only (no
+    <style> block, no grid/flex), so it survives Gmail/Outlook/Apple Mail sanitization intact.
+    Same content and section order as render_html() (the /report web page), so the emailed issue
+    and the site page never drift apart in substance -- only in markup. All internal links
+    (currently just the profile deep link) are resolved to absolute via `site_url`; when the
+    caller doesn't pass one we fall back to config.SITE_URL, so a relative href can never reach
+    an inbox as the invalid `http:///?company=...` a browser-less client produces."""
+    if site_url is None:
+        try:
+            from . import config as _cfg
+            site_url = getattr(_cfg, "SITE_URL", "") or ""
+        except Exception:
+            site_url = ""
+    board = model.get("board") or []
+    cards = "".join(_render_card_email(c, site_url, lead=(i == 0)) for i, c in enumerate(board)) \
+        or '<p style="color:#9a978b;padding:20px 0;">No qualifying names this issue.</p>'
+
+    hl_rows = "".join(_hl_item_email(h, site_url) for h in (model.get("headlines") or []))
+    hl = (f'<table role="presentation" width="100%" style="border-collapse:collapse;">{hl_rows}</table>'
+          if hl_rows else '<p style="color:#9a978b;padding:14px 18px;margin:0;">No relevant headlines.</p>')
+
+    fl_rows = "".join(_fl_item_email(f, site_url) for f in (model.get("filings") or []))
+    fl = (f'<table role="presentation" width="100%" style="border-collapse:collapse;">{fl_rows}</table>'
+          if fl_rows else '<p style="color:#9a978b;padding:14px 18px;margin:0;">No notable filings.</p>')
+
+    # Column widths mirror the web page's <colgroup> (18/30/52). Without them the browser
+    # auto-sizes and a name like "Builders FirstSource (BLDR)" wraps onto three lines.
+    _rth = ('padding:11px 16px;border-bottom:1px solid #e3ded2;color:#79766b;font-size:10.5px;'
+            'text-transform:uppercase;letter-spacing:.1em;font-weight:700;')
+    _rtd = 'padding:12px 16px;border-bottom:1px solid #e3ded2;vertical-align:top;'
+    radar_rows = "".join(
+        f'<tr><td style="{_rtd}color:#2f5fa6;font-weight:700;white-space:nowrap;font-size:13px;">{_esc(r.get("date"))}</td>'
+        f'<td style="{_rtd}font-size:13.5px;"><b>{_esc(r.get("company"))}</b></td>'
+        f'<td style="{_rtd}font-size:13.5px;line-height:1.5;">{_esc(r.get("why"))}</td></tr>'
+        for r in (model.get("radar") or []))
+    radar_html = (f'<table role="presentation" width="100%" style="border-collapse:collapse;table-layout:fixed;">'
+                  f'<colgroup><col style="width:22%"><col style="width:30%"><col style="width:48%"></colgroup>'
+                  f'<tr><th align="left" style="{_rth}">When</th>'
+                  f'<th align="left" style="{_rth}">Company</th>'
+                  f'<th align="left" style="{_rth}">Why it matters</th></tr>'
+                  f'{radar_rows}</table>'
+                  if radar_rows else '<p style="color:#9a978b;padding:16px 18px;margin:0;">No dated events over the fortnight.</p>')
+
+    def panel(title, inner):
+        """Bordered cream panel. `title=None` renders the panel with no header strip — the
+        radar table carries its own When/Company/Why header row, so titling it as well would
+        stack two headers, which the web page doesn't do."""
+        head = (f'<tr><td style="padding:14px 18px;border-bottom:1px solid #e3ded2;color:#79766b;'
+                f'font-size:11px;text-transform:uppercase;letter-spacing:.16em;font-weight:700;">{_esc(title)}</td></tr>'
+                if title else "")
+        return (f'<table role="presentation" width="100%" style="background:#fffdf8;border:1px solid #e3ded2;border-radius:10px;border-collapse:separate;">'
+                f'{head}<tr><td>{inner}</td></tr></table>')
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light"><title>FGS — Activist Vulnerability · Biweekly</title></head>
+<body style="margin:0;padding:0;background:#f6f4ee;">
+<table role="presentation" width="100%" style="background:#f6f4ee;border-collapse:collapse;"><tr><td align="center">
+<table role="presentation" width="640" style="max-width:640px;width:100%;border-collapse:collapse;">
+  <tr><td style="padding:26px 26px 16px;border-bottom:2px solid #1c1b18;">
+    <div style="color:#15724e;font-weight:700;font-size:11.5px;letter-spacing:.26em;text-transform:uppercase;">FGS Global &middot; Situations &amp; Shareholder Advisory</div>
+    <div style="font-family:Georgia,'Times New Roman',serif;font-size:28px;margin:8px 0 0;font-weight:500;color:#1c1b18;">Activist Vulnerability — Biweekly</div>
+    <div style="color:#9a978b;font-size:12.5px;margin-top:6px;">Predictive activist-defense intelligence &middot; free public data &middot; fortnightly</div>
+    <table role="presentation" width="100%" style="margin-top:14px;"><tr>
+      <td style="font-size:12px;color:#79766b;">Fortnight of <b style="color:#1c1b18;">{_esc(model.get('issue_date'))}</b></td>
+      <td align="right" style="font-size:12px;color:#79766b;">Screen: <b style="color:#1c1b18;">S&amp;P 1500</b> &middot; SEC / market / news</td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:24px 26px 0;">
+
+    <div style="font-family:Georgia,'Times New Roman',serif;font-size:20px;font-weight:500;color:#1c1b18;margin:0 0 4px;">This fortnight's board</div>
+    <p style="color:#79766b;font-size:13px;line-height:1.6;margin:0 0 18px;">The names screening highest for activist exposure, each paired with the driving catalyst.
+    A rating (0&ndash;92) of how strongly a company matches the profile activists target — <b>not</b> a probability
+    of a campaign. Every figure traces to a filing.</p>
+    {cards}
+
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:#79766b;font-weight:700;margin:26px 0 12px;">Relevant headlines</div>
+    {panel("On the board", hl)}
+    <div style="height:16px;line-height:16px;font-size:0;">&nbsp;</div>
+    {panel("Filings of note", fl)}
+
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.16em;color:#79766b;font-weight:700;margin:26px 0 12px;">Timing radar</div>
+    {panel(None, radar_html)}
+
+    <div style="margin-top:30px;padding-top:16px;border-top:1px solid #e3ded2;font-size:11.5px;color:#79766b;line-height:1.6;">
+      <p style="margin:0 0 8px;"><b style="color:#1c1b18;">How to read this.</b> The rating blends valuation, relative underperformance, balance-sheet slack,
+      governance friction and fresh catalysts across the S&amp;P 1500, measured against each company's industry
+      peers, on free public data. It flags <b style="color:#1c1b18;">exposure, not an active campaign</b>. Every catalyst links its filing.</p>
+      <p style="margin:0;"><b style="color:#1c1b18;">FGS Global</b> &middot; Situations &amp; Shareholder Advisory &middot; Internal — not for external distribution.</p>
+    </div>
+  </td></tr>
+  <tr><td style="height:26px;line-height:26px;font-size:0;">&nbsp;</td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
