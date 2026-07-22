@@ -226,12 +226,10 @@ def send_one(to_email, subject, html_body):
     return ok
 
 
-def send_digest():
-    """Build today's emailed pitch kit and send to every subscriber. Returns count sent."""
-    subs = database.get_subscribers()
-    if not subs:
-        print("[email] no subscribers; nothing to send")
-        return 0
+def _build_digest():
+    """Assemble the daily pitch-kit body + subject once, so send_digest() (all subscribers) and
+    send_test_digest() (one address) render byte-identical email and can never drift. Returns
+    (subject, html_body)."""
     rows = database.get_scores(limit=80)
     lead = spotlight.todays_lead(rows, database)
     # Curated + ranked by activist-relevance (ownership/activism first), not just most-recent, so
@@ -242,6 +240,16 @@ def send_digest():
     subject = "FGS — Daily Pitch Kit"
     if lead:
         subject += f": {lead.get('company')}"
+    return subject, body
+
+
+def send_digest():
+    """Build today's emailed pitch kit and send to every subscriber. Returns count sent."""
+    subs = database.get_subscribers()
+    if not subs:
+        print("[email] no subscribers; nothing to send")
+        return 0
+    subject, body = _build_digest()
     sent = 0
     for email in subs:
         if send_one(email, subject, body):
@@ -250,13 +258,48 @@ def send_digest():
     return sent
 
 
+def send_test_digest(to_email):
+    """Send the daily pitch-kit digest to exactly one address. Mirrors send_test_report's guard:
+    a missing/blank/list `to_email` is a hard no-op rather than a silent fallback to the whole
+    subscriber list, and the subject is tagged [TEST]. Same real digest body as send_digest();
+    only the audience differs. Returns True/False."""
+    if not to_email or not isinstance(to_email, str) or "@" not in to_email or "," in to_email:
+        print(f"[email] send_test_digest needs one explicit recipient; got: {to_email!r}")
+        return False
+    subject, body = _build_digest()
+    ok = send_one(to_email, f"[TEST] {subject}", body)
+    print(f"[email] test digest to {to_email}: {'ok' if ok else 'FAILED'}")
+    return ok
+
+
 def build_report_html():
-    """Assemble + render the biweekly report HTML (also used by the /report page + preview)."""
+    """Assemble + render the biweekly report HTML for the /report web page + browser preview.
+    Uses report.render_html() -- the CSS-grid version -- since a browser tab has no need for the
+    table-layout/inline-style contortions email clients require. NOT what gets emailed; see
+    build_report_email_html() / send_report() for that."""
     from . import report, catalyst, aithesis
     model = report.assemble(database, catalyst, news,
                             limit=config.REPORT_BOARD_SIZE,
                             summarize=aithesis.summarize_line)
     return report.render_html(model)
+
+
+def _assemble_report_model():
+    from . import report, catalyst, aithesis
+    return report.assemble(database, catalyst, news,
+                           limit=config.REPORT_BOARD_SIZE,
+                           summarize=aithesis.summarize_line)
+
+
+def build_report_email_html(model=None):
+    """Render the biweekly report the way it actually goes out: inline styles + <table> layout,
+    with internal links resolved to absolute via SITE_URL. Same renderer and same model as the
+    web page -- only the `email=True` flag differs -- because <style> blocks and CSS grid get
+    stripped or mangled by Gmail/Outlook/Apple Mail, so the inbox needs its own markup even
+    though the content is identical."""
+    from . import report
+    model = model or _assemble_report_model()
+    return report.render_html(model, email=True, site_url=config.SITE_URL)
 
 
 def send_report(recipients=None):
@@ -267,11 +310,8 @@ def send_report(recipients=None):
     if not to:
         print("[report] no recipients; nothing to send")
         return 0
-    from . import report, catalyst, aithesis
-    model = report.assemble(database, catalyst, news,
-                            limit=config.REPORT_BOARD_SIZE,
-                            summarize=aithesis.summarize_line)
-    body = report.render_html(model)
+    model = _assemble_report_model()
+    body = build_report_email_html(model)
     subject = f"FGS — Activist Vulnerability (biweekly) · {model.get('issue_date')}"
     sent = 0
     for email in to:
@@ -279,3 +319,25 @@ def send_report(recipients=None):
             sent += 1
     print(f"[report] biweekly report sent to {sent}/{len(to)}")
     return sent
+
+
+def send_test_report(to_email):
+    """Send the biweekly report to exactly one address, for previewing the real email render
+    before it goes to the distribution list. Guard: this never falls back to REPORT_RECIPIENTS
+    or the subscriber list the way send_report() does -- a missing/blank `to_email` is a hard
+    no-op rather than silently reusing the production list, and the subject is tagged [TEST] so
+    a test send can never be mistaken for the real issue in someone's inbox. Returns True/False."""
+    if not to_email or not isinstance(to_email, str) or "@" not in to_email:
+        print("[report] send_test_report requires a single explicit recipient email; got: "
+              f"{to_email!r}")
+        return False
+    if "," in to_email:
+        print("[report] send_test_report takes exactly one address, not a list; got: "
+              f"{to_email!r}")
+        return False
+    model = _assemble_report_model()
+    body = build_report_email_html(model)
+    subject = f"[TEST] FGS — Activist Vulnerability (biweekly) · {model.get('issue_date')}"
+    ok = send_one(to_email, subject, body)
+    print(f"[report] test send to {to_email}: {'ok' if ok else 'FAILED'}")
+    return ok
