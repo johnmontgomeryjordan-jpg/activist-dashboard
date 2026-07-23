@@ -75,7 +75,25 @@ _NI = ["NetIncomeLoss"]
 _ASSETS = ["Assets"]
 _EQUITY = ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]
 _CASH = ["CashAndCashEquivalentsAtCarryingValue"]
-_STI = ["ShortTermInvestments"]
+# Short-term investments added to cash for the liquidity ("cash-rich") read. Precision-first so it
+# can NEVER inflate liquidity into a false cash-rich flag:
+#   _STI_CURRENT  — tags that are UNAMBIGUOUSLY current. Safe to count as-is.
+#   _STI_AMBIG    — un-suffixed base tags some issuers use for CURRENT securities (Vital Farms files
+#                   its $64.5M current AFS securities as us-gaap:AvailableForSaleSecuritiesDebtSecurities,
+#                   which the old single-tag list missed -> VITL read 7% cash vs a true ~22%). Counted
+#                   ONLY under the guards in _short_term_investments().
+#   _LT_INVEST    — any long-term/noncurrent investment tag. Its presence means the base tag can't be
+#                   assumed current, so we don't count it (blocks miscounting long-term holdings as cash).
+_STI = ["ShortTermInvestments"]   # kept for reference; _STI_CURRENT supersedes it in _extract
+_STI_CURRENT = ["ShortTermInvestments", "MarketableSecuritiesCurrent",
+                "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+                "AvailableForSaleSecuritiesCurrent", "OtherShortTermInvestments"]
+_STI_AMBIG = ["AvailableForSaleSecuritiesDebtSecurities", "MarketableSecurities",
+              "AvailableForSaleSecurities"]
+_LT_INVEST = ["AvailableForSaleSecuritiesDebtSecuritiesNoncurrent", "MarketableSecuritiesNoncurrent",
+              "AvailableForSaleSecuritiesNoncurrent", "LongTermInvestments",
+              "OtherLongTermInvestments", "HeldToMaturitySecuritiesNoncurrent"]
+_ASSETS_CURRENT = ["AssetsCurrent"]
 # Funded debt. Prefer a single TOTAL tag — per US-GAAP, "LongTermDebt" already INCLUDES the
 # current maturities — otherwise sum the noncurrent + current components (first tag available in
 # each list). The old code read only _DEBT_LT[:1] ("LongTermDebtNoncurrent") + "LongTermDebtCurrent",
@@ -89,8 +107,14 @@ _STI = ["ShortTermInvestments"]
 # Missing those component tags left ServiceNow reading ~$0 funded debt -> a FALSE "under-levered
 # opportunity" (#3). Parts are summed only when no total/noncurrent-total tag reports at the same
 # date, so a company that files a proper total is never double-counted.
+# NotesAndLoansPayable is an all-in (current + noncurrent) funded-debt total — "carrying value of
+# all notes and loans payable." Homebuilders in particular file their debt ONLY under this tag and
+# none of the LongTermDebt/SeniorNotes family: KB Home tags its entire $1.69B senior-note balance
+# as us-gaap:NotesAndLoansPayable, so the app read $0 funded debt -> a FALSE "under-levered / Lever"
+# signal and a badly understated EV/EBITDA (verified against KBH's 10-K + FactSet: 25% debt/assets,
+# not 0%). Listed AFTER the more specific funded-debt totals so a company filing both is unaffected.
 _DEBT_TOTAL = ["LongTermDebt", "DebtLongtermAndShorttermCombinedAmount",
-               "DebtInstrumentCarryingAmount"]
+               "DebtInstrumentCarryingAmount", "NotesAndLoansPayable"]
 _DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"]
 # COMBINED instrument tags: each already includes BOTH current and noncurrent portions, so they
 # are NOT part of the noncurrent/current split above. Many issuers — especially REITs (Digital
@@ -106,12 +130,13 @@ _DEBT_NC_PARTS = ["SeniorNotesNoncurrent", "ConvertibleDebtNoncurrent",
                   "ConvertibleNotesPayableNoncurrent", "ConvertibleLongTermNotesPayable",
                   "UnsecuredDebtNoncurrent", "SecuredDebtNoncurrent", "SecuredLongTermDebt",
                   "NotesPayableNoncurrent", "LongTermNotesPayable", "LongTermLoansPayable",
-                  "OtherLongTermDebtNoncurrent", "MediumTermNotesNoncurrent"]
+                  "OtherLongTermDebtNoncurrent", "MediumTermNotesNoncurrent",
+                  "NotesAndLoansPayableNoncurrent"]
 _DEBT_CUR_TOTAL = ["LongTermDebtCurrent", "LongTermDebtAndCapitalLeaseObligationsCurrent",
                    "DebtCurrent"]
 _DEBT_CUR_PARTS = ["SeniorNotesCurrent", "ConvertibleDebtCurrent",
                    "ConvertibleNotesPayableCurrent", "NotesPayableCurrent",
-                   "SecuredDebtCurrent", "ShortTermBorrowings"]
+                   "SecuredDebtCurrent", "ShortTermBorrowings", "NotesAndLoansPayableCurrent"]
 # Back-compat aliases (some code/tests reference the old flat names).
 # If the newest funded-debt tag a company still files predates its current balance sheet by more
 # than this, the issuer STOPPED reporting funded debt -> it has been repaid or converted, and the
@@ -126,6 +151,13 @@ _DEP = ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccr
 _GOODWILL = ["Goodwill"]                                     # balance-sheet goodwill -> M&A
 _OP_LEASE_NC = ["OperatingLeaseLiabilityNoncurrent"]        # ASC 842 operating-lease liability:
 _OP_LEASE_CUR = ["OperatingLeaseLiabilityCurrent"]          # a mall retailer's real leverage
+# Finance (capital) leases — interest-bearing lease debt, reported separately from operating leases.
+# Surfaced so the scoring lease-heavy guard can judge TOTAL lease load (op + finance): Vital Farms
+# carries $42.7M operating + $10.8M finance leases = 10.3% of assets, but operating-only was 8.2% —
+# just under the 10% threshold — so it slipped the guard and drew a questionable "under-levered" read.
+_FIN_LEASE_NC = ["FinanceLeaseLiabilityNoncurrent", "CapitalLeaseObligationsNoncurrent"]
+_FIN_LEASE_CUR = ["FinanceLeaseLiabilityCurrent", "CapitalLeaseObligationsCurrent"]
+_FIN_LEASE_TOTAL = ["FinanceLeaseLiability", "CapitalLeaseObligations"]  # combined fallback
 
 
 def _pad(cik):
@@ -393,6 +425,33 @@ def _ttm_from(annual_v, interim_v, prior_v):
     return annual_v + interim_v - prior_v
 
 
+def _short_term_investments(facts, cash_c):
+    """Short-term investments to add to cash for the liquidity read — precision over recall, so it
+    can never manufacture a false 'cash-rich' flag.
+
+    1. Prefer an EXPLICITLY-current investment tag (unambiguous). Use it as-is.
+    2. Else fall back to an un-suffixed base tag (some issuers, e.g. Vital Farms, file CURRENT
+       securities there) — but ONLY when both guards hold:
+         (a) the filer reports NO long-term/noncurrent investment tag, and
+         (b) cash + the investment stays within total current assets (AssetsCurrent).
+       Either guard failing means the base tag can't be assumed current, so we skip it. A company
+       holding long-term securities under the same base tag is therefore never counted as cash.
+
+    Returns the short-term-investment amount, or None if nothing safe to add."""
+    cur = _instant(facts, _STI_CURRENT)
+    if cur is not None:
+        return cur
+    base = _instant(facts, _STI_AMBIG)
+    if base is None:
+        return None
+    if _instant(facts, _LT_INVEST) is not None:
+        return None                                  # long-term securities present -> ambiguous, skip
+    ac = _instant(facts, _ASSETS_CURRENT)
+    if ac is not None and (cash_c or 0) + base > ac:
+        return None                                  # would exceed current assets -> not all current
+    return base
+
+
 def _extract(facts):
     """Return (metrics, raw). Signals are computed from the company's MOST RECENT
     reporting period (latest 10-Q year-to-date), falling back to the latest annual
@@ -420,12 +479,16 @@ def _extract(facts):
 
     assets = _instant(facts, _ASSETS)
     equity = _instant(facts, _EQUITY)
-    cash_c = _instant(facts, _CASH[:1]); sti = _instant(facts, _STI)
+    cash_c = _instant(facts, _CASH[:1]); sti = _short_term_investments(facts, cash_c)
     cash = (cash_c or 0) + (sti or 0) if (cash_c is not None or sti is not None) else None
     debt = _total_debt(facts)
     goodwill = _instant(facts, _GOODWILL)
     _ol_nc = _instant(facts, _OP_LEASE_NC); _ol_cur = _instant(facts, _OP_LEASE_CUR)
     op_lease = ((_ol_nc or 0) + (_ol_cur or 0)) if (_ol_nc is not None or _ol_cur is not None) else None
+    _fl_nc = _instant(facts, _FIN_LEASE_NC); _fl_cur = _instant(facts, _FIN_LEASE_CUR)
+    fin_lease = ((_fl_nc or 0) + (_fl_cur or 0)) if (_fl_nc is not None or _fl_cur is not None) else None
+    if fin_lease is None:                        # some filers report only a combined finance-lease tag
+        fin_lease = _instant(facts, _FIN_LEASE_TOTAL)
     shares = _latest_shares(facts)
 
     # EBITDA = operating income + D&A. For EV/EBITDA (EV is a point-in-time figure) this MUST
@@ -527,6 +590,7 @@ def _extract(facts):
         "annual_net_income": annual_ni,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
         "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill, "operating_lease": op_lease,
+        "finance_lease": fin_lease,
         "period_end": p_end, "period_days": p_days,
         "period_label": _period_label(p_end, p_days) if p_end else None,
         "source_accn": p_accn,
