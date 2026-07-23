@@ -185,10 +185,12 @@ COMP_RISE_FLOOR = 0.05
 # catches the Signet 333% case even when the proxy was parsed/cached BEFORE compensation.py's
 # ceo_transition flag existed (parse-time fixes don't touch cached rows; scoring guards do).
 COMP_RAMP_SUSPECT = 1.0
-# A company with large operating-lease liabilities (a mall-based retailer like Signet) is NOT
-# truly "under-levered" even at zero funded debt — its leases ARE its leverage, so "lever up to
-# return capital" is the wrong thesis. Suppress under-levered when lease liabilities exceed this
-# share of assets (SIG: ~$1.1B leases / $5.73B ≈ 19%).
+# A company with large lease liabilities (a mall-based retailer like Signet) is NOT truly
+# "under-levered" even at zero funded debt — its leases ARE its leverage, so "lever up to return
+# capital" is the wrong thesis. Suppress under-levered when TOTAL lease liabilities (operating +
+# finance) exceed this share of assets. Counting both matters: Vital Farms is 8.2% operating-only
+# but 10.3% with its finance leases, so operating-only let it slip the guard and draw a
+# questionable under-levered read (SIG: ~$1.1B leases / $5.73B ≈ 19%).
 LEASE_HEAVY = 0.10
 
 
@@ -557,8 +559,9 @@ def _fin_context(r, t, e):
     _outperf = (_g3 is not None and _g3 >= 0.25) or (_g5 is not None and _g5 >= 0.40 and _g3 is not None and _g3 >= 0)
     _om_pos = (r.get("operating_margin") or 0) > 0
     _bs = r.get("raw") or {}
-    _ol, _ta = _bs.get("operating_lease"), _bs.get("total_assets")
-    _lease_heavy = _ol is not None and _ta and _ta > 0 and (_ol / _ta) >= LEASE_HEAVY
+    _ol, _fl, _ta = _bs.get("operating_lease"), _bs.get("finance_lease"), _bs.get("total_assets")
+    _lease_heavy = ((_ol is not None or _fl is not None) and _ta and _ta > 0
+                    and ((_ol or 0) + (_fl or 0)) / _ta >= LEASE_HEAVY)
     _suppress = {
         "operating_margin": _fin or _outperf or not _om_pos,
         "roa": (r.get("roa") or 0) <= 0,
@@ -1297,8 +1300,9 @@ def recompute_all():
             trig.append("cash_hoard")
         # Lease guard: a lease-heavy retailer at zero funded debt isn't really under-levered.
         _bs = r.get("raw") or {}
-        _ol, _ta = _bs.get("operating_lease"), _bs.get("total_assets")
-        _lease_heavy = _ol is not None and _ta and _ta > 0 and (_ol / _ta) >= LEASE_HEAVY
+        _ol, _fl, _ta = _bs.get("operating_lease"), _bs.get("finance_lease"), _bs.get("total_assets")
+        _lease_heavy = ((_ol is not None or _fl is not None) and _ta and _ta > 0
+                        and ((_ol or 0) + (_fl or 0)) / _ta >= LEASE_HEAVY)
         if low("debt_to_assets") and not _is_financial and not _strong_outperformer and not _lease_heavy:
             trig.append("underlevered")
         # Governance red flags (from DEF 14A; only present for parsed names).
