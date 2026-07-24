@@ -1365,6 +1365,12 @@ def refresh_lead_data():
 
 # Exec-change 8-K signals we measure a market reaction for (from edgar classification).
 _EXEC_SIGNALS = ("ceo_departure", "leadership_change")
+# Results/earnings signals. If a leadership 8-K shares its filing day with one of these, the 1-day
+# stock move is driven by the print, not the transition, so we do NOT store it as a leadership
+# reaction (Shake Shack: CFO appointment filed the same day as the quarter's results, stock -28% on
+# the earnings). Suppressing it here keeps the reaction signal, the pitch, and the catalyst all from
+# claiming a false "market lost confidence in the leadership change."
+_RESULTS_SIGNALS = ("results_update", "earnings_miss")
 
 
 def refresh_exec_reactions():
@@ -1378,14 +1384,25 @@ def refresh_exec_reactions():
     pairs = _tracked_pairs(top=TD_TOP)
     computed = cached = 0
     for cik, ticker in pairs.items():
-        # most-recent exec-change filing in the scoring window
+        # most-recent exec-change filing in the scoring window, plus the set of days that carry a
+        # results/earnings 8-K (to detect a same-day earnings confound). Scan the whole window —
+        # don't break on the first exec filing — so results on the SAME day are seen too.
         latest = None
+        results_days = set()
         for f in database.filings_in_window(cik, config.SCORE_WINDOW_DAYS):
             sigs = [s.strip() for s in (f.get("signals") or "").split(",")]
-            if any(s in _EXEC_SIGNALS for s in sigs):
-                latest = f
-                break                                 # filings come newest-first
+            if any(s in _RESULTS_SIGNALS for s in sigs):
+                results_days.add((f.get("filed_at") or "")[:10])
+            if latest is None and any(s in _EXEC_SIGNALS for s in sigs):
+                latest = f                            # filings come newest-first -> keep the newest
         if not latest or not latest.get("filed_at"):
+            continue
+        # Same-day earnings confound: the leadership 8-K's 1-day move reflects the print, not the
+        # transition. Store a NULL reaction (overwriting any stale move) so the signal can't fire and
+        # the catalyst attributes nothing; skip the price fetch entirely.
+        if (latest.get("filed_at") or "")[:10] in results_days:
+            database.upsert_exec_reaction(cik, ticker, latest["filed_at"], None, None, None, None,
+                                          latest.get("title"), latest.get("url"))
             continue
         prev = database.get_exec_reaction(cik)
         if prev and prev.get("filed_at") == latest["filed_at"]:
