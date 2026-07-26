@@ -409,6 +409,7 @@ def _ciks_with_recent_filings(days):
     total failure, so ingest() falls back to the full per-CIK sweep — strictly no regression."""
     from datetime import datetime, timedelta
     out = set()
+    by_day = []                                    # (ymd, tracked_filer_count, http_ok) — diagnostic
     today = datetime.utcnow().date()
     for i in range(days + 1):
         d = today - timedelta(days=i)
@@ -417,7 +418,9 @@ def _ciks_with_recent_filings(days):
         q = (d.month - 1) // 3 + 1
         r = _get(DAILY_INDEX_URL.format(year=d.year, q=q, ymd=d.strftime("%Y%m%d")))
         if r is None:                              # 404 (holiday) / rate-limited — skip the day
+            by_day.append((d.strftime("%Y%m%d"), 0, False))
             continue
+        n = 0
         for line in r.text.splitlines():
             parts = line.split("|")
             if len(parts) != 5:                    # header/separator lines don't split into 5
@@ -426,7 +429,11 @@ def _ciks_with_recent_filings(days):
             if form in FORMS or form.split("/")[0] in FORMS:   # include /A amendments
                 cik = parts[0].strip()
                 if cik.isdigit():
-                    out.add(pad_cik(cik))
+                    out.add(pad_cik(cik)); n += 1
+        by_day.append((d.strftime("%Y%m%d"), n, True))
+    # DIAGNOSTIC: most-recent 6 weekdays — shows whether the index even HAS Jul 24+ tracked filers.
+    recent = " ".join(f"{ymd}={cnt}{'' if ok else '(404)'}" for ymd, cnt, ok in by_day[:6])
+    print(f"[edgar] index recent days: {recent}")
     return out
 
 
@@ -470,10 +477,24 @@ def ingest(universe, days=None, max_companies=None):
     except Exception as e:
         print(f"[edgar] daily-index unavailable ({e}); full per-CIK sweep")
 
+    # DIAGNOSTIC: is the submissions endpoint (data.sec.gov) even reachable? One probe call.
+    if targets:
+        _probe_cik = pad_cik(targets[0]["cik"])
+        _pr = _get(SUBMISSIONS_URL.format(cik10=_probe_cik))
+        print(f"[edgar] submissions probe CIK{_probe_cik}: {'OK' if _pr else 'FAILED'}")
+
+    matched = 0  # names that returned >=1 NEW filing (after dedup)
     for c in targets:
-        for f in fetch_recent_filings_for_cik(c["cik"], c.get("ticker"),
-                                              c.get("name"), days, existing):
+        got = fetch_recent_filings_for_cik(c["cik"], c.get("ticker"),
+                                           c.get("name"), days, existing)
+        if got:
+            matched += 1
+        for f in got:
             database.upsert_filing(f)
             existing.add(f["id"])
             count += 1
+    # DIAGNOSTIC: targeted vs. how many yielded new filings vs. total upserts. If probe=OK and
+    # names-with-new-filings=0, the source simply has nothing newer than what's stored (no bug).
+    print(f"[edgar] ingest: targeted {len(targets)} · names-with-new-filings {matched} · "
+          f"upserted {count} · already-stored {len(existing)}")
     return count
