@@ -28,6 +28,19 @@ SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
 ARCHIVE_BASE = "https://www.sec.gov/Archives/edgar/data"
 FORMS = {"8-K", "10-K", "10-Q"}
 
+# EDGAR daily index: one file lists EVERY filing filed that day across ALL filers
+# (CIK|Company|Form|Date|Filename, pipe-delimited). We use it to discover WHICH universe
+# names filed recently, so ingest() only makes a submissions call for those — instead of a
+# per-CIK call for all ~1,500 names every cycle. The old full per-CIK sweep was so large it
+# rate-limited (a 429 that exhausts _get's 3 retries yields None -> the name is silently
+# skipped), so the tail of the universe never got reached: the feed froze on one day's batch
+# and later filers (e.g. INTC) never appeared. This makes the sweep actually complete.
+DAILY_INDEX_URL = "https://www.sec.gov/Archives/edgar/daily-index/{year}/QTR{q}/master.{ymd}.idx"
+# Steady state, scan only the last ~2 weeks of daily indexes (new + slightly-late filings;
+# anything older was ingested on a prior cycle) — a handful of GETs. The FULL window is scanned
+# only when the filings table is empty (fresh boot or a classifier-version wipe).
+_INDEX_INCREMENTAL_DAYS = 14
+
 # Bump this string to force a one-time re-classification of stored filings.
 # 2026-07-07: added Item 4.02 (restatement / non-reliance) — the re-classification pass
 # re-tags 8-Ks already in the window so existing non-reliance filings light up.
@@ -390,6 +403,33 @@ def fetch_recent_filings_for_cik(cik, ticker, company, days, existing):
     return out
 
 
+def _ciks_with_recent_filings(days):
+    """Set of 10-digit CIKs that filed a form we track within `days`, read from the EDGAR daily
+    index (one GET per weekday; weekends/holidays 404 and are skipped). Returns an empty set on
+    total failure, so ingest() falls back to the full per-CIK sweep — strictly no regression."""
+    from datetime import datetime, timedelta
+    out = set()
+    today = datetime.utcnow().date()
+    for i in range(days + 1):
+        d = today - timedelta(days=i)
+        if d.weekday() >= 5:                       # Sat/Sun — no daily index published
+            continue
+        q = (d.month - 1) // 3 + 1
+        r = _get(DAILY_INDEX_URL.format(year=d.year, q=q, ymd=d.strftime("%Y%m%d")))
+        if r is None:                              # 404 (holiday) / rate-limited — skip the day
+            continue
+        for line in r.text.splitlines():
+            parts = line.split("|")
+            if len(parts) != 5:                    # header/separator lines don't split into 5
+                continue
+            form = parts[2].strip()
+            if form in FORMS or form.split("/")[0] in FORMS:   # include /A amendments
+                cik = parts[0].strip()
+                if cik.isdigit():
+                    out.add(pad_cik(cik))
+    return out
+
+
 def ingest(universe, days=None, max_companies=None):
     days = days or config.SCORE_WINDOW_DAYS
     # One-time re-classification when the classifier version changes.
@@ -412,7 +452,25 @@ def ingest(universe, days=None, max_companies=None):
 
     count = 0
     subset = universe[:max_companies] if max_companies else universe
-    for c in subset:
+
+    # Discover which universe names actually filed recently, via the daily index. Scan the full
+    # window on a cold/empty table (fresh boot or classifier wipe), else just the recent slice.
+    # Only those names get a submissions call, so the sweep completes instead of dropping the tail.
+    targets = subset
+    index_days = days if not existing else min(days, _INDEX_INCREMENTAL_DAYS)
+    try:
+        active = _ciks_with_recent_filings(index_days)
+        if active:
+            by_cik = {pad_cik(c["cik"]): c for c in subset if c.get("cik")}
+            hits = [by_cik[k] for k in active if k in by_cik]
+            if hits:
+                targets = hits
+                print(f"[edgar] daily-index: {len(active)} filers over {index_days}d · "
+                      f"{len(hits)} in universe (vs {len(subset)} full sweep)")
+    except Exception as e:
+        print(f"[edgar] daily-index unavailable ({e}); full per-CIK sweep")
+
+    for c in targets:
         for f in fetch_recent_filings_for_cik(c["cik"], c.get("ticker"),
                                               c.get("name"), days, existing):
             database.upsert_filing(f)
