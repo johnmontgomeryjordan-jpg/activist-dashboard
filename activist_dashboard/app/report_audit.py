@@ -39,13 +39,16 @@ def _flag(flags, sev, check, subject, detail):
 
 
 def _headline_mentions(head, ticker, company):
-    """True if the headline plausibly refers to the tagged company — the ticker as a whole word,
-    or a significant word from the company name. Guards against a story tagged to the wrong name."""
-    h = (head or "").lower()
-    if ticker and re.search(rf"\b{re.escape(ticker.lower())}\b", h):
+    """True if the headline plausibly refers to the tagged company — the ticker as an UPPERCASE
+    whole word, or a significant word from the company name. Guards against a story tagged to the
+    wrong name. The ticker match is case-SENSITIVE (real tickers are written upper-case), so a
+    title-cased surname or common word like "…Kumar Dash" can't mask a mis-tag to DASH."""
+    raw = head or ""
+    if ticker and re.search(rf"\b{re.escape(ticker.upper())}\b", raw):   # case-sensitive: 'DASH' not 'Dash'
         return True
+    hl = raw.lower()
     for w in re.split(r"[^A-Za-z]+", company or ""):
-        if len(w) >= 4 and w.lower() in h:      # first meaningful company token (skip Inc/Co/&)
+        if len(w) >= 4 and w.lower() in hl:      # first meaningful company token (skip Inc/Co/&)
             return True
     return False
 
