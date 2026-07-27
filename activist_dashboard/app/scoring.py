@@ -376,12 +376,30 @@ def _headline_about_company(headline, keys):
         elif re.search(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])", h):
             return True
     return False
+# A named activist fund alone is NOT a live campaign — funds get named in bullish "cheap buy"
+# commentary too (e.g. "Ackman says X is a 'very cheap' buying opportunity for UBER"). Only treat a
+# fund mention as a Reported situation when the headline ALSO carries campaign / agitation language.
+# A genuine proxy cue (below) is itself agitation and still qualifies on its own.
+_AGITATION_RE = re.compile(
+    r"\b13\s?-?d\b|schedule\s?13d|\bsc\s?13d\b|proxy\s+(?:fight|contest|battle)|dissident|nominat|"
+    r"board\s+(?:seat|representation|nominee|control)|seeks?\s+board|\bstake\b|\bactivis|campaign|"
+    r"open\s+letter|letter\s+to\s+the\s+board|urg(?:e|es|ing)|push(?:es|ing)?\s+for|demand|"
+    r"calls?\s+for|pressur|strategic\s+(?:review|alternatives)|explore\s+alternatives|"
+    r"pursue\s+a\s+sale|sale\s+of\s+the\s+company|break\s?up|spin\s?off|split\s?(?:up|off)|divest|"
+    r"cooperation\s+agreement|standstill|withhold\s+(?:the\s+)?vote|vote\s+against|oust|"
+    r"replace\s+(?:the\s+)?ceo|special\s+meeting|consent\s+solicitation|poison\s+pill",
+    re.I)
+
+
 def _activist_cue(headline):
-    """Return a display label if the headline carries an activist cue, else None."""
+    """Return a display label if the headline carries an activist cue, else None. A known fund's
+    name counts only when campaign/agitation language is also present, so a bullish 'cheap buy'
+    mention of an activist no longer flips a name into the Reported tier."""
     t = " " + (headline or "").lower() + " "
-    for f in KNOWN_FUNDS:
-        if f in t:
-            return _FUND_DISPLAY.get(f, f.title())
+    if _AGITATION_RE.search(t):
+        for f in KNOWN_FUNDS:
+            if f in t:
+                return _FUND_DISPLAY.get(f, f.title())
     for c in PROXY_CUES:
         if c in t:
             return "Proxy contest" if "proxy" in c or "nominee" in c or "dissident" in c \
