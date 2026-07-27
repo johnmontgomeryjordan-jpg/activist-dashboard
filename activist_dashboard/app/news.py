@@ -548,7 +548,11 @@ _TICK_STOP = _TICK_SUFFIX | {
     "automotive", "airlines", "airways", "transport", "transportation", "logistics", "express",
     "freight", "shipping", "marine", "defense", "aerospace", "industrial", "industries",
     "manufacturing", "services", "service", "solutions", "partners", "resources", "enterprises",
-    "ventures", "insurance", "securities", "investments", "investment", "management", "trust"}
+    "ventures", "insurance", "securities", "investments", "investment", "management", "trust",
+    # generic corporate-name words that must NOT anchor a distinctive match on their own —
+    # e.g. "Fidelity National *Information* Services" (FIS) was tagging "Inside information:
+    # Valmet…". The company's distinctive token ("fidelity") still matches; the generic one won't.
+    "information", "informatics", "interactive", "worldwide", "consulting"}
 _KEY_CACHE = {}
 
 # Common English words that are ALSO real tickers. A bare standalone word like "five" or "open"
@@ -568,7 +572,7 @@ _COMMON_WORD_TICKERS = {
     "seed", "corn", "fuel", "coal", "mine", "ship", "boat", "lift", "beam", "bolt", "bond",
     "hunt", "camp", "dock", "port", "fort", "peak", "wing", "star", "moon", "atom", "cell",
     "gene", "flow", "loop", "node", "byte", "chip", "code", "link", "mode", "unit", "beta",
-    "buzz", "deck", "dice", "duo", "epic", "flex", "grid", "halo", "hero", "ionq", "jazz",
+    "buzz", "dash", "deck", "dice", "duo", "epic", "flex", "grid", "halo", "hero", "ionq", "jazz",
     "aura", "onto", "very", "sofi", "upst",
     # 5+ letter common words that are tickers
     "block", "smart", "prime", "swift", "sharp", "solid", "clear", "trade", "stock", "share",
@@ -582,7 +586,7 @@ _COMMON_WORD_TICKERS = {
 # stored headline is re-checked with the current matcher (see _retag_stored_if_needed), so stale
 # tags from an older matcher -- e.g. an ADBE tag on a ServiceNow headline -- clear at once instead
 # of lingering up to ~21 days until the row ages out.
-MATCHER_VERSION = "2026-07-22-commonword-guard-r1"
+MATCHER_VERSION = "2026-07-28-mistag-guard-r2"
 
 # The broad feed and per-company (Finnhub) headlines live in the SAME `news` table with no column
 # recording which feed a row came from. A per-company row is deliberately tagged with its ticker
@@ -643,8 +647,11 @@ def _ticker_hit(norm_head, raw_head, tk):
     # A >=4-char ticker as a bare standalone word -- but NOT when that "ticker" is really a common
     # English word (five, open, cost, ...), which collides far more often than it refers to the
     # company. Those must arrive via a cashtag/exchange/paren (handled above) or the company name.
+    # Match the ticker CASE-SENSITIVELY as UPPERCASE in the raw headline: real ticker references are
+    # written upper-case ("DASH shares fell"), so a title-cased common word or surname ("…Kumar
+    # Dash…", "Bill Gross") no longer collides with a same-spelled ticker (DASH, GROSS).
     if (len(t) >= 4 and t not in _COMMON_WORD_TICKERS
-            and re.search(r"(?<![a-z0-9])" + re.escape(t) + r"(?![a-z0-9])", norm_head)):
+            and re.search(r"(?<![A-Za-z0-9])" + re.escape(tk.upper()) + r"(?![A-Za-z0-9])", raw_head)):
         return True
     return False
 
