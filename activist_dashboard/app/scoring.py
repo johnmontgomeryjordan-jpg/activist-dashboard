@@ -828,10 +828,19 @@ def _peer_evidence(key, r):
     med = (pa.get("median") or {}).get("tsr_1y")
     st = (pa.get("self") or {}).get("tsr_1y")
     rank, rof, n = pa.get("rank"), pa.get("rank_of"), pa.get("n")
+    n_tsr = pa.get("n_tsr")            # peers that actually have a 1-yr return — what the median
+                                       # and the rank are computed over, NOT every named peer
     parts = []
     if st is not None and med is not None:
-        parts.append(f"1-yr return of {st * 100:+.0f}% vs the {med * 100:+.0f}% median of the "
-                     f"{n} peers it named in its own proxy")
+        # Count the peers the median is ACTUALLY taken over (those with returns). Using the full
+        # named-peer count here produced "median of the 14 peers … ranks 6 of 6" — a contradiction,
+        # since only the covered peers with returns feed the median, and the rank denominator (rof)
+        # is those same peers plus the company. Keep both figures on the same denominator.
+        if isinstance(n_tsr, int) and n_tsr >= 2:
+            whom = f"the {n_tsr} self-named proxy peers with 1-yr returns"
+        else:
+            whom = "its self-named proxy peers"
+        parts.append(f"1-yr return of {st * 100:+.0f}% vs the {med * 100:+.0f}% median of {whom}")
     if rank and rof:
         parts.append(f"ranks {rank} of {rof} in that group")
     ctx = " — ".join(parts) if parts else f"trails the {n}-company peer group it selected itself"
