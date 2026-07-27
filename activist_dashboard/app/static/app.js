@@ -1042,9 +1042,19 @@ function renderTab(){
   else if(CURRENT_TAB==="peers"){
     const pa=d.peer_analysis||{};
     const rank=pa.rank, rof=pa.rank_of;
-    const summary=(rank&&rof)
-      ? `<p class="hint" style="margin:-4px 0 12px">Ranked <b>${rank} of ${rof}</b> by 1-year price return against the ${pa.n} peers <b>${esc(d.company)}</b> chose itself — the compensation peer group it named in its own proxy.</p>`
-      : `<p class="hint" style="margin:-4px 0 12px">The compensation peer group <b>${esc(d.company)}</b> named in its own proxy (DEF 14A), versus the metrics we track.</p>`;
+    // The rank is taken over the peers that actually have 1-yr returns (rof-1 of them) plus the
+    // company itself = rof. State that instead of "6 of 6 against the 14 peers", which read as a
+    // contradiction — the company named pa.n peers, but only some have returns to rank against.
+    let summary;
+    if(rank&&rof){
+      const withRet=rof-1;
+      const scope=(withRet < (pa.n||0))
+        ? `among the ${withRet} of the ${pa.n} peers <b>${esc(d.company)}</b> named that have 1-year returns`
+        : `against the ${pa.n} peers <b>${esc(d.company)}</b> named`;
+      summary=`<p class="hint" style="margin:-4px 0 12px">Ranked <b>${rank} of ${rof}</b> by 1-year price return ${scope} — its self-selected compensation peer group (DEF 14A).</p>`;
+    } else {
+      summary=`<p class="hint" style="margin:-4px 0 12px">The compensation peer group <b>${esc(d.company)}</b> named in its own proxy (DEF 14A), versus the metrics we track.</p>`;
+    }
     body.innerHTML=`<div class="mh3">Peer analysis — self-selected proxy peer group</div>${summary}
       ${peerTable(pa)}
       <p class="hint" style="margin-top:12px">Peers are the companies the board picked to benchmark executive pay against; we show only those in our coverage. "Underperformance by its own yardstick" is one of the most credible activist arguments. Price return from Finnhub; margins &amp; valuation from SEC XBRL + market data.</p>`;
