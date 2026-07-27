@@ -341,3 +341,76 @@ def send_test_report(to_email):
     ok = send_one(to_email, subject, body)
     print(f"[report] test send to {to_email}: {'ok' if ok else 'FAILED'}")
     return ok
+
+
+def generate_issue(today=None):
+    """GENERATE + AUDIT (Tuesday night). Assemble the rotated, no-repeat issue, render the exact
+    email body, run the auto-audit, and FREEZE it in report_history so Wednesday sends precisely
+    what was audited. Returns the audit result dict. Never sends here."""
+    from . import report, catalyst, aithesis, report_audit, credibility
+    from datetime import datetime
+    today = today or datetime.utcnow()
+    issue_id = today.date().isoformat()
+    model = report.assemble(database, catalyst, news, limit=config.REPORT_BOARD_SIZE,
+                            today=today, summarize=aithesis.summarize_line, rotate=True)
+    body = build_report_email_html(model)
+    result = report_audit.audit(model, credibility=credibility)
+    tickers = [c.get("ticker") for c in (model.get("board") or []) if c.get("ticker")]
+    subject = f"FGS — Activist Vulnerability (biweekly) · {model.get('issue_date')}"
+    database.insert_report_issue(issue_id, tickers, result["status"], result["flags"], subject, body)
+    print(f"[report] generated issue {issue_id}: {tickers} · audit {result['summary']}", flush=True)
+    return result
+
+
+def send_pending_issue(max_age_hours=40):
+    """SEND (Wednesday morning). Ship the most recent generated-but-unsent issue to the distribution
+    list IF the audit was clean; if it was HELD, alert the admin instead and do not mail the list.
+    Only acts on a FRESH issue (generated within ~40h) so a stale/held pending never re-fires.
+    Returns the number of subscribers sent to (0 when held / nothing pending)."""
+    from datetime import datetime, timedelta
+    issue = database.get_pending_issue()
+    if not issue:
+        print("[report] no pending issue to send")
+        return 0
+    try:
+        gen_dt = datetime.fromisoformat((issue.get("generated_at") or "").replace("Z", ""))
+        if datetime.utcnow() - gen_dt > timedelta(hours=max_age_hours):
+            print(f"[report] pending issue {issue.get('issue_id')} is stale; skipping", flush=True)
+            return 0
+    except Exception:
+        pass
+
+    issue_id = issue.get("issue_id")
+    if issue.get("audit_status") != "clean":
+        # HELD — never mail the list. Alert ONLY the configured admin (John); NEVER fall back to a
+        # subscriber, so a hold notice can never reach the FGS partners. If admin is blank, skip the
+        # alert entirely (log only) rather than risk it.
+        admin = (config.REPORT_ADMIN_EMAIL or "").strip()
+        try:
+            flags = json.loads(issue.get("audit_flags") or "[]")
+        except Exception:
+            flags = []
+        if admin:
+            items = "".join(
+                f"<li>[{f.get('severity')}] {f.get('check')} — {f.get('subject')}: "
+                f"{html.escape(str(f.get('detail') or ''))}</li>" for f in flags)
+            alert = (f"<p>The biweekly issue <b>{issue_id}</b> ({html.escape(issue.get('tickers') or '')}) "
+                     f"was <b>HELD</b> by the auto-audit and was <b>not</b> sent to the distribution "
+                     f"list. Review the flags below; once resolved it can be re-generated / released "
+                     f"manually.</p><ul>{items or '<li>(no detail)</li>'}</ul>")
+            send_one(admin, f"[HELD] FGS biweekly {issue_id} — audit flagged, not sent", alert)
+        database.mark_issue_sent(issue_id)          # consumed for this cycle (alert delivered)
+        who = f"alerted {admin}" if admin else "NO admin configured — alert skipped"
+        print(f"[report] issue {issue_id} HELD by audit; {who}; NOT sent to list", flush=True)
+        return 0
+
+    # CLEAN — send the frozen, audited body to the distribution list (the subscriber list).
+    to = config.REPORT_RECIPIENTS or database.get_subscribers()
+    if not to:
+        print("[report] clean issue but no recipients; nothing to send")
+        return 0
+    subject, body = issue.get("subject"), issue.get("html")
+    sent = sum(1 for e in to if send_one(e, subject, body))
+    database.mark_issue_sent(issue_id)
+    print(f"[report] issue {issue_id} sent to {sent}/{len(to)} subscribers", flush=True)
+    return sent

@@ -148,6 +148,11 @@ _DEBT_CUR = _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS
 _SHARES = ["EntityCommonStockSharesOutstanding"]
 _DEP = ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccretionNet",
         "DepreciationAndAmortization"]                       # cash-flow D&A -> EBITDA
+# Interest expense (income statement). Used only as a credibility discriminator: a genuinely
+# debt-free company reports ~no interest expense, whereas a MISSED/stale debt tag still shows a
+# real borrowing cost on the P&L — so we can tell "correctly $0 debt" from "we missed the debt."
+_INT_EXP = ["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense",
+            "InterestExpenseNonoperating", "InterestExpenseBorrowings"]
 _GOODWILL = ["Goodwill"]                                     # balance-sheet goodwill -> M&A
 _OP_LEASE_NC = ["OperatingLeaseLiabilityNoncurrent"]        # ASC 842 operating-lease liability:
 _OP_LEASE_CUR = ["OperatingLeaseLiabilityCurrent"]          # a mall retailer's real leverage
@@ -459,6 +464,7 @@ def _extract(facts):
     quarterly while never doing worse than annual."""
     rev_f = _flows(facts, _REV); op_f = _flows(facts, _OPINC)
     sga_f = _flows(facts, _SGA); ni_f = _flows(facts, _NI); dep_f = _flows(facts, _DEP)
+    int_f = _flows(facts, _INT_EXP)
 
     # Use the recent period only when operating income is reported for it; else annual.
     base = _latest_period(rev_f)
@@ -472,10 +478,11 @@ def _extract(facts):
         sga = _at(sga_f, p_end, p_days)
         ni = _at(ni_f, p_end, p_days)
         dep = _at(dep_f, p_end, p_days)
+        int_exp = _at(int_f, p_end, p_days)
         rev_prior = _prior_year(rev_f, p_end, p_days)
     else:
         p_end = p_days = p_accn = None
-        rev = opinc = sga = ni = dep = rev_prior = None
+        rev = opinc = sga = ni = dep = int_exp = rev_prior = None
 
     assets = _instant(facts, _ASSETS)
     equity = _instant(facts, _EQUITY)
@@ -590,7 +597,7 @@ def _extract(facts):
         "annual_net_income": annual_ni,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
         "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill, "operating_lease": op_lease,
-        "finance_lease": fin_lease,
+        "finance_lease": fin_lease, "interest_expense": int_exp,
         "period_end": p_end, "period_days": p_days,
         "period_label": _period_label(p_end, p_days) if p_end else None,
         "source_accn": p_accn,

@@ -270,20 +270,95 @@ def assemble_radar(board, *, get_earnings, get_governance, today, horizon_days=1
     return items
 
 
-def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None):
+def _blend_select(eligible, *, get_catalyst, prior_score, limit, blend):
+    """From vuln-sorted `eligible` rows, pick a blend so each issue mixes standing strength with
+    freshness: `n_rating` by current rating, `n_riser` by biggest rating RISE since ~2 weeks ago,
+    `n_fresh` by newest catalyst. De-duplicates, then tops up from the next-highest-rated names so
+    we still return `limit` whenever the pool is deep enough. (Callers exclude the no-repeat set
+    before this, so everything here is already a fresh, eligible name.)"""
+    n_rating, n_riser, n_fresh = blend
+    chosen, seen = [], set()
+
+    def take(r):
+        c = r.get("cik")
+        if c in seen:
+            return
+        seen.add(c); chosen.append(r)
+
+    for r in eligible:                                   # 1) standing strength (already vuln-sorted)
+        if len(chosen) >= n_rating:
+            break
+        take(r)
+
+    if n_riser and prior_score:                          # 2) biggest movers since last issue
+        risers = []
+        for r in eligible:
+            if r.get("cik") in seen:
+                continue
+            prev = prior_score(r.get("cik"), days=14)
+            if prev is not None:
+                risers.append(((r.get("vuln") or 0) - prev, r))
+        risers.sort(key=lambda x: -x[0])
+        for _, r in risers[:n_riser]:
+            take(r)
+
+    if n_fresh and get_catalyst:                         # 3) freshest catalyst (a live hook)
+        cats = []
+        for r in eligible:
+            if r.get("cik") in seen:
+                continue
+            cat = get_catalyst(r.get("cik"))
+            if cat and cat.get("date"):
+                cats.append((cat["date"], r))
+        cats.sort(key=lambda x: x[0], reverse=True)
+        for _, r in cats[:n_fresh]:
+            take(r)
+
+    for r in eligible:                                   # 4) top up from next-highest-rated
+        if len(chosen) >= limit:
+            break
+        take(r)
+    return chosen[:limit]
+
+
+def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None, rotate=False):
     """Pull the full report model from the DB. `catalyst` and `news` are the modules.
-    `summarize(text, kind)->str` optionally glosses each headline/filing (the Haiku layer)."""
+    `summarize(text, kind)->str` optionally glosses each headline/filing (the Haiku layer).
+    rotate=True  → the biweekly no-repeat build: draw from the full scored universe, drop anything
+    featured in the last REPORT_NOREPEAT_ISSUES issues, and pick 5 by the rating/riser/catalyst
+    blend. rotate=False → the live top-5 view (unchanged) for the /report page and previews."""
     from datetime import datetime
     today = today or datetime.utcnow()
-    rows = database.get_scores(limit=80)
-    # Optional per-deploy exclusion list (structural disqualifiers beyond the built-in set).
     try:
         from . import config as _cfg
         exclude = set(getattr(_cfg, "REPORT_EXCLUDE_TICKERS", []) or [])
+        pool_n = int(getattr(_cfg, "REPORT_POOL", 500))
+        norepeat_n = int(getattr(_cfg, "REPORT_NOREPEAT_ISSUES", 13))
+        blend = tuple(getattr(_cfg, "REPORT_BLEND", (2, 2, 1)))
     except Exception:
-        exclude = set()
+        exclude, pool_n, norepeat_n, blend = set(), 500, 13, (2, 2, 1)
+
+    if rotate:
+        rows = database.get_scores(limit=pool_n)          # full scored universe (no floor)
+        recent = set()
+        try:
+            recent = database.get_recent_issue_tickers(norepeat_n)   # 6-month no-repeat memory
+        except Exception:
+            recent = set()
+        excl = {t.upper() for t in exclude} | recent | _STRUCTURAL_EXCLUDE
+        eligible = [r for r in rows
+                    if not r.get("active_situation")
+                    and (r.get("ticker") or "").upper() not in excl]
+        eligible.sort(key=lambda r: -(r.get("vuln") or 0))
+        chosen = _blend_select(
+            eligible, limit=limit, blend=blend,
+            get_catalyst=lambda cik: catalyst.for_company(cik, database, today=today),
+            prior_score=database.prior_score)
+    else:
+        chosen = database.get_scores(limit=80)
+
     board = assemble_board(
-        rows,
+        chosen,
         get_catalyst=lambda cik: catalyst.for_company(cik, database, today=today),
         get_ai_pitch=lambda cik: _loads((database.get_ai_pitch(cik) or {}).get("pitch"), {}),
         get_governance=database.get_governance,

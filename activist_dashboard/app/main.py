@@ -62,13 +62,47 @@ def _daily_rescore_then_audit():
         print(f"[credibility] self-audit failed (non-fatal): {e}", flush=True)
 
 
-def _biweekly_report():
-    """Build + email the fortnightly report. Isolated so a send failure never crashes the
-    scheduler. The nightly rescore keeps the board fresh; this only assembles + sends."""
+def _now_et():
+    """Current time in the scheduler's timezone (ET), whether config.TIMEZONE is a tzinfo or str."""
+    from datetime import datetime
+    tz = config.TIMEZONE
     try:
-        emailer.send_report()
+        return datetime.now(tz)
+    except TypeError:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo(str(tz)))
+
+
+def _is_report_cycle():
+    """True when today (ET) is on the 14-day cadence anchored at REPORT_ANCHOR — so the first issue
+    lands exactly on the anchor date and every two weeks after, independent of ISO-week parity."""
+    from datetime import date
+    try:
+        anchor = date.fromisoformat(config.REPORT_ANCHOR)
+    except Exception:
+        return True                       # misconfigured anchor: don't silently skip forever
+    d = _now_et().date()
+    return d >= anchor and (d - anchor).days % 14 == 0
+
+
+def _report_generate():
+    """Tuesday 7 PM ET (biweekly cadence): generate the rotated no-repeat issue, auto-audit it,
+    and freeze it for the morning send. Off-cycle Tuesdays are a no-op. Never sends."""
+    if not _is_report_cycle():
+        return
+    try:
+        emailer.generate_issue()
     except Exception as e:  # pragma: no cover
-        print(f"[report] biweekly send failed (non-fatal): {e}", flush=True)
+        print(f"[report] generate failed (non-fatal): {e}", flush=True)
+
+
+def _report_send():
+    """Wednesday 7 AM ET: send last night's frozen issue if the audit was clean, else hold + alert.
+    send_pending_issue() only acts on a fresh pending issue, so off-cycle Wednesdays no-op."""
+    try:
+        emailer.send_pending_issue()
+    except Exception as e:  # pragma: no cover
+        print(f"[report] send failed (non-fatal): {e}", flush=True)
 
 
 @asynccontextmanager
@@ -82,15 +116,24 @@ async def lifespan(app: FastAPI):
                       CronTrigger(hour=config.DIGEST_HOUR_ET, minute=0,
                                   timezone=config.TIMEZONE),
                       id="digest", replace_existing=True, max_instances=1)
-    # Biweekly report: every 2nd ISO week on REPORT_DAY at REPORT_HOUR_ET (default Wed 8 AM ET).
-    # The daily digest email is paused (pipeline); this is the new outbound cadence. John previews
-    # the night before via /report or /api/report/preview.
+    # Biweekly report — two phases, anchored to REPORT_ANCHOR (every 14 days):
+    #   GENERATE + auto-audit  — Tue REPORT_GEN_HOUR_ET (7 PM ET): assemble the rotated no-repeat
+    #                            issue, audit it, freeze it for the morning send.
+    #   SEND to the list       — Wed REPORT_SEND_HOUR_ET (7 AM ET): ship it if the audit was clean,
+    #                            else hold + alert the admin.
+    # Both jobs run WEEKLY; generate self-gates to the 14-day cadence and send only ships a fresh
+    # pending issue, so off-cycle weeks are harmless no-ops.
     if config.REPORT_ENABLED:
-        scheduler.add_job(_biweekly_report,
-                          CronTrigger(day_of_week=config.REPORT_DAY, hour=config.REPORT_HOUR_ET,
-                                      minute=0, week=config.REPORT_WEEK_STEP,
+        scheduler.add_job(_report_generate,
+                          CronTrigger(day_of_week=config.REPORT_GEN_DAY,
+                                      hour=config.REPORT_GEN_HOUR_ET, minute=0,
                                       timezone=config.TIMEZONE),
-                          id="biweekly_report", replace_existing=True, max_instances=1)
+                          id="report_generate", replace_existing=True, max_instances=1)
+        scheduler.add_job(_report_send,
+                          CronTrigger(day_of_week=config.REPORT_SEND_DAY,
+                                      hour=config.REPORT_SEND_HOUR_ET, minute=0,
+                                      timezone=config.TIMEZONE),
+                          id="report_send", replace_existing=True, max_instances=1)
     # Weekly (Sun 05:00): refresh S&P 1500 membership from iShares. Fails safe --
     # keeps the committed universe.csv on any fetch failure or sanity-gate rejection.
     scheduler.add_job(universe.rebuild_universe_csv,
@@ -193,6 +236,49 @@ def report_page():
 def report_preview():
     """Identical HTML to /report — a distinct URL for the night-before preview."""
     return report_page()
+
+
+@app.get("/api/report/latest", response_class=HTMLResponse)
+def report_latest():
+    """Preview the most recently GENERATED biweekly issue — the frozen, audited email body the Wed
+    7 AM job will actually send (the rotated no-repeat 5), not the live top-5 that /report shows.
+    Read-only QA view: prepends a banner with the audit verdict + send status so the Tuesday-night
+    review shows precisely what's going out (or why it's held)."""
+    issue = database.get_latest_issue()
+    if not issue or not issue.get("html"):
+        return HTMLResponse("<p style='font-family:system-ui;padding:24px'>No issue generated yet "
+                            "— the first one is built Tue 7 PM ET.</p>",
+                            status_code=404, headers=_REPORT_NOCACHE)
+
+    def _e(s):
+        return (str(s if s is not None else "")).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    flags = []
+    try:
+        import json as _json
+        flags = _json.loads(issue.get("audit_flags") or "[]")
+    except Exception:
+        flags = []
+    status = (issue.get("audit_status") or "?").lower()
+    clean = status == "clean"
+    color = "#137333" if clean else "#b3261e"
+    if issue.get("sent_at"):
+        state = f"already sent {_e(issue.get('sent_at'))}"
+    elif clean:
+        state = "will auto-send Wed 7 AM ET"
+    else:
+        state = "HELD — will NOT send to the list; admin alerted"
+    flag_html = "".join(
+        f"<li><b>[{_e(f.get('severity'))}]</b> {_e(f.get('check'))} — {_e(f.get('subject'))}: "
+        f"{_e(f.get('detail'))}</li>" for f in flags)
+    banner = (
+        f"<div style='font-family:system-ui;font-size:14px;padding:12px 20px;background:#f6f4ee;"
+        f"border-bottom:3px solid {color};color:#1c1b18'>"
+        f"<b>Issue {_e(issue.get('issue_id'))}</b> &middot; {_e(issue.get('tickers'))} &middot; "
+        f"audit <b style='color:{color}'>{_e(status.upper())}</b> &middot; {_e(state)}"
+        + (f"<ul style='margin:8px 0 0;padding-left:20px'>{flag_html}</ul>" if flags else "")
+        + "</div>")
+    return HTMLResponse(banner + issue["html"], headers=_REPORT_NOCACHE)
 
 
 @app.api_route("/api/report/send-test", methods=["GET", "POST"])

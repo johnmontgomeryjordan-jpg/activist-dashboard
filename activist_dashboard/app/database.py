@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS av_overview (
 CREATE TABLE IF NOT EXISTS score_history (
     cik TEXT, date TEXT, score INTEGER, PRIMARY KEY (cik, date)
 );
+CREATE TABLE IF NOT EXISTS report_history (
+    issue_id TEXT PRIMARY KEY,   -- generation date, e.g. '2026-07-28'
+    generated_at TEXT, sent_at TEXT,           -- sent_at NULL until the Wed send
+    tickers TEXT,                              -- CSV of the featured tickers (the no-repeat memory)
+    audit_status TEXT, audit_flags TEXT,       -- 'clean'|'held'  +  JSON flag list
+    subject TEXT, html TEXT                    -- frozen, audited email body sent Wed
+);
 CREATE TABLE IF NOT EXISTS watchlist (
     cik TEXT PRIMARY KEY, ticker TEXT, company TEXT,
     note TEXT, added_at TEXT, updated_at TEXT
@@ -770,6 +777,50 @@ def prior_score(cik, days=7):
             "SELECT score FROM score_history WHERE cik=? AND date<=? ORDER BY date DESC LIMIT 1",
             (cik, cutoff)).fetchone()
         return r["score"] if r else None
+
+
+# --- Biweekly report history (the 6-month no-repeat memory + frozen issues) --------------------
+def insert_report_issue(issue_id, tickers, audit_status, audit_flags, subject, html):
+    """Record a generated (Tue-night) issue: the featured tickers (no-repeat memory) plus the
+    frozen, audited HTML that the Wed job will send. sent_at stays NULL until it actually ships."""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT OR REPLACE INTO report_history
+               (issue_id,generated_at,sent_at,tickers,audit_status,audit_flags,subject,html)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (issue_id, now_iso(), None, ",".join(tickers),
+             audit_status, json.dumps(audit_flags or []), subject, html))
+
+
+def get_recent_issue_tickers(n_issues):
+    """Union of tickers featured in the last `n_issues` issues — the set to exclude so no company
+    repeats within the no-repeat window (13 biweekly issues ≈ 6 months)."""
+    out = set()
+    with get_conn() as conn:
+        for r in conn.execute(
+                "SELECT tickers FROM report_history ORDER BY issue_id DESC LIMIT ?", (n_issues,)):
+            out |= {t.strip().upper() for t in (r["tickers"] or "").split(",") if t.strip()}
+    return out
+
+
+def get_pending_issue():
+    """The most recent generated-but-unsent issue (what the Wed job ships). None if nothing pending."""
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT * FROM report_history WHERE sent_at IS NULL "
+            "ORDER BY issue_id DESC LIMIT 1").fetchone()
+        return dict(r) if r else None
+
+
+def mark_issue_sent(issue_id):
+    with get_conn() as conn:
+        conn.execute("UPDATE report_history SET sent_at=? WHERE issue_id=?", (now_iso(), issue_id))
+
+
+def get_latest_issue():
+    with get_conn() as conn:
+        r = conn.execute("SELECT * FROM report_history ORDER BY issue_id DESC LIMIT 1").fetchone()
+        return dict(r) if r else None
 
 
 # --- Subscribers -------------------------------------------------------------

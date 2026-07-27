@@ -57,6 +57,13 @@ def run_checks():
         flags_by_cik = database.get_all_activist_flags() or {}   # {cik: {kind,form,label,filed,url}}
     except Exception:
         flags_by_cik = {}
+    # Raw fundamentals per CIK — used to tell a GENUINELY debt-free name (no interest expense on the
+    # P&L) from a MISSED/stale debt tag (debt reads 0 but the income statement still shows interest).
+    try:
+        _raw_by_cik = {f.get("cik"): _loads(f.get("raw"), {})
+                       for f in database.get_all_fundamentals()}
+    except Exception:
+        _raw_by_cik = {}
     cik_to_tk = {r.get("cik"): (r.get("ticker") or r.get("company") or r.get("cik"))
                  for r in board + sit}
 
@@ -97,13 +104,23 @@ def run_checks():
                     add("LOW", "insider window stale", tk,
                         f"insider period '{e.get('period')}' — should be trailing 12 months")
 
-        # ServiceNow class — flagged "under-levered" opportunity with $0 debt = a missed/stale tag.
+        # ServiceNow class — flagged "under-levered" opportunity with $0 debt. Only a real problem
+        # when it's a MISSED tag, not a genuinely debt-free balance sheet. The discriminator is
+        # interest expense: a debt-free company reports ~none; a missed/stale debt tag still shows a
+        # material borrowing cost on the income statement. Gate on that so debt-free names (TTD,
+        # STAA, SONO, SAM, RHI, INSP …) stop tripping a false "missed tag" alarm every run.
         for c in fin:
             if isinstance(c, dict) and c.get("key") == "debt_to_assets" and c.get("verdict") == "opp":
                 v = c.get("value")
                 if v is not None and v <= 0:
-                    add("MED", "under-levered with $0 debt", tk,
-                        "flagged under-levered but debt/assets is 0 — possible missed/stale debt tag")
+                    _raw = _raw_by_cik.get(r.get("cik")) or {}
+                    ie, ta = _raw.get("interest_expense"), _raw.get("total_assets")
+                    # material = real borrowing cost the $0-debt reading can't explain
+                    material = ie is not None and ie > 0 and (not ta or ie >= 0.003 * ta)
+                    if material:
+                        add("MED", "under-levered with $0 debt", tk,
+                            f"debt/assets is 0 but the P&L shows interest expense of "
+                            f"${ie / 1e6:.1f}M — likely a missed/stale debt tag")
 
         # Intel class — thesis asserts stock underperformance but no return-lag signal fired.
         if on_board and thesis and any(w in thesis for w in _UNDERPERF) \

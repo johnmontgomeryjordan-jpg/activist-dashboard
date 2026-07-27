@@ -148,6 +148,25 @@ REPORT_EXCLUDE_TICKERS = {t.strip().upper() for t in
 # comma-separated recipient list is set here.
 REPORT_RECIPIENTS = [e.strip() for e in os.getenv("REPORT_RECIPIENTS", "").split(",") if e.strip()]
 
+# --- Biweekly report: two-phase schedule + 6-month no-repeat rotation ------------------------
+# GENERATE + auto-audit Tuesday night, then SEND to the distribution list Wednesday morning, so
+# the audited content is exactly what ships. Cadence is anchored to REPORT_ANCHOR (every 14 days)
+# rather than ISO-week parity, so the first issue lands on the intended date.
+REPORT_GEN_DAY = os.getenv("REPORT_GEN_DAY", "tue")               # generate + audit day
+REPORT_GEN_HOUR_ET = int(os.getenv("REPORT_GEN_HOUR_ET", "19"))   # 19:00 ET = 7 PM ET
+REPORT_SEND_DAY = os.getenv("REPORT_SEND_DAY", "wed")             # email the subscriber list
+REPORT_SEND_HOUR_ET = int(os.getenv("REPORT_SEND_HOUR_ET", "7"))  # 07:00 ET = 7 AM ET
+REPORT_ANCHOR = os.getenv("REPORT_ANCHOR", "2026-07-28")          # first GENERATE date; every 14d after
+REPORT_NOREPEAT_ISSUES = int(os.getenv("REPORT_NOREPEAT_ISSUES", "13"))  # 13 biweekly issues ≈ 6 months
+REPORT_POOL = int(os.getenv("REPORT_POOL", "500"))               # scored-universe pool the rotation draws from
+# The 5 fresh names each issue: (by current rating, by biggest riser, by freshest catalyst).
+REPORT_BLEND = tuple(int(x) for x in os.getenv("REPORT_BLEND", "2,2,1").split(","))
+# When the Tuesday audit flags a blocking issue, HOLD the send and alert ONLY this address — never
+# the distribution list. Defaults to John so a held-issue alert can never reach the FGS partners;
+# override in Render if the owner changes. If it were ever blank, the alert is skipped entirely
+# (logged only) rather than risk mailing a subscriber.
+REPORT_ADMIN_EMAIL = os.getenv("REPORT_ADMIN_EMAIL", "johnmontgomeryjordan@gmail.com")
+
 # --- Database ----------------------------------------------------------------
 DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "data.db"))
 
