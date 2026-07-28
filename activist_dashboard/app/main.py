@@ -260,14 +260,31 @@ def report_latest():
     except Exception:
         flags = []
     status = (issue.get("audit_status") or "?").lower()
-    clean = status == "clean"
-    color = "#137333" if clean else "#b3261e"
-    if issue.get("sent_at"):
-        state = f"already sent {_e(issue.get('sent_at'))}"
-    elif clean:
-        state = "will auto-send Wed 7 AM ET"
+    sent = issue.get("sent_at")
+
+    def _btn(href, label, bg):
+        return (f"<a href='{href}' style='display:inline-block;margin-left:8px;padding:4px 12px;"
+                f"border-radius:6px;text-decoration:none;background:{bg};color:#fff;font-weight:600'>"
+                f"{label}</a>")
+
+    actions, color = "", "#137333"
+    if sent:
+        state, color = f"already sent {_e(sent)}", "#5f6368"
+    elif status == "approved":
+        state = "APPROVED — will send at the next 7 AM ET window"
+    elif status == "clean":                       # passed the audit, awaiting the owner's approval
+        state = "audit CLEAN — awaiting your approval"
+        actions = (_btn("/api/report/approve", "Approve &amp; send", "#137333")
+                   + _btn("/api/report/hold", "Hold", "#b3261e"))
+    elif status == "held":                         # audit HELD it
+        state, color = "HELD by the audit — will NOT send (admin alerted)", "#b3261e"
+        actions = _btn("/api/report/approve?override=1", "Approve anyway", "#b3261e")
+    elif status == "held_user":                    # owner declined
+        state, color = "held by you — will NOT send", "#b3261e"
+        actions = _btn("/api/report/approve?override=1", "Re-approve &amp; send", "#137333")
     else:
-        state = "HELD — will NOT send to the list; admin alerted"
+        state, color = f"status {_e(status)}", "#b3261e"
+
     flag_html = "".join(
         f"<li><b>[{_e(f.get('severity'))}]</b> {_e(f.get('check'))} — {_e(f.get('subject'))}: "
         f"{_e(f.get('detail'))}</li>" for f in flags)
@@ -275,10 +292,52 @@ def report_latest():
         f"<div style='font-family:system-ui;font-size:14px;padding:12px 20px;background:#f6f4ee;"
         f"border-bottom:3px solid {color};color:#1c1b18'>"
         f"<b>Issue {_e(issue.get('issue_id'))}</b> &middot; {_e(issue.get('tickers'))} &middot; "
-        f"audit <b style='color:{color}'>{_e(status.upper())}</b> &middot; {_e(state)}"
+        f"audit <b style='color:{color}'>{_e(status.upper())}</b> &middot; {_e(state)}{actions}"
         + (f"<ul style='margin:8px 0 0;padding-left:20px'>{flag_html}</ul>" if flags else "")
         + "</div>")
     return HTMLResponse(banner + issue["html"], headers=_REPORT_NOCACHE)
+
+
+@app.api_route("/api/report/approve", methods=["GET", "POST"])
+def report_approve(override: int = 0):
+    """Owner approval gate. Releases the pending issue to the next 7 AM ET send window. A clean
+    (audit-passed) issue approves directly; an audit-HELD issue requires ?override=1 after you've
+    reviewed the flags. Nothing reaches the distribution list until this is called."""
+    issue = database.get_pending_issue()
+    if not issue:
+        return {"ok": False, "message": "No pending issue to approve."}
+    issue_id, tickers = issue.get("issue_id"), issue.get("tickers")
+    st = (issue.get("audit_status") or "").lower()
+    if st == "approved":
+        return {"ok": True, "issue": issue_id,
+                "message": "Already approved — it will send at the next 7 AM ET window."}
+    if st == "held" and not override:
+        import json as _json
+        try:
+            flags = _json.loads(issue.get("audit_flags") or "[]")
+        except Exception:
+            flags = []
+        return {"ok": False, "held": True, "issue": issue_id, "flags": flags,
+                "message": "This issue was HELD by the auto-audit. Review the flags, then approve "
+                           "anyway with ?override=1 to send it."}
+    database.set_issue_status(issue_id, "approved")
+    return {"ok": True, "issue": issue_id, "tickers": tickers,
+            "message": f"Approved. Issue {issue_id} ({tickers}) will send to the distribution list "
+                       f"at the next 7 AM ET send window."}
+
+
+@app.api_route("/api/report/hold", methods=["GET", "POST"])
+def report_hold():
+    """Owner hold: block the pending issue so the Wednesday send skips it. Reversible — re-approve
+    with /api/report/approve?override=1."""
+    issue = database.get_pending_issue()
+    if not issue:
+        return {"ok": False, "message": "No pending issue to hold."}
+    issue_id = issue.get("issue_id")
+    database.set_issue_status(issue_id, "held_user")
+    return {"ok": True, "issue": issue_id,
+            "message": f"Held. Issue {issue_id} will NOT be sent. Re-approve with "
+                       f"/api/report/approve?override=1 if you change your mind."}
 
 
 @app.api_route("/api/report/send-test", methods=["GET", "POST"])

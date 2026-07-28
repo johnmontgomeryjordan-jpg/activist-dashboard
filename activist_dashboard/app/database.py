@@ -817,6 +817,13 @@ def mark_issue_sent(issue_id):
         conn.execute("UPDATE report_history SET sent_at=? WHERE issue_id=?", (now_iso(), issue_id))
 
 
+def set_issue_status(issue_id, status):
+    """Update an issue's audit_status — used by the owner-approval gate to flip a clean issue to
+    'approved' (releases the Wed send) or 'held_user' (owner declined)."""
+    with get_conn() as conn:
+        conn.execute("UPDATE report_history SET audit_status=? WHERE issue_id=?", (status, issue_id))
+
+
 def get_latest_issue():
     with get_conn() as conn:
         r = conn.execute("SELECT * FROM report_history ORDER BY issue_id DESC LIMIT 1").fetchone()

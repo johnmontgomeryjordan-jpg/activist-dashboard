@@ -364,9 +364,10 @@ def generate_issue(today=None):
 
 def send_pending_issue(max_age_hours=40):
     """SEND (Wednesday morning). Ship the most recent generated-but-unsent issue to the distribution
-    list IF the audit was clean; if it was HELD, alert the admin instead and do not mail the list.
-    Only acts on a FRESH issue (generated within ~40h) so a stale/held pending never re-fires.
-    Returns the number of subscribers sent to (0 when held / nothing pending)."""
+    list ONLY when the owner has APPROVED it (status 'approved', set via /api/report/approve after
+    the Tuesday-night review). If the audit HELD it, alert the admin instead; if it's clean but not
+    yet approved (or the owner declined), hold and mail no one. Only acts on a FRESH issue (generated
+    within ~40h) so a stale pending never re-fires. Returns the number of subscribers sent to."""
     from datetime import datetime, timedelta
     issue = database.get_pending_issue()
     if not issue:
@@ -381,10 +382,12 @@ def send_pending_issue(max_age_hours=40):
         pass
 
     issue_id = issue.get("issue_id")
-    if issue.get("audit_status") != "clean":
-        # HELD — never mail the list. Alert ONLY the configured admin (John); NEVER fall back to a
-        # subscriber, so a hold notice can never reach the FGS partners. If admin is blank, skip the
-        # alert entirely (log only) rather than risk it.
+    status = (issue.get("audit_status") or "").lower()
+
+    if status == "held":
+        # audit HELD — never mail the list. Alert ONLY the configured admin (John); NEVER fall back
+        # to a subscriber, so a hold notice can never reach the FGS partners. If admin is blank, skip
+        # the alert entirely (log only) rather than risk it.
         admin = (config.REPORT_ADMIN_EMAIL or "").strip()
         try:
             flags = json.loads(issue.get("audit_flags") or "[]")
@@ -404,7 +407,16 @@ def send_pending_issue(max_age_hours=40):
         print(f"[report] issue {issue_id} HELD by audit; {who}; NOT sent to list", flush=True)
         return 0
 
-    # CLEAN — send the frozen, audited body to the distribution list (the subscriber list).
+    if status != "approved":
+        # 'clean' = passed the audit but AWAITING the owner's approval; 'held_user' = owner declined.
+        # Do NOT send and do NOT consume it — the owner approves via /api/report/approve, and the
+        # next 7 AM send window then ships it. A stale unapproved issue is skipped by the freshness
+        # guard above, so it never lingers or goes out without a human OK.
+        print(f"[report] issue {issue_id} not approved (status={status or 'clean'}); "
+              f"awaiting owner approval — NOT sent", flush=True)
+        return 0
+
+    # APPROVED by the owner — send the frozen, audited body to the distribution list (subscribers).
     to = config.REPORT_RECIPIENTS or database.get_subscribers()
     if not to:
         print("[report] clean issue but no recipients; nothing to send")
