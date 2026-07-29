@@ -175,6 +175,10 @@ SAY_ON_PAY_FLAG = 0.75
 # vote (failed say-on-pay votes cluster ~40-60%; nothing lands near 0%). Guards against any
 # already-stored garbage 0% rows so they never fire the signal, even before votes.py re-parses.
 SAY_ON_PAY_MIN = 0.20
+# Strong say-on-pay support (>= this) refutes a pay-for-performance activist critique: shareholders
+# have explicitly blessed the pay, so "CEO overpaid vs performance" is not a live governance hook
+# (e.g. VITL — 91% For + an underpaid CEO — which otherwise drew a false pay-for-performance read).
+SAY_ON_PAY_OK = 0.85
 # CEO pay-for-performance (from DEF 14A Summary Comp Table). Fires when total CEO comp
 # rose while the stock lagged — its own evidence card with the pay trajectory.
 COMP_KEYS = ("overpaid_ceo",)
@@ -1365,7 +1369,12 @@ def recompute_all():
                 for f in database.filings_in_window(_pad_cik(r["cik"]), config.SCORE_WINDOW_DAYS)
                 for s in (f.get("signals") or "").split(","))
             _transition = comp.get("ceo_transition") or (_ceo_change and (pc or 0) >= COMP_RAMP_SUSPECT)
-            if pc is not None and pc >= COMP_RISE_FLOOR and lags and not _transition:
+            # Don't assert a pay-for-performance gap when shareholders strongly approved the pay: a
+            # high say-on-pay vote refutes the "overpaid vs performance" hook (VITL: 91% For).
+            _sop = (votes_all.get(r["cik"]) or {}).get("say_on_pay")
+            _strong_pay_support = _sop is not None and _sop >= SAY_ON_PAY_OK
+            if (pc is not None and pc >= COMP_RISE_FLOOR and lags
+                    and not _transition and not _strong_pay_support):
                 trig.append("overpaid_ceo")
         # Self-selected proxy peer group: does the company trail the peers it chose itself?
         peers_list = []
@@ -1391,7 +1400,10 @@ def recompute_all():
         r["_insider"] = ins
         buy_v, sell_v = ins.get("buy_value") or 0, ins.get("sell_value") or 0
         ns, nb = ins.get("n_sellers") or 0, ins.get("n_buyers") or 0
-        if ns >= 2 and sell_v > buy_v:
+        # A "cluster of selling / crack in confidence" needs sellers to actually OUTNUMBER buyers.
+        # A few large planned/secondary sales alongside broad insider buying (VITL: 12 buyers vs 10
+        # sellers, insiders buying the post-miss dip) is NOT a confidence crack.
+        if ns >= 2 and sell_v > buy_v and nb < ns:
             trig.append("insider_selling")
         elif nb >= 1 and buy_v > sell_v and buy_v > 0:
             trig.append("insider_buying")

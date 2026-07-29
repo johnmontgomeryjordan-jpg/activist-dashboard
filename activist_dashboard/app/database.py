@@ -817,6 +817,27 @@ def mark_issue_sent(issue_id):
         conn.execute("UPDATE report_history SET sent_at=? WHERE issue_id=?", (now_iso(), issue_id))
 
 
+def clear_pending_issues():
+    """Delete every generated-but-unsent issue. Sent history is preserved. Called before a manual
+    regenerate so the superseded draft doesn't (a) linger as a second pending issue or (b) skew the
+    no-repeat memory during re-assembly. Returns the tickers of the issue that was cleared (so the
+    regenerate can pin the same board)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT tickers FROM report_history WHERE sent_at IS NULL "
+            "ORDER BY issue_id DESC").fetchall()
+        conn.execute("DELETE FROM report_history WHERE sent_at IS NULL")
+    tickers = []
+    for r in rows:
+        tickers += [t.strip().upper() for t in (r["tickers"] or "").split(",") if t.strip()]
+    # de-dupe, preserve order (most-recent pending first)
+    seen, out = set(), []
+    for t in tickers:
+        if t not in seen:
+            seen.add(t); out.append(t)
+    return out
+
+
 def set_issue_status(issue_id, status):
     """Update an issue's audit_status — used by the owner-approval gate to flip a clean issue to
     'approved' (releases the Wed send) or 'held_user' (owner declined)."""

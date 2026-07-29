@@ -260,14 +260,19 @@ def _instant_dated(facts, tag):
     return rows[0]
 
 
-def _total_debt(facts):
-    """Total funded debt, RECENCY-AWARE and robust to tag switches. Companies abandon XBRL tags
-    over time: BLDR's "LongTermDebt" froze at 2015 ($408.9M) while it now reports debt under
-    "LongTermDebtAndCapitalLeaseObligations" (2026 = $4.6B). Preferring a total tag blindly (v1)
-    reintroduced the #95 stale-tag trap and kept BLDR at a false $408.9M. So: read every candidate
-    debt tag's latest (date, value), find the company's most recent balance-sheet date, and build
-    debt ONLY from tags reporting at that date — a single total tag if present, else noncurrent +
-    current components. Fixes the under-capture behind false 'under-levered' signals + understated EV."""
+# *AndCapitalLeaseObligations tags already bundle finance (capital) leases into the funded-debt
+# figure, so when the funded total comes from one of these we must NOT add finance leases again.
+_CAPLEASE_INCLUSIVE = ("LongTermDebtAndCapitalLeaseObligations",
+                       "LongTermDebtAndCapitalLeaseObligationsCurrent")
+
+
+def _funded_debt(facts):
+    """Funded debt, RECENCY-AWARE and robust to tag switches. Companies abandon XBRL tags over time:
+    BLDR's "LongTermDebt" froze at 2015 ($408.9M) while it now reports debt under
+    "LongTermDebtAndCapitalLeaseObligations" (2026 = $4.6B). So: read every candidate debt tag's
+    latest (date, value), find the company's most recent balance-sheet date, and build debt ONLY from
+    tags reporting at that date. Returns (funded_debt, via_caplease) — via_caplease True when the value
+    came from a *AndCapitalLeaseObligations tag (which already bundles finance leases)."""
     dated = {}                                   # tag -> (end_date, value)
     for t in (_DEBT_TOTAL + _DEBT_NC_TOTAL + _DEBT_NC_PARTS
               + _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS + _DEBT_COMBINED_PARTS):
@@ -275,7 +280,7 @@ def _total_debt(facts):
         if ed is not None and v is not None:
             dated[t] = (ed, v)
     if not dated:
-        return None
+        return None, False
     latest = max(ed for ed, _v in dated.values())
     # Staleness guard: anchor to the company's CURRENT balance sheet (the Assets date). If the
     # newest debt tag is far older than that, the debt is gone (tag abandoned) -> report none.
@@ -287,31 +292,32 @@ def _total_debt(facts):
         except (ValueError, TypeError):
             _gap = 0
         if _gap > _DEBT_STALE_DAYS:
-            return 0.0
+            return 0.0, False
 
-    def at_latest(tags):                         # first tag (in preference order) reporting at `latest`
+    def src_at_latest(tags):                     # (value, tag) for first tag (pref order) at `latest`
         for t in tags:
             if t in dated and dated[t][0] == latest:
-                return dated[t][1]
-        return None
+                return dated[t][1], t
+        return None, None
 
     def sum_at_latest(tags):                     # sum of ALL component tags reporting at `latest`
         vals = [dated[t][1] for t in tags if t in dated and dated[t][0] == latest]
         return sum(vals) if vals else None
 
     # A single all-in total tag (per US-GAAP LongTermDebt already includes current maturities).
-    total = at_latest(_DEBT_TOTAL)
+    total, _tag = src_at_latest(_DEBT_TOTAL)
     if total is not None:
-        return total
+        return total, False                      # _DEBT_TOTAL tags are debt-only (no leases)
     # Else build from noncurrent + current. Prefer a TOTAL tag on each side; only if none reports
     # at the latest date do we SUM the instrument-level parts (so a proper total is never
     # double-counted with its own components).
-    nc = at_latest(_DEBT_NC_TOTAL)
+    nc, nctag = src_at_latest(_DEBT_NC_TOTAL)
     if nc is None:
         nc = sum_at_latest(_DEBT_NC_PARTS)
-    cur = at_latest(_DEBT_CUR_TOTAL)
+    cur, curtag = src_at_latest(_DEBT_CUR_TOTAL)
     if cur is None:
         cur = sum_at_latest(_DEBT_CUR_PARTS)
+    via_caplease = (nctag in _CAPLEASE_INCLUSIVE) or (curtag in _CAPLEASE_INCLUSIVE)
     if nc is None and cur is None:
         # No current/noncurrent-split tags reported at the latest date. Many issuers (esp. REITs)
         # instead file only plain COMBINED instrument tags (SeniorNotes / UnsecuredDebt /
@@ -319,10 +325,29 @@ def _total_debt(facts):
         # last-resort stale fallback so DLR/FR/JBGS et al. get real debt instead of a false $0.
         combined = sum_at_latest(_DEBT_COMBINED_PARTS)
         if combined is not None:
-            return combined
+            return combined, False
         # nothing from our known tags at the latest date — use the most recent value we do have
-        return max(dated.values(), key=lambda ev: ev[0])[1]
-    return (nc or 0) + (cur or 0)
+        return max(dated.values(), key=lambda ev: ev[0])[1], False
+    return (nc or 0) + (cur or 0), via_caplease
+
+
+def _total_debt(facts):
+    """Total debt as FactSet / BoardroomAlpha report it: funded debt PLUS lease liabilities (finance +
+    operating). Funded-debt tags alone read a false ~$0 for lease-heavy names (grocers, asset-light
+    services), badly understating Debt/Assets and EV — INSP/VITL showed $0 total debt vs ~$30M / ~$53M
+    at FactSet/BoardroomAlpha, and ACI read 34% vs a real ~59%. Operating leases are never in a
+    funded-debt tag (no double-count); finance leases are added only when funded didn't already bundle
+    them (a *AndCapitalLeaseObligations tag)."""
+    funded, via_caplease = _funded_debt(facts)
+    op = (_instant(facts, _OP_LEASE_NC) or 0) + (_instant(facts, _OP_LEASE_CUR) or 0)
+    fin = _instant(facts, _FIN_LEASE_TOTAL)
+    if fin is None:
+        fin = (_instant(facts, _FIN_LEASE_NC) or 0) + (_instant(facts, _FIN_LEASE_CUR) or 0)
+    fin = 0 if via_caplease else (fin or 0)      # don't double-count finance leases already in funded
+    leases = (op or 0) + fin
+    if funded is None:
+        return leases if leases else None        # a lease-only balance sheet (no funded debt)
+    return funded + leases
 
 
 def _latest_period(flows):
@@ -713,8 +738,13 @@ def _finnhub_metrics(symbol, key):
         "tsr_1y": (_ff(tsr) / 100.0 if tsr is not None else None),
         "pb": latest("pb") or _ff(m.get("pbAnnual")) or _ff(m.get("pbQuarterly")),
         "pe": _ff(m.get("peTTM")) or _ff(m.get("peExclExtraTTM")),
-        "dividend_yield": (_ff(m.get("dividendYieldIndicatedAnnual")) or 0) / 100.0
-                          if m.get("dividendYieldIndicatedAnnual") is not None else None,
+        # dividendYieldIndicatedAnnual is a percent (6.0 = 6%). Finnhub keeps reporting a stale
+        # indicated yield after a board suspends/cuts the dividend, which on a crashed price reads
+        # absurd (SSTK showed 24.4% the week its board suspended the dividend). Drop yields above a
+        # sane ceiling as unreliable rather than print a phantom yield.
+        "dividend_yield": (_divy / 100.0
+                           if (_divy := _ff(m.get("dividendYieldIndicatedAnnual"))) is not None
+                           and _divy <= 15.0 else None),
         "wk_hi": _ff(m.get("52WeekHigh")),
         "wk_lo": _ff(m.get("52WeekLow")),
     }

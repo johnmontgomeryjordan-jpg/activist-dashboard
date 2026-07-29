@@ -340,6 +340,73 @@ def report_hold():
                        f"/api/report/approve?override=1 if you change your mind."}
 
 
+_REGEN = {"running": False, "started_at": None, "done_at": None, "result": None, "error": None}
+
+
+@app.api_route("/api/report/generate-now", methods=["GET", "POST"])
+def report_generate_now(confirm: int = 0, recompute: int = 1, tickers: str = ""):
+    """Owner MANUAL regenerate. Recomputes the data behind the report so code/data fixes take effect,
+    then re-renders the pending issue IN PLACE (same vetted board, corrected numbers/theses), re-audits
+    and re-freezes it awaiting approval. Never sends.
+
+        /api/report/generate-now                     -> shows what it will do (no action)
+        /api/report/generate-now?confirm=1           -> recompute + regenerate the SAME board
+        /api/report/generate-now?confirm=1&recompute=0   -> re-render only (skip the slow recompute)
+        /api/report/generate-now?confirm=1&tickers=INSP,BLDR,SSTK,VITL,ACI  -> pin an explicit board
+
+    Runs in the background (the recompute touches the full universe and takes several minutes). Poll
+    /api/report/latest — when it reappears 'awaiting your approval', review it and /api/report/approve."""
+    if _REGEN["running"]:
+        return {"ok": False, "running": True, "started_at": _REGEN["started_at"],
+                "message": "A regenerate is already in progress. Poll /api/report/latest."}
+    pending = database.get_pending_issue()
+    if not confirm:
+        cur = (pending or {}).get("tickers") if pending else None
+        return {"ok": False, "confirm_required": True, "current_board": cur,
+                "recompute": bool(recompute),
+                "message": ("Add ?confirm=1 to recompute the data and regenerate this issue in place "
+                            "(same board, corrected numbers). Add &recompute=0 to re-render only. "
+                            "The result waits for /api/report/approve — nothing is sent.")}
+    explicit = [t.strip().upper() for t in tickers.split(",") if t.strip()] or None
+
+    def _work():
+        from datetime import datetime
+        _REGEN.update(running=True, started_at=datetime.utcnow().isoformat(),
+                      done_at=None, result=None, error=None)
+        try:
+            if recompute:
+                print("[report] generate-now: recompute starting", flush=True)
+                pipeline.refresh_fundamentals()   # re-extract debt (leases) + metrics
+                scoring.recompute_all()           # rescore with the corrected pay/insider signals
+                pipeline.refresh_ai_thesis()      # re-voice pitches (drops stale theses, archetypes)
+                print("[report] generate-now: recompute done", flush=True)
+            cleared = database.clear_pending_issues()   # drop the stale draft; returns its board
+            pin = explicit or cleared or None
+            res = emailer.generate_issue(pin=pin)
+            _REGEN.update(result={"status": res.get("status"), "summary": res.get("summary"),
+                                  "pin": pin})
+            print(f"[report] generate-now complete: pin={pin} · {res.get('summary')}", flush=True)
+        except Exception as e:  # pragma: no cover
+            _REGEN.update(error=str(e))
+            print(f"[report] generate-now FAILED: {e}", flush=True)
+        finally:
+            _REGEN.update(running=False, done_at=datetime.utcnow().isoformat())
+
+    threading.Thread(target=_work, daemon=True).start()
+    return {"ok": True, "started": True, "recompute": bool(recompute),
+            "pin": explicit or ((pending or {}).get("tickers") if pending else None),
+            "message": ("Regeneration started in the background"
+                        + (" (recompute + re-render)" if recompute else " (re-render only)")
+                        + ". Poll /api/report/generate-now/status or /api/report/latest; the refreshed "
+                          "issue will show 'awaiting your approval'.")}
+
+
+@app.get("/api/report/generate-now/status")
+def report_generate_now_status():
+    """Progress of the last manual regenerate (see /api/report/generate-now)."""
+    return {"ok": True, **_REGEN}
+
+
 @app.api_route("/api/report/send-test", methods=["GET", "POST"])
 def report_send_test(to: str = "", confirm: int = 0):
     """Send the biweekly report. GUARDED — a bare call is a genuine test and reaches exactly ONE

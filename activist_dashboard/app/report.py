@@ -31,6 +31,7 @@ _STRUCTURAL_EXCLUDE = {"INTC"}
 # ownership-% parser. Keyed by ticker.
 _CONTROLLED_CAVEAT = {
     "SSTK": "founder-chairman Jon Oringer controls ~31% of the vote",
+    "ACI": "Cerberus Capital Management holds ~31% of the shares",
 }
 
 _BAND = [(75, "Severe", "v3"), (50, "High", "v2"), (25, "Elevated", "v1"), (0, "Moderate", "v1")]
@@ -194,7 +195,9 @@ def assemble_board(rows, *, get_catalyst, get_ai_pitch, get_governance,
             "cik": cik, "ticker": tkr, "company": r.get("company"),
             "market_cap": _mcap(r.get("market_cap")),
             "vuln": r.get("vuln"), "band": band_name, "band_cls": band_cls,
-            "archetype": (pitch.get("archetype") or "").replace("_", " ").title(),
+            # Suppress the placeholder "default" archetype so no card shows a "Default" pill.
+            "archetype": ("" if (pitch.get("archetype") or "").strip().lower() in ("", "default")
+                          else (pitch.get("archetype") or "").replace("_", " ").title()),
             "thesis": pitch.get("thesis") or r.get("signals") or "",
             "points": (pitch.get("points") or [])[:3],
             "metrics": _metrics_for(fin_context),
@@ -321,12 +324,15 @@ def _blend_select(eligible, *, get_catalyst, prior_score, limit, blend):
     return chosen[:limit]
 
 
-def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None, rotate=False):
+def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None, rotate=False, pin=None):
     """Pull the full report model from the DB. `catalyst` and `news` are the modules.
     `summarize(text, kind)->str` optionally glosses each headline/filing (the Haiku layer).
     rotate=True  → the biweekly no-repeat build: draw from the full scored universe, drop anything
     featured in the last REPORT_NOREPEAT_ISSUES issues, and pick 5 by the rating/riser/catalyst
-    blend. rotate=False → the live top-5 view (unchanged) for the /report page and previews."""
+    blend. rotate=False → the live top-5 view (unchanged) for the /report page and previews.
+    pin=[tickers] → re-render exactly those names (in that order) from the current scored data,
+    bypassing rotation. Used by the manual regenerate so a vetted board is refreshed in place with
+    corrected fundamentals/theses rather than reshuffled to new companies."""
     from datetime import datetime
     today = today or datetime.utcnow()
     try:
@@ -338,7 +344,14 @@ def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None, r
     except Exception:
         exclude, pool_n, norepeat_n, blend = set(), 500, 13, (2, 2, 1)
 
-    if rotate:
+    if pin:
+        # Re-render a vetted board in place: take exactly the named tickers from current scores,
+        # preserving the given order. Score/fundamental fixes flow through; membership does not change.
+        want = [t.strip().upper() for t in pin if t and t.strip()]
+        by_tk = {(r.get("ticker") or "").upper(): r
+                 for r in database.get_scores(limit=max(pool_n, 2000))}
+        chosen = [by_tk[t] for t in want if t in by_tk]
+    elif rotate:
         rows = database.get_scores(limit=pool_n)          # full scored universe (no floor)
         recent = set()
         try:

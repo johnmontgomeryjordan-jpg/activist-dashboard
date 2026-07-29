@@ -343,16 +343,19 @@ def send_test_report(to_email):
     return ok
 
 
-def generate_issue(today=None):
+def generate_issue(today=None, pin=None):
     """GENERATE + AUDIT (Tuesday night). Assemble the rotated, no-repeat issue, render the exact
     email body, run the auto-audit, and FREEZE it in report_history so Wednesday sends precisely
-    what was audited. Returns the audit result dict. Never sends here."""
+    what was audited. Returns the audit result dict. Never sends here.
+    pin=[tickers] → re-render exactly those names (manual regenerate) instead of rotating to a new
+    board; used to refresh a vetted issue in place after data/code fixes."""
     from . import report, catalyst, aithesis, report_audit, credibility
     from datetime import datetime
     today = today or datetime.utcnow()
     issue_id = today.date().isoformat()
     model = report.assemble(database, catalyst, news, limit=config.REPORT_BOARD_SIZE,
-                            today=today, summarize=aithesis.summarize_line, rotate=True)
+                            today=today, summarize=aithesis.summarize_line,
+                            rotate=(not pin), pin=pin)
     body = build_report_email_html(model)
     result = report_audit.audit(model, credibility=credibility)
     tickers = [c.get("ticker") for c in (model.get("board") or []) if c.get("ticker")]
