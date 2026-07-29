@@ -1209,13 +1209,22 @@
   (market data, multi-year returns, the AI thesis) and SEC bandwidth. They run automatically on
   the 6:00 AM build, so you rarely need them by hand — use them only when you specifically need
   fresh data right now, and avoid running them repeatedly in a day.</p>
-  <div class="card">
-    <h3 style="margin:0 0 4px;">Preview next report issue</h3>
-    <p class="hint" style="margin:0 0 12px;">Opens the exact issue generated Tuesday night — the
-    frozen, audited email (the rotated 5, no repeats) that sends Wednesday 7 AM ET — with its audit
-    verdict banner at the top. Read-only and safe to open anytime; this is the night-before QA look.</p>
-    <a class="ghost" href="/api/report/latest" target="_blank" rel="noopener"
-       style="display:inline-block;text-decoration:none;">↗ Preview next issue</a>
+  <div class="card" style="border-left:3px solid var(--brand);">
+    <h3 style="margin:0 0 4px;">Biweekly report — regenerate &amp; approve</h3>
+    <p class="hint" style="margin:0 0 12px;">The night-before workflow, left to right. <b>Regenerate</b>
+    recomputes the data behind the report (debt/leases, scores, theses — about 5–15 min in the
+    background) and re-renders the <b>same five vetted names</b> with corrected numbers, then re-audits
+    and freezes it <b>awaiting your approval</b>. <b>Preview latest</b> opens that frozen, audited email
+    to review. Nothing is emailed to anyone until you press <b>Approve</b>; use <b>Hold</b> to block
+    Wednesday's send. Approve/Hold are reversible right up to the 7 AM ET window.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      <button id="regenBtn" onclick="regenerateIssue()">⟳ Regenerate (recompute + rebuild)</button>
+      <a class="ghost" href="/api/report/latest" target="_blank" rel="noopener"
+         style="display:inline-block;text-decoration:none;padding:8px 14px;border:1px solid var(--line2);border-radius:8px;">↗ Preview latest</a>
+      <button class="ghost" id="approveBtn" onclick="approveIssue()">✓ Approve for send</button>
+      <button class="ghost" id="holdBtn" onclick="holdIssue()">⏸ Hold (block send)</button>
+    </div>
+    <div class="msg" id="regenMsg" style="margin-top:10px;"></div>
   </div>
   <div class="card">
     <h3 style="margin:0 0 4px;">Run enrichment now</h3>

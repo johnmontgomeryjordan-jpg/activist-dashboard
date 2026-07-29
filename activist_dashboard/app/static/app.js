@@ -1147,6 +1147,53 @@ async function unsubscribe(){ const email=document.getElementById("emailInput").
 async function sendTestDigest(){ const msg=document.getElementById("subMsg"); msg.textContent="Sending…"; msg.className="msg";
   try{ const r=await fetch("/api/send-test-digest",{method:"POST"}); const d=await r.json(); msg.textContent=d.message||(d.ok?"Sent.":"Error"); msg.className="msg "+(d.ok?"ok":"err"); }
   catch(e){ msg.textContent="Network error"; msg.className="msg err"; } }
+/* ===== Biweekly report: regenerate + approve workflow ===== */
+async function regenerateIssue(){
+  if(!confirm("Regenerate the biweekly issue now?\n\nThis recomputes fundamentals, scores and theses (5–15 min in the background), then rebuilds the SAME five vetted names with corrected numbers. It re-audits and freezes the issue AWAITING YOUR APPROVAL — nothing is emailed. Continue?")) return;
+  const b=document.getElementById("regenBtn"), m=document.getElementById("regenMsg");
+  b.disabled=true; b.textContent="Starting…"; m.className="msg"; m.textContent="";
+  try{
+    const r=await (await fetch("/api/report/generate-now?confirm=1",{method:"POST"})).json();
+    if(!r.ok){ m.className="msg err"; m.textContent=r.message||"Could not start."; b.disabled=false; b.textContent="⟳ Regenerate (recompute + rebuild)"; return; }
+    m.className="msg"; m.textContent="Running… recomputing data and rebuilding (5–15 min). Safe to leave this page.";
+    pollRegen();
+  }catch(e){ m.className="msg err"; m.textContent="Network error — try again."; b.disabled=false; b.textContent="⟳ Regenerate (recompute + rebuild)"; }
+}
+async function pollRegen(){
+  const b=document.getElementById("regenBtn"), m=document.getElementById("regenMsg");
+  try{
+    const s=await (await fetch("/api/report/generate-now/status")).json();
+    if(s.running){ m.className="msg"; m.textContent="Running… "+(s.started_at?("started "+String(s.started_at).replace('T',' ').slice(0,19)+" UTC"):"in progress")+". Safe to leave this page."; setTimeout(pollRegen,15000); return; }
+    b.disabled=false; b.textContent="⟳ Regenerate (recompute + rebuild)";
+    if(s.error){ m.className="msg err"; m.textContent="Regenerate failed: "+s.error+" — check the logs."; return; }
+    if(s.result){ m.className="msg ok"; m.textContent="Done ✓ Board: "+((s.result.pin||[]).join(", "))+" · audit "+(s.result.summary||s.result.status||"")+". Press Preview latest to review, then Approve."; return; }
+    m.textContent="Idle — nothing has been regenerated yet.";
+  }catch(e){ setTimeout(pollRegen,15000); }
+}
+async function approveIssue(){
+  if(!confirm("Approve this issue for the Wednesday 7 AM send?\n\nThis releases it to the FULL distribution list at the next send window. Preview it first.")) return;
+  const b=document.getElementById("approveBtn"), m=document.getElementById("regenMsg");
+  b.disabled=true; b.textContent="Approving…";
+  try{
+    let r=await (await fetch("/api/report/approve",{method:"POST"})).json();
+    if(r.held && !r.ok){
+      if(confirm("The auto-audit HELD this issue:\n\n"+((r.flags||[]).join("\n")||"(open Preview latest for detail)")+"\n\nApprove anyway (override the hold)?")){
+        r=await (await fetch("/api/report/approve?override=1",{method:"POST"})).json();
+      } else { m.className="msg"; m.textContent="Left on hold — not approved."; b.disabled=false; b.textContent="✓ Approve for send"; return; }
+    }
+    m.className="msg "+(r.ok?"ok":"err"); m.textContent=r.message||(r.ok?"Approved.":"Could not approve.");
+  }catch(e){ m.className="msg err"; m.textContent="Network error — try again."; }
+  b.disabled=false; b.textContent="✓ Approve for send";
+}
+async function holdIssue(){
+  if(!confirm("Hold this issue so Wednesday's send SKIPS it?\n\nReversible — you can Approve later.")) return;
+  const b=document.getElementById("holdBtn"), m=document.getElementById("regenMsg");
+  b.disabled=true; b.textContent="Holding…";
+  try{ const r=await (await fetch("/api/report/hold",{method:"POST"})).json();
+    m.className="msg "+(r.ok?"ok":"err"); m.textContent=r.message||(r.ok?"Held.":"Could not hold."); }
+  catch(e){ m.className="msg err"; m.textContent="Network error — try again."; }
+  b.disabled=false; b.textContent="⏸ Hold (block send)";
+}
 function exportCsv(){ window.open("/api/shortlist.csv","_blank"); }
 
 async function refreshAll(){
