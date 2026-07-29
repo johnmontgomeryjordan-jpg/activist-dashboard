@@ -179,6 +179,12 @@ SAY_ON_PAY_MIN = 0.20
 # have explicitly blessed the pay, so "CEO overpaid vs performance" is not a live governance hook
 # (e.g. VITL — 91% For + an underpaid CEO — which otherwise drew a false pay-for-performance read).
 SAY_ON_PAY_OK = 0.85
+# Absolute-pay floor for the "overpaid CEO" hook. A pay-for-performance activist thesis is only
+# credible when the package is genuinely large; a sub-threshold total (e.g. VITL's ~$3.6M) reads as
+# a modest, defensible package that no activist would build an "overpaid" campaign around, so we do
+# NOT fire the signal there regardless of the % rise. This is the deterministic backstop to the
+# say-on-pay gate (which depends on parsing the 8-K vote and doesn't reach every name).
+COMP_ABS_FLOOR = 5_000_000
 # CEO pay-for-performance (from DEF 14A Summary Comp Table). Fires when total CEO comp
 # rose while the stock lagged — its own evidence card with the pay trajectory.
 COMP_KEYS = ("overpaid_ceo",)
@@ -1373,8 +1379,12 @@ def recompute_all():
             # high say-on-pay vote refutes the "overpaid vs performance" hook (VITL: 91% For).
             _sop = (votes_all.get(r["cik"]) or {}).get("say_on_pay")
             _strong_pay_support = _sop is not None and _sop >= SAY_ON_PAY_OK
+            # Deterministic backstop: don't call a modest package "overpaid," even if it rose. Only
+            # applied when we actually know the latest total (unparsed pay falls back to prior logic).
+            _lt = comp.get("latest_total")
+            _pay_small = _lt is not None and _lt < COMP_ABS_FLOOR
             if (pc is not None and pc >= COMP_RISE_FLOOR and lags
-                    and not _transition and not _strong_pay_support):
+                    and not _transition and not _strong_pay_support and not _pay_small):
                 trig.append("overpaid_ceo")
         # Self-selected proxy peer group: does the company trail the peers it chose itself?
         peers_list = []
