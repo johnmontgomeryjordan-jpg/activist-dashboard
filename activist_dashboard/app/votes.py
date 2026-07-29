@@ -12,8 +12,8 @@ in the filing, so we can read it reliably; we deliberately do NOT try to parse p
 results, which vary too much format-to-format to trust in a partner-facing tool.
 
 8-K is filed by the company itself, so (unlike 13D/Form 4) it lives in the company's own
-record -- we still locate it via full-text search to read the item codes, then fetch and
-parse the document.
+record -- we locate the most recent one carrying Item 5.07 via the EDGAR submissions API
+(the canonical per-company filing index), then fetch and parse the document.
 """
 import re
 import time
@@ -23,7 +23,10 @@ import requests
 from . import config, database
 
 HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
-EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
+# The EDGAR submissions API returns a company's filing index (form, item codes, accession,
+# primary document) as JSON. This is the reliable way to find an 8-K carrying Item 5.07 --
+# the previous full-text-search lookup passed an empty query and matched nothing (0 names).
+SUBMISSIONS = "https://data.sec.gov/submissions/CIK{}.json"
 ARCHIVE = "https://www.sec.gov/Archives/edgar/data"
 WINDOW_DAYS = 420          # one annual-meeting cycle (+ slack)
 _session = requests.Session()
@@ -54,9 +57,9 @@ MIN_PLAUSIBLE_SOP = 0.20
 # that means we anchored on small/wrong numbers, so reject it.
 MIN_VOTES = 1_000_000
 # Bump to force a one-time re-parse of cached votes when the parser changes. Votes are otherwise
-# cached by meeting accession, so a fix wouldn't reach a name until its NEXT annual meeting — e.g.
+# cached by meeting accession, so a fix wouldn't reach a name until its NEXT annual meeting -- e.g.
 # Simply Good Foods' mis-parsed 50% would linger for a year.
-VOTES_PARSER_VERSION = "2026-07-08-row-anchored"
+VOTES_PARSER_VERSION = "2026-07-29-submissions-lookup"
 
 # Phrases that identify the advisory say-on-pay proposal (lowercased).
 SOP_PHRASES = [
@@ -94,36 +97,40 @@ def _get(url):
 
 
 def _latest_507(cik10, start, end):
-    """Most recent 8-K carrying Item 5.07 for this company, via full-text search."""
-    j = None
-    for i in range(3):
-        try:
-            r = _session.get(EFTS_URL, params={"q": "", "forms": "8-K", "ciks": cik10,
-                             "startdt": start, "enddt": end}, timeout=25)
-            if r.status_code == 200:
-                j = r.json(); break
-            if r.status_code == 429:
-                time.sleep(1.5 * (i + 1)); continue
-            return None
-        except (requests.RequestException, ValueError):
-            time.sleep(1.0 * (i + 1))
-    if not j:
+    """Most recent 8-K carrying Item 5.07 for this company, from the EDGAR submissions API.
+    Returns {'accn','doc','date'} or None. `start` is the oldest filing date we care about
+    (the submissions 'recent' block is newest-first, so we stop once we pass it)."""
+    r = _get(SUBMISSIONS.format(cik10))
+    if not r:
         return None
-    for h in (j.get("hits", {}) or {}).get("hits", []) or []:
-        src = h.get("_source", {})
-        if "5.07" not in (src.get("items") or []):
+    try:
+        recent = (r.json().get("filings") or {}).get("recent") or {}
+    except ValueError:
+        return None
+    forms = recent.get("form") or []
+    items = recent.get("items") or []
+    accns = recent.get("accessionNumber") or []
+    docs = recent.get("primaryDocument") or []
+    dates = recent.get("filingDate") or []
+    for i, form in enumerate(forms):
+        if form != "8-K":
             continue
-        adsh, _, doc = (h.get("_id") or "").partition(":")
-        if not adsh:
-            adsh = src.get("adsh", "")
-        return {"accn": adsh, "doc": doc, "date": src.get("file_date")}
+        it = items[i] if i < len(items) else ""
+        if "5.07" not in (it or ""):
+            continue
+        d = dates[i] if i < len(dates) else ""
+        if start and d and d < start:      # older than the window -> stop (list is newest-first)
+            break
+        return {"accn": accns[i] if i < len(accns) else "",
+                "doc": docs[i] if i < len(docs) else "",
+                "date": d}
     return None
 
 
 def _iter_positions(low):
     """Every position where a say-on-pay phrase appears, in document order. The phrase is often
     mentioned in the narrative intro BEFORE the results table, so we can't just take the first
-    hit — we try each until one yields a plausible For/Against pair (usually the table row)."""
+    hit -- we try each until one yields a plausible For/Against pair (usually the table row)."""
     seen = set()
     for p in SOP_PHRASES:
         start = 0
@@ -156,7 +163,7 @@ def parse_say_on_pay(html):
     meeting = m.group(1) if m else None
     for pos in _iter_positions(low):
         # The say-on-pay FREQUENCY proposal reuses the "compensation of named executive officers"
-        # wording, but it reports 1-Year / 2-Year / 3-Year options with NO For/Against — so the
+        # wording, but it reports 1-Year / 2-Year / 3-Year options with NO For/Against -- so the
         # structured row match below (which requires a For/Against/Abstain triple) can't anchor on
         # it, and a window opened on the frequency proposal simply reads forward to the real
         # say-on-pay result row.

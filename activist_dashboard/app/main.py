@@ -377,6 +377,10 @@ def report_generate_now(confirm: int = 0, recompute: int = 1, tickers: str = "")
             if recompute:
                 print("[report] generate-now: recompute starting", flush=True)
                 pipeline.refresh_fundamentals()   # re-extract debt (leases) + metrics
+                try:
+                    pipeline.refresh_votes()      # say-on-pay support (gates the overpaid-CEO signal)
+                except Exception as _ve:
+                    print(f"[report] generate-now: refresh_votes failed (non-fatal): {_ve}", flush=True)
                 scoring.recompute_all()           # rescore with the corrected pay/insider signals
                 pipeline.refresh_ai_thesis()      # re-voice pitches (drops stale theses, archetypes)
                 print("[report] generate-now: recompute done", flush=True)
