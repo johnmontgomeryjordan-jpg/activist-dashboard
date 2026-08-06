@@ -102,17 +102,19 @@ function vulnInfo(v){
   return {col:"var(--dim)", cls:"v0"};
 }
 function vulnBand(v){ if(v==null) return "Unscored"; if(v>=75) return "Severe"; if(v>=50) return "High"; if(v>=25) return "Elevated"; return "Moderate"; }
-function vulnChip(v){ const i=vulnInfo(v); return `<span class="vchip ${i.cls}">${v==null?"—":v}</span>`; }
+// Rating shown as the qualitative BAND only (Severe/High/Elevated/Moderate) — the 0–92 number is
+// kept in the data (c.vuln) for sorting/filtering but never displayed.
+function vulnChip(v){ const i=vulnInfo(v); return `<span class="vchip ${i.cls}">${v==null?"—":vulnBand(v)}</span>`; }
 function vulnCell(v){ const i=vulnInfo(v);
-  return `<div class="vwrap"><span class="vband ${i.cls}">${vulnBand(v)}</span><span class="vchip ${i.cls}">${v==null?"—":v}</span></div>`; }
+  return `<div class="vwrap"><span class="vband ${i.cls}">${vulnBand(v)}</span></div>`; }
 function gaugeSvg(v){
   const val=(v==null)?0:Math.max(0,Math.min(100,v));
   const C=Math.PI*84, on=(val/100)*C, col=vulnInfo(v).col;
-  return `<svg viewBox="0 0 200 118" class="gauge" role="img" aria-label="profile index ${val} of 100">
+  // Severity ARC only — the numeric index is hidden; the band word ("Severe" etc.) is shown beside it.
+  return `<svg viewBox="0 0 200 118" class="gauge" role="img" aria-label="activist-target profile: ${vulnBand(v)}">
     <path d="M16,102 A84,84 0 0 1 184,102" fill="none" stroke="var(--line2)" stroke-width="15" stroke-linecap="round"/>
     <path d="M16,102 A84,84 0 0 1 184,102" fill="none" stroke="${col}" stroke-width="15" stroke-linecap="round" stroke-dasharray="${on.toFixed(1)} ${(C+4).toFixed(1)}"/>
-    <text x="100" y="88" text-anchor="middle" class="gnum" fill="${col}">${v==null?"—":val}</text>
-    <text x="100" y="108" text-anchor="middle" class="glabel">profile index / 100</text>
+    <text x="100" y="98" text-anchor="middle" class="glabel" style="fill:${col};font-weight:700;text-transform:uppercase;letter-spacing:.08em;font-size:15px;">${v==null?"—":vulnBand(v)}</text>
   </svg>`;
 }
 function sparkline(hist, col){
@@ -667,7 +669,7 @@ function renderCompany(){
     </div>
     ${warn}
     <div class="cv-band">
-      <div class="cv-gauge">${gaugeSvg(d.vuln)}<div class="cv-rank"><b>${vulnBand(d.vuln)}</b> · matches the activist-target profile</div></div>
+      <div class="cv-gauge">${gaugeSvg(d.vuln)}<div class="cv-rank">matches the activist-target profile</div></div>
       <div>${facts}${trend}</div>
     </div>
     <div class="cv-tabs">${tabbar}</div>
@@ -869,7 +871,7 @@ function pkHero(d){
     <div class="pk-hero-top">
       <div><div class="cv-title" style="font-size:27px; cursor:pointer;" onclick="openCompany('${esc(d.cik)}')">${esc(d.company)}</div>
         <div class="cv-meta">${[d.ticker,o.sector||o.industry,fmtCap(d.market_cap)].filter(Boolean).map(esc).join(" · ")}</div></div>
-      <div style="text-align:center; flex-shrink:0;"><div class="gnum" style="color:${vi.col}; line-height:1;">${d.vuln==null?"—":d.vuln}</div><div class="vband ${vi.cls}">${vulnBand(d.vuln)}</div></div>
+      <div style="text-align:center; flex-shrink:0;"><div class="vband ${vi.cls}" style="font-size:15px;letter-spacing:.08em;">${vulnBand(d.vuln)}</div></div>
     </div>
     ${thesis}${pts}${pitchStrip(d)}
     <div style="margin-top:16px;"><button onclick="openCompany('${esc(d.cik)}')">View full pitch →</button></div>
@@ -895,7 +897,7 @@ async function renderPitchKit(){
   if(tg){ const targets=(SHORTLIST||[]).filter(c=>c.cik!==PK_LEAD_CIK).slice(0,4);
     tg.innerHTML=targets.map(c=>{ const i=vulnInfo(c.vuln); const hook=leadHook(c);
       return `<div class="nr-card" style="flex:1 1 260px; align-items:flex-start;" onclick="openCompany('${esc(c.cik)}')">
-        <span class="vchip ${i.cls}">${c.vuln==null?"—":c.vuln}</span>
+        <span class="vchip ${i.cls}">${c.vuln==null?"—":vulnBand(c.vuln)}</span>
         <div class="nr-co">${esc(c.company)}<div class="meta">${esc(c.ticker||"")}${hook?" · "+esc(hook):""}</div></div></div>`; }).join("")||`<div class="empty">—</div>`; }
   const nEl=document.getElementById("pkNews");
   if(nEl){ const news=(FEED.news_top||FEED.news||[]).slice()
