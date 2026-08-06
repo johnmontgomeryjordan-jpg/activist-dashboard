@@ -222,10 +222,17 @@ _REPORT_NOCACHE = {
 
 @app.get("/report", response_class=HTMLResponse)
 def report_page():
-    """The biweekly Activist Vulnerability report as a standalone page — rendered in the app's
-    Brief palette, embedded on the landing tab via an iframe, and emailed on the biweekly cron."""
+    """The biweekly Activist Vulnerability report as a standalone page — embedded on the landing tab
+    via an iframe. LOCKED to the last issue that was actually SENT (the frozen web snapshot), so the
+    page shows exactly what went to the list rather than a live re-rendered top-5. Falls back to the
+    frozen email body, then a live render, only if no issue has shipped yet."""
     try:
-        body = emailer.build_report_html()
+        issue = database.get_last_sent_issue()
+        if issue and issue.get("html_web"):
+            return HTMLResponse(issue["html_web"], headers=_REPORT_NOCACHE)
+        if issue and issue.get("html"):
+            return HTMLResponse(issue["html"], headers=_REPORT_NOCACHE)   # pre-snapshot issue
+        body = emailer.build_report_html()                                # nothing sent yet
     except Exception as e:  # pragma: no cover
         return HTMLResponse(f"<p style='font-family:sans-serif;padding:24px'>Report temporarily "
                             f"unavailable: {e}</p>", status_code=500, headers=_REPORT_NOCACHE)

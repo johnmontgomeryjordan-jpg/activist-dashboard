@@ -582,8 +582,7 @@ def _render_card(card, lead=False):
         <div class="pk-meta">mkt cap {_esc(card.get('market_cap'))}</div>
         {arch_html}
       </div>
-      <div class="vwrap"><span class="vchip {card.get('band_cls')}">{_esc(card.get('vuln'))}</span>
-        <span class="vband {card.get('band_cls')}">{_esc(card.get('band'))}</span><span class="vsub">Rating</span></div>
+      <div class="vwrap"><span class="vband {card.get('band_cls')}">{_esc(card.get('band'))}</span></div>
     </div>
     {cat_html}
     <div class="verdict">{_esc(card.get('thesis'))}</div>
@@ -657,7 +656,7 @@ def render_html(model, email=False, site_url=None):
 <div class="wrap">
   <h2 class="sec">This fortnight's board</h2>
   <p class="hint">The names screening highest for activist exposure, each paired with the driving catalyst.
-  A rating (0–92) of how strongly a company matches the profile activists target — <b>not</b> a probability
+  A read of how strongly a company matches the profile activists target — <b>not</b> a probability
   of a campaign. Every figure traces to a filing.</p>
   {cards}
   <h3 class="sub">Relevant headlines</h3>
@@ -792,9 +791,7 @@ def _render_card_email(card, site_url, lead=False):
             {arch_html}
           </td>
           <td valign="top" align="center" width="90">
-            <table role="presentation" style="margin-left:auto;"><tr><td align="center" style="background:{band_bg};color:{band_fg};border-radius:6px;padding:6px 12px;font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:20px;">{_esc(card.get('vuln'))}</td></tr></table>
-            <div style="font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;margin-top:5px;color:{band_fg};">{_esc(card.get('band'))}</div>
-            <div style="font-size:10px;color:#9a978b;margin-top:2px;">Rating</div>
+            <table role="presentation" style="margin-left:auto;"><tr><td align="center" style="background:{band_bg};color:{band_fg};border-radius:6px;padding:6px 12px;font-family:Georgia,'Times New Roman',serif;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.1em;">{_esc(card.get('band'))}</td></tr></table>
           </td>
         </tr>
       </table>
@@ -920,7 +917,7 @@ def render_email_html(model, site_url=None):
 
     <div style="font-family:Georgia,'Times New Roman',serif;font-size:20px;font-weight:500;color:#1c1b18;margin:0 0 4px;">This fortnight's board</div>
     <p style="color:#79766b;font-size:13px;line-height:1.6;margin:0 0 18px;">The names screening highest for activist exposure, each paired with the driving catalyst.
-    A rating (0&ndash;92) of how strongly a company matches the profile activists target — <b>not</b> a probability
+    A read of how strongly a company matches the profile activists target — <b>not</b> a probability
     of a campaign. Every figure traces to a filing.</p>
     {cards}
 

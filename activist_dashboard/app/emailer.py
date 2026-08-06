@@ -357,10 +357,12 @@ def generate_issue(today=None, pin=None):
                             today=today, summarize=aithesis.summarize_line,
                             rotate=(not pin), pin=pin)
     body = build_report_email_html(model)
+    web_body = report.render_html(model)          # web-styled snapshot the /report page locks to
     result = report_audit.audit(model, credibility=credibility)
     tickers = [c.get("ticker") for c in (model.get("board") or []) if c.get("ticker")]
     subject = f"FGS — Activist Vulnerability (biweekly) · {model.get('issue_date')}"
-    database.insert_report_issue(issue_id, tickers, result["status"], result["flags"], subject, body)
+    database.insert_report_issue(issue_id, tickers, result["status"], result["flags"], subject, body,
+                                 html_web=web_body)
     print(f"[report] generated issue {issue_id}: {tickers} · audit {result['summary']}", flush=True)
     return result
 

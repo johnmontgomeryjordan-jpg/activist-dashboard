@@ -200,6 +200,11 @@ def init_db():
         fcols = [r["name"] for r in conn.execute("PRAGMA table_info(fundamentals)")]
         if "raw" not in fcols:
             conn.execute("ALTER TABLE fundamentals ADD COLUMN raw TEXT")
+        rhcols = [r["name"] for r in conn.execute("PRAGMA table_info(report_history)")]
+        if "html_web" not in rhcols:
+            # Web-styled snapshot of each issue, frozen at generation, so the /report page can lock
+            # to exactly what was last sent instead of re-rendering a live top-5 on every load.
+            conn.execute("ALTER TABLE report_history ADD COLUMN html_web TEXT")
 
 
 def now_iso():
@@ -780,16 +785,17 @@ def prior_score(cik, days=7):
 
 
 # --- Biweekly report history (the 6-month no-repeat memory + frozen issues) --------------------
-def insert_report_issue(issue_id, tickers, audit_status, audit_flags, subject, html):
-    """Record a generated (Tue-night) issue: the featured tickers (no-repeat memory) plus the
-    frozen, audited HTML that the Wed job will send. sent_at stays NULL until it actually ships."""
+def insert_report_issue(issue_id, tickers, audit_status, audit_flags, subject, html, html_web=None):
+    """Record a generated (Tue-night) issue: the featured tickers (no-repeat memory), the frozen
+    audited EMAIL body the Wed job sends (`html`), and a frozen WEB-styled snapshot (`html_web`) the
+    /report page locks to. sent_at stays NULL until it actually ships."""
     with get_conn() as conn:
         conn.execute(
             """INSERT OR REPLACE INTO report_history
-               (issue_id,generated_at,sent_at,tickers,audit_status,audit_flags,subject,html)
-               VALUES (?,?,?,?,?,?,?,?)""",
+               (issue_id,generated_at,sent_at,tickers,audit_status,audit_flags,subject,html,html_web)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (issue_id, now_iso(), None, ",".join(tickers),
-             audit_status, json.dumps(audit_flags or []), subject, html))
+             audit_status, json.dumps(audit_flags or []), subject, html, html_web))
 
 
 def get_recent_issue_tickers(n_issues):
@@ -848,6 +854,16 @@ def set_issue_status(issue_id, status):
 def get_latest_issue():
     with get_conn() as conn:
         r = conn.execute("SELECT * FROM report_history ORDER BY issue_id DESC LIMIT 1").fetchone()
+        return dict(r) if r else None
+
+
+def get_last_sent_issue():
+    """The most recently SENT issue — what the public /report page locks to (so the page shows the
+    last report that actually went to the list, not a live re-render). None if nothing has shipped."""
+    with get_conn() as conn:
+        r = conn.execute(
+            "SELECT * FROM report_history WHERE sent_at IS NOT NULL "
+            "ORDER BY sent_at DESC LIMIT 1").fetchone()
         return dict(r) if r else None
 
 
