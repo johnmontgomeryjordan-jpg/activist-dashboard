@@ -582,7 +582,7 @@ def _render_card(card, lead=False):
         <div class="pk-meta">mkt cap {_esc(card.get('market_cap'))}</div>
         {arch_html}
       </div>
-      <div class="vwrap"><span class="vband {card.get('band_cls')}">{_esc(card.get('band'))}</span></div>
+      <div class="vwrap"><span class="vchip {card.get('band_cls')}">{_esc(card.get('band'))}</span></div>
     </div>
     {cat_html}
     <div class="verdict">{_esc(card.get('thesis'))}</div>
