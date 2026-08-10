@@ -108,14 +108,17 @@ function vulnChip(v){ const i=vulnInfo(v); return `<span class="vchip ${i.cls}">
 function vulnCell(v){ const i=vulnInfo(v);
   return `<div class="vwrap"><span class="vband ${i.cls}">${vulnBand(v)}</span></div>`; }
 function gaugeSvg(v){
-  const val=(v==null)?0:Math.max(0,Math.min(100,v));
-  const C=Math.PI*84, on=(val/100)*C, col=vulnInfo(v).col;
-  // Severity ARC only — the numeric index is hidden; the band word ("Severe" etc.) is shown beside it.
-  return `<svg viewBox="0 0 200 118" class="gauge" role="img" aria-label="activist-target profile: ${vulnBand(v)}">
-    <path d="M16,102 A84,84 0 0 1 184,102" fill="none" stroke="var(--line2)" stroke-width="15" stroke-linecap="round"/>
-    <path d="M16,102 A84,84 0 0 1 184,102" fill="none" stroke="${col}" stroke-width="15" stroke-linecap="round" stroke-dasharray="${on.toFixed(1)} ${(C+4).toFixed(1)}"/>
-    <text x="100" y="98" text-anchor="middle" class="glabel" style="fill:${col};font-weight:700;text-transform:uppercase;letter-spacing:.08em;font-size:15px;">${v==null?"—":vulnBand(v)}</text>
-  </svg>`;
+  // Segmented band meter — the four vulnerability bands with the active one lit in its colour.
+  // (Kept the name so the single call site is unchanged; the numeric index stays hidden.)
+  const BANDS=[["Moderate","v0"],["Elevated","v1"],["High","v2"],["Severe","v3"]];
+  const TINT={v3:"#f4e4e2",v2:"#f1e7d4",v1:"#e6eef7",v0:"var(--panel2)"};
+  const COL ={v3:"var(--hot)",v2:"var(--warn)",v1:"var(--accent)",v0:"var(--dim)"};
+  const active=(v==null)?-1:(v>=75?3:v>=50?2:v>=25?1:0);
+  const cells=BANDS.map((b,i)=>{ const on=(i===active), cls=b[1];
+    return `<div style="flex:1;text-align:center;white-space:nowrap;font-size:11px;padding:7px 2px;border-radius:6px;`
+         +`border:1px solid ${on?COL[cls]:'var(--line2)'};background:${on?TINT[cls]:'transparent'};`
+         +`color:${on?COL[cls]:'var(--muted)'};font-weight:${on?'700':'400'};">${b[0]}</div>`; }).join("");
+  return `<div role="img" aria-label="activist-target profile: ${vulnBand(v)}" style="display:flex;gap:4px;">${cells}</div>`;
 }
 function sparkline(hist, col){
   if(!hist || hist.length<2) return "";
@@ -630,10 +633,10 @@ function renderCompany(){
   const facts=`<div class="cv-facts">
     ${kvMini("Market cap", fmtCap(d.market_cap))}
     ${kvMini("Price / book", fmtNum((d.financials||{}).pb_ratio))}
-    ${kvMini("vs S&amp;P 1-yr", (d.tsr&&d.tsr.gap!=null)?`<span style="color:${d.tsr.gap<0?'var(--hot)':'var(--ok)'}">${(d.tsr.gap>0?"+":"")+(d.tsr.gap*100).toFixed(0)+" pts"}</span>`:"—")}
+    ${kvMini("vs S&amp;P 1-yr", (d.tsr&&d.tsr.gap!=null)?`<span style="color:var(--text)">${(d.tsr.gap>0?"+":"")+(d.tsr.gap*100).toFixed(0)+" pts"}</span>`:"—")}
     ${kvMini("Next earnings", (d.earnings&&d.earnings.next_date)?fmtDateY(d.earnings.next_date):"—")}</div>`;
   const trend = (d.history&&d.history.length>=2)
-    ? `<div class="cv-trend"><span class="lab">Rating trend</span>${sparkline(d.history,vi.col)}<span style="color:${vi.col}; font-size:12px; font-weight:600;">${d.week_change>0?"▲ rising":d.week_change<0?"▼ easing":"steady"}</span></div>`
+    ? `<div class="cv-trend"><span class="lab">Vulnerability trend</span>${sparkline(d.history,vi.col)}<span style="color:${vi.col}; font-size:12px; font-weight:600;">${d.week_change>0?"▲ rising":d.week_change<0?"▼ easing":"steady"}</span></div>`
     : "";
   const sm=d.situation_meta||{}; const stier=d.situation_tier||"";
   let warn="";
