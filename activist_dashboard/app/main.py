@@ -85,6 +85,16 @@ def _is_report_cycle():
     return d >= anchor and (d - anchor).days % 14 == 0
 
 
+def _send_window_label():
+    """Human label for the configured Wednesday send hour (REPORT_SEND_HOUR_ET), e.g. '8 AM ET' — so
+    the approval messages always track the real schedule instead of a hardcoded time that can drift."""
+    try:
+        h = int(config.REPORT_SEND_HOUR_ET)
+    except Exception:
+        h = 8
+    return f"{h % 12 or 12} {'AM' if h < 12 else 'PM'} ET"
+
+
 def _report_generate():
     """Tuesday 7 PM ET (biweekly cadence): generate the rotated no-repeat issue, auto-audit it,
     and freeze it for the morning send. Off-cycle Tuesdays are a no-op. Never sends."""
@@ -248,7 +258,7 @@ def report_preview():
 @app.get("/api/report/latest", response_class=HTMLResponse)
 def report_latest():
     """Preview the most recently GENERATED biweekly issue — the frozen, audited email body the Wed
-    7 AM job will actually send (the rotated no-repeat 5), not the live top-5 that /report shows.
+    Wednesday send job will actually ship (the rotated no-repeat 5), not the live top-5 /report shows.
     Read-only QA view: prepends a banner with the audit verdict + send status so the Tuesday-night
     review shows precisely what's going out (or why it's held)."""
     issue = database.get_latest_issue()
@@ -278,7 +288,7 @@ def report_latest():
     if sent:
         state, color = f"already sent {_e(sent)}", "#5f6368"
     elif status == "approved":
-        state = "APPROVED — will send at the next 7 AM ET window"
+        state = f"APPROVED — will send at the next {_send_window_label()} window"
     elif status == "clean":                       # passed the audit, awaiting the owner's approval
         state = "audit CLEAN — awaiting your approval"
         actions = (_btn("/api/report/approve", "Approve &amp; send", "#137333")
@@ -317,7 +327,7 @@ def report_approve(override: int = 0):
     st = (issue.get("audit_status") or "").lower()
     if st == "approved":
         return {"ok": True, "issue": issue_id,
-                "message": "Already approved — it will send at the next 7 AM ET window."}
+                "message": f"Already approved — it will send at the next {_send_window_label()} window."}
     if st == "held" and not override:
         import json as _json
         try:
@@ -330,7 +340,7 @@ def report_approve(override: int = 0):
     database.set_issue_status(issue_id, "approved")
     return {"ok": True, "issue": issue_id, "tickers": tickers,
             "message": f"Approved. Issue {issue_id} ({tickers}) will send to the distribution list "
-                       f"at the next 7 AM ET send window."}
+                       f"at the next {_send_window_label()} send window."}
 
 
 @app.api_route("/api/report/hold", methods=["GET", "POST"])
@@ -899,6 +909,22 @@ async def api_feedback_add(request: Request):
 def api_refresh():
     result = pipeline.refresh_data()
     return {"ok": True, **result}
+
+
+@app.post("/api/refresh-votes")
+def api_refresh_votes():
+    """Admin: re-parse say-on-pay (8-K Item 5.07) across the tracked names in the background, then
+    rescore. Prints a '[votes] coverage diag' line to the logs showing where coverage is lost
+    (8-K not found vs vote table not parsed). Read-only w.r.t. the report — never sends."""
+    def _job():
+        try:
+            n = pipeline.refresh_votes()
+            print(f"[votes] admin refresh done: {n} parsed", flush=True)
+        except Exception as e:  # pragma: no cover
+            print(f"[votes] admin refresh failed: {e}", flush=True)
+    threading.Thread(target=_job, daemon=True).start()
+    return {"ok": True, "message": "Vote refresh started in the background (~1–2 min). Watch the logs "
+                                   "for the '[votes] coverage diag' line."}
 
 
 @app.post("/api/run-enrichment")

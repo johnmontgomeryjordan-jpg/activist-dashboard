@@ -59,7 +59,7 @@ MIN_VOTES = 1_000_000
 # Bump to force a one-time re-parse of cached votes when the parser changes. Votes are otherwise
 # cached by meeting accession, so a fix wouldn't reach a name until its NEXT annual meeting -- e.g.
 # Simply Good Foods' mis-parsed 50% would linger for a year.
-VOTES_PARSER_VERSION = "2026-07-29-submissions-lookup"
+VOTES_PARSER_VERSION = "2026-08-06-coverage-diag"
 
 # Phrases that identify the advisory say-on-pay proposal (lowercased).
 SOP_PHRASES = [
@@ -153,32 +153,43 @@ def _for_against(window):
 
 
 def parse_say_on_pay(html):
-    """Return (approval_fraction, meeting_date) from an 8-K 5.07, or (None, meeting).
-    approval = For / (For + Against) on the advisory executive-compensation vote. Anchors on the
-    real say-on-pay result row (For/Against/Abstain, millions of shares) and skips the say-on-pay
-    FREQUENCY proposal; returns None rather than a mis-anchored value."""
+    """Return (approval_fraction, meeting_date) from an 8-K 5.07, or (None, meeting). Thin wrapper
+    over _parse_reason (which also reports WHY a parse failed, for the coverage diagnostics)."""
+    approval, meeting, _reason = _parse_reason(html)
+    return approval, meeting
+
+
+def _parse_reason(html):
+    """Like parse_say_on_pay, but also returns a reason code so refresh_votes can log the coverage
+    breakdown. reason ∈ {'ok','no_sop_phrase','no_foragainst_row','small_denom','implausible'}.
+    approval = For / (For + Against) on the advisory exec-comp vote; anchors on the real
+    For/Against/Abstain result row and skips the say-on-pay FREQUENCY proposal."""
     text = _TAG.sub(" ", html or "")
     low = text.lower()
     m = _HELD.search(text)
     meeting = m.group(1) if m else None
-    for pos in _iter_positions(low):
-        # The say-on-pay FREQUENCY proposal reuses the "compensation of named executive officers"
-        # wording, but it reports 1-Year / 2-Year / 3-Year options with NO For/Against -- so the
-        # structured row match below (which requires a For/Against/Abstain triple) can't anchor on
-        # it, and a window opened on the frequency proposal simply reads forward to the real
-        # say-on-pay result row.
+    positions = _iter_positions(low)
+    if not positions:
+        return None, meeting, "no_sop_phrase"      # never even found the say-on-pay proposal wording
+    saw_row = saw_denom = False
+    for pos in positions:
+        # The FREQUENCY proposal reuses the "compensation of named executive officers" wording but
+        # reports 1/2/3-Year options with NO For/Against, so the structured row match can't anchor on
+        # it; a window opened there simply reads forward to the real say-on-pay result row.
         fa = _for_against(low[pos:pos + 1500])
         if not fa:
             continue
+        saw_row = True
         for_v, against_v = fa
         denom = for_v + against_v
         if denom < MIN_VOTES:          # anchored on small/wrong numbers, not a real company vote
             continue
+        saw_denom = True
         approval = for_v / denom
-        # Only accept a plausible result; skip mis-anchored parses (e.g. a year read as a tally).
         if MIN_PLAUSIBLE_SOP <= approval <= 1.0:
-            return approval, meeting
-    return None, meeting
+            return approval, meeting, "ok"
+    reason = "no_foragainst_row" if not saw_row else ("small_denom" if not saw_denom else "implausible")
+    return None, meeting, reason
 
 
 def refresh_votes(ciks, window_days=WINDOW_DAYS):
@@ -192,20 +203,29 @@ def refresh_votes(ciks, window_days=WINDOW_DAYS):
     # clear a bad one) so a fixed parse reaches cached names immediately.
     force = database.get_meta("votes_parser_version") != VOTES_PARSER_VERSION
     done = 0
+    # Coverage diagnostics — tally WHY each tracked name did/didn't yield a say-on-pay number, so we
+    # can see where the ~12% coverage is lost (finding the 8-K vs reading the vote table) and fix the
+    # dominant failure mode. Only meaningful on a full (forced) re-parse, which reads every name.
+    diag = {"no_507": 0, "docfetch_fail": 0, "ok": 0, "no_sop_phrase": 0,
+            "no_foragainst_row": 0, "small_denom": 0, "implausible": 0, "skipped_seen": 0}
     for cik in ciks:
         cik10 = _pad(cik)
         f = _latest_507(cik10, start, end); time.sleep(0.15)
         if not f or not f.get("accn"):
+            diag["no_507"] += 1
             continue
         if (not force) and database.votes_accn_seen(cik10, f["accn"]):
+            diag["skipped_seen"] += 1
             continue  # already parsed this meeting's filing
         nod = f["accn"].replace("-", "")
         url = f"{ARCHIVE}/{int(cik10)}/{nod}/{f['doc']}" if f.get("doc") else \
               f"{ARCHIVE}/{int(cik10)}/{nod}/{f['accn']}-index.htm"
         r = _get(url); time.sleep(0.1)
         if not r or not r.text:
+            diag["docfetch_fail"] += 1
             continue
-        approval, meeting = parse_say_on_pay(r.text)
+        approval, meeting, reason = _parse_reason(r.text)
+        diag[reason] = diag.get(reason, 0) + 1
         if approval is None and not force:
             continue
         # On a forced re-parse, store even None so a previously mis-parsed value is overwritten.
@@ -216,4 +236,6 @@ def refresh_votes(ciks, window_days=WINDOW_DAYS):
         database.set_meta("votes_parser_version", VOTES_PARSER_VERSION)
     print(f"[votes] parsed say-on-pay for {done} of {len(ciks)} names"
           + ("  (full re-parse: parser " + VOTES_PARSER_VERSION + ")" if force else ""))
+    print("[votes] coverage diag · "
+          + " · ".join(f"{k}={v}" for k, v in diag.items() if v), flush=True)
     return done
