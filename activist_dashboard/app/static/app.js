@@ -1134,6 +1134,12 @@ async function runEnrichment(){ const b=document.getElementById("enrichBtn"); b.
   try{ const r=await fetch("/api/run-enrichment",{method:"POST"}); const d=await r.json(); b.textContent=d.ok?"Running in background ✓":"Error"; }
   catch(e){ b.textContent="Network error"; }
   setTimeout(async()=>{ await refreshAll(); b.disabled=false; b.textContent="⟳ Run enrichment now"; },120000); }
+async function refreshVotes(){ const b=document.getElementById("votesBtn"), m=document.getElementById("votesMsg");
+  b.disabled=true; b.textContent="Refreshing… (~1–2 min)"; if(m) m.textContent="";
+  try{ const r=await (await fetch("/api/refresh-votes",{method:"POST"})).json();
+    if(m){ m.className="msg "+(r.ok?"ok":"err"); m.textContent=r.message||(r.ok?"Started.":"Error"); } }
+  catch(e){ if(m){ m.className="msg err"; m.textContent="Could not start — try again."; } }
+  setTimeout(()=>{ b.disabled=false; b.textContent="↻ Refresh vote data"; },120000); }
 async function refresh13f(){
   if(!confirm("Refresh the 13F activist-holder data now?\n\nResolves each activist fund's latest Form 13F and re-maps holdings onto the universe (~1–2 minutes in the background). Safe to run anytime; it updates the Accumulating tab and the holder boost on leads.")) return;
   const b=document.getElementById("r13fBtn"); if(b){ b.disabled=true; b.textContent="↻ Refreshing… (~1–2 min)"; }
@@ -1176,7 +1182,7 @@ async function pollRegen(){
   }catch(e){ setTimeout(pollRegen,15000); }
 }
 async function approveIssue(){
-  if(!confirm("Approve this issue for the Wednesday 7 AM send?\n\nThis releases it to the FULL distribution list at the next send window. Preview it first.")) return;
+  if(!confirm("Approve this issue for the Wednesday send?\n\nThis releases it to the FULL distribution list at the next send window. Preview it first.")) return;
   const b=document.getElementById("approveBtn"), m=document.getElementById("regenMsg");
   b.disabled=true; b.textContent="Approving…";
   try{

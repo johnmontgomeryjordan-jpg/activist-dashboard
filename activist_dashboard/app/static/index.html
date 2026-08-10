@@ -445,22 +445,9 @@
     </table>
   </div>
 
-  <div class="row2col">
-    <div class="panel">
-      <h2>Top headlines</h2>
-      <div id="topNews"><div class="empty">Loading…</div></div>
-    </div>
-    <div class="subscribe">
-      <h2>Biweekly report</h2>
-      <p>The Activist Vulnerability report — five fresh names each issue, each with its driving catalyst, thesis, and financials — emailed to the distribution list every other Wednesday at 7:00 AM ET. Add yourself below.</p>
-      <input type="email" id="emailInput" placeholder="you@fgsglobal.com" />
-      <div class="toolbar" style="margin-bottom:0; gap:8px;">
-        <button onclick="subscribe()">Subscribe</button>
-        <button class="ghost" onclick="unsubscribe()">Unsubscribe</button>
-        <button class="ghost" onclick="sendTestDigest()">Send test</button>
-      </div>
-      <div class="msg" id="subMsg" style="margin-top:8px;"></div>
-    </div>
+  <div class="panel" style="margin-top:24px;">
+    <h2>Top headlines</h2>
+    <div id="topNews"><div class="empty">Loading…</div></div>
   </div>
 </div>
 
@@ -741,7 +728,7 @@
         captures the prior night's filings and headlines.</li>
       <li><b>Every other week</b> — the emailed <b>Activist Vulnerability report</b>: five fresh names
         (no repeats for six months), generated Tuesday 7 PM ET, auto-audited, then sent to the
-        distribution list Wednesday 7 AM ET. This is the only outbound email — the daily digest is
+        distribution list Wednesday morning ET. This is the only outbound email — the daily digest is
         intentionally paused, since the distribution list is fortnightly.</li>
       <li><b>Weekly</b> — the S&amp;P 1500 membership rebuild (from iShares index holdings) and the
         13F activist-holder refresh (Accumulating &amp; Disclosed). 13F only updates quarterly at the
@@ -1216,7 +1203,7 @@
     background) and re-renders the <b>same five vetted names</b> with corrected numbers, then re-audits
     and freezes it <b>awaiting your approval</b>. <b>Preview latest</b> opens that frozen, audited email
     to review. Nothing is emailed to anyone until you press <b>Approve</b>; use <b>Hold</b> to block
-    Wednesday's send. Approve/Hold are reversible right up to the 7 AM ET window.</p>
+    Wednesday's send. Approve/Hold are reversible right up to the send window.</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
       <button id="regenBtn" onclick="regenerateIssue()">⟳ Regenerate (recompute + rebuild)</button>
       <a class="ghost" href="/api/report/latest" target="_blank" rel="noopener"
@@ -1232,6 +1219,15 @@
     votes, multi-year returns, contacts, and the AI thesis for the tracked names — about 2 minutes,
     and it uses Twelve Data + Anthropic credits.</p>
     <button class="ghost" id="enrichBtn" onclick="runEnrichment()">⟳ Run enrichment now</button>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 4px;">Refresh vote data (diagnostic)</h3>
+    <p class="hint" style="margin:0 0 12px;">Re-reads each tracked company's latest say-on-pay result
+    (8-K Item 5.07) from free SEC data and rescores — about 1–2 minutes. This run also prints a
+    <b>coverage diagnostic</b> to the logs (how many filings were found vs how the vote table parsed),
+    which we use to widen say-on-pay coverage. Read-only for the report.</p>
+    <button class="ghost" id="votesBtn" onclick="refreshVotes()">↻ Refresh vote data</button>
+    <span class="msg" id="votesMsg" style="margin-left:10px;"></span>
   </div>
   <div class="card">
     <h3 style="margin:0 0 4px;">Re-sweep SEC filings</h3>
