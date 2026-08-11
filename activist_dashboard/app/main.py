@@ -918,6 +918,9 @@ def api_refresh_votes():
     (8-K not found vs vote table not parsed). Read-only w.r.t. the report — never sends."""
     def _job():
         try:
+            # Force a FULL re-parse (not just newly-seen filings) so the coverage diag reflects all
+            # tracked names every time — clearing the parser-version marker trips the force path.
+            database.set_meta("votes_parser_version", "")
             n = pipeline.refresh_votes()
             print(f"[votes] admin refresh done: {n} parsed", flush=True)
         except Exception as e:  # pragma: no cover
