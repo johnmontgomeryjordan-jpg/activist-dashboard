@@ -42,13 +42,27 @@ _TAG = re.compile(r"<[^>]+>")
 # layouts survive de-tagging:
 #   interleaved:  "For 65,000,000 Against 2,400,000 Abstained 50,000"
 #   header+data:  "For Against Abstained Broker Non-Votes  65,000,000 2,400,000 50,000 4,000,000"
+# _PCT tolerates a percentage printed after a vote count (e.g. "1,370,288,108 97.0% Against ...") —
+# those digits otherwise break the [^\d] gap between the For count and the "Against" label. And the
+# abstain label is matched as "abst(ain|ention)" so "Abstentions" (Chevron-style) counts too.
+_PCT = r"(?:\s*\d{1,3}(?:\.\d+)?\s*%)?"
+_NUM = r"(\d{1,3}(?:,\d{3})+)"
 _ROW_INTERLEAVED = re.compile(
-    r"\bfor\b[^\d]{0,20}(\d{1,3}(?:,\d{3})+)"
-    r"[^\d]{0,60}?\bagainst\b[^\d]{0,20}(\d{1,3}(?:,\d{3})+)"
-    r"[^\d]{0,80}?\babstain")
+    r"\bfor\b[^\d]{0,20}" + _NUM + _PCT +
+    r"[^\d]{0,60}?\bagainst\b[^\d]{0,20}" + _NUM + _PCT +
+    r"[^\d]{0,80}?\babst(?:ain|ention)")
 _ROW_HEADER = re.compile(
-    r"\bfor\b[^\d]{0,20}\bagainst\b[^\d]{0,20}\babstain\w*[^\d]{0,80}?"
+    r"\bfor\b[^\d]{0,20}\bagainst\b[^\d]{0,20}\babst(?:ain|ention)\w*[^\d]{0,80}?"
     r"(\d{1,3}(?:,\d{3})+)[^\d]{0,20}(\d{1,3}(?:,\d{3})+)")
+# The say-on-pay proposal, matched flexibly: any words may sit between "compensation of" and "named
+# executive officers" (e.g. "the Company's", "Chevron's", "our"), plus the "advisory ... executive
+# compensation" and "say-on-pay" variants. This replaced a fixed phrase list that missed the ~56% of
+# filings whose wording differed only slightly (Cabot: "compensation of the Company's named ...").
+_SOP_ANCHOR = re.compile(
+    r"compensation of [^.\d]{0,40}?named executive officers"
+    r"|advisory[^.]{0,60}?executive compensation"
+    r"|advisory[^.]{0,60}?compensation of"
+    r"|say[\s-]?on[\s-]?pay")
 # A real say-on-pay "For" essentially never falls below ~20%, even when the vote FAILS (failed
 # say-on-pay votes cluster around 40-60%). A parsed value below this means we anchored on the
 # wrong numbers, so we treat it as UNPARSED (None) rather than emit a false near-0% signal.
@@ -59,22 +73,7 @@ MIN_VOTES = 1_000_000
 # Bump to force a one-time re-parse of cached votes when the parser changes. Votes are otherwise
 # cached by meeting accession, so a fix wouldn't reach a name until its NEXT annual meeting -- e.g.
 # Simply Good Foods' mis-parsed 50% would linger for a year.
-VOTES_PARSER_VERSION = "2026-08-06-coverage-diag"
-
-# Phrases that identify the advisory say-on-pay proposal (lowercased).
-SOP_PHRASES = [
-    "advisory vote to approve executive compensation",
-    "advisory resolution to approve executive compensation",
-    "advisory vote to approve named executive officer compensation",
-    "advisory vote on executive compensation",
-    "advisory vote to approve the compensation",
-    "approve, on an advisory basis, the compensation",
-    "advisory approval of the compensation",
-    "compensation of our named executive officers",
-    "compensation of the named executive officers",
-    "compensation of named executive officers",   # bare (e.g. Simply Good Foods' proposal title)
-    "say-on-pay", "say on pay",
-]
+VOTES_PARSER_VERSION = "2026-08-07-flexible-anchor"
 _HELD = re.compile(r"held on\s+([A-Z][a-z]+ \d{1,2},? \d{4})")
 
 
@@ -128,19 +127,10 @@ def _latest_507(cik10, start, end):
 
 
 def _iter_positions(low):
-    """Every position where a say-on-pay phrase appears, in document order. The phrase is often
-    mentioned in the narrative intro BEFORE the results table, so we can't just take the first
-    hit -- we try each until one yields a plausible For/Against pair (usually the table row)."""
-    seen = set()
-    for p in SOP_PHRASES:
-        start = 0
-        while True:
-            i = low.find(p, start)
-            if i == -1:
-                break
-            seen.add(i)
-            start = i + 1
-    return sorted(seen)
+    """Every position where the say-on-pay proposal wording appears (via _SOP_ANCHOR), in document
+    order. The wording is often in the narrative intro BEFORE the results table, so we can't just
+    take the first hit -- we try each until one yields a plausible For/Against pair (the table row)."""
+    return sorted({m.start() for m in _SOP_ANCHOR.finditer(low)})
 
 
 def _for_against(window):
