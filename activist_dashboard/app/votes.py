@@ -208,6 +208,7 @@ def refresh_votes(ciks, window_days=WINDOW_DAYS):
     # dominant failure mode. Only meaningful on a full (forced) re-parse, which reads every name.
     diag = {"no_507": 0, "docfetch_fail": 0, "ok": 0, "no_sop_phrase": 0,
             "no_foragainst_row": 0, "small_denom": 0, "implausible": 0, "skipped_seen": 0}
+    examples = {}   # a few real filing URLs per failure bucket, to inspect why the parse missed
     for cik in ciks:
         cik10 = _pad(cik)
         f = _latest_507(cik10, start, end); time.sleep(0.15)
@@ -226,6 +227,10 @@ def refresh_votes(ciks, window_days=WINDOW_DAYS):
             continue
         approval, meeting, reason = _parse_reason(r.text)
         diag[reason] = diag.get(reason, 0) + 1
+        if reason != "ok":
+            examples.setdefault(reason, [])
+            if len(examples[reason]) < 5:
+                examples[reason].append(url)
         if approval is None and not force:
             continue
         # On a forced re-parse, store even None so a previously mis-parsed value is overwritten.
@@ -238,4 +243,7 @@ def refresh_votes(ciks, window_days=WINDOW_DAYS):
           + ("  (full re-parse: parser " + VOTES_PARSER_VERSION + ")" if force else ""))
     print("[votes] coverage diag · "
           + " · ".join(f"{k}={v}" for k, v in diag.items() if v), flush=True)
+    for k in ("no_sop_phrase", "no_foragainst_row", "small_denom", "implausible"):
+        if examples.get(k):
+            print(f"[votes] examples {k}: " + "  ".join(examples[k]), flush=True)
     return done
