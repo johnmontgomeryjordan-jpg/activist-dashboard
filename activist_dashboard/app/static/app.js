@@ -923,8 +923,11 @@ function finCard(m){
   const pos=m.pct!=null?Math.max(2,Math.min(98,Math.round(m.pct*100))):null;
   const bar=pos!=null?`<div class="ptrack"><div class="pmark" style="left:${pos}%"></div></div>`:`<div class="ptrack"></div>`;
   const cap=cut!=null?`Peer cutoff ${cut} · ${m.n||0} sector peers`:`${m.n||0} sector peers`;
+  // #35 absolute sanity band: an extreme absolute value gets an explicit caption so a
+  // peer-relative "In line" is never read as unremarkable (e.g. a 43x EV/EBITDA).
+  const note=(m.extreme&&m.note)?` <span class="mv-note" style="color:var(--hot);font-weight:600;font-size:12px;">· ${esc(m.note)}</span>`:"";
   return `<div class="metric"><div class="metric-top"><span class="mk">${esc(m.label)}</span><span class="chip ${cls}">${lab}</span></div>
-    <div class="metric-top" style="margin-top:5px;"><span class="mv">${v}</span></div>${bar}<div class="mc">${esc(cap)}</div></div>`;
+    <div class="metric-top" style="margin-top:5px;"><span class="mv">${v}</span>${note}</div>${bar}<div class="mc">${esc(cap)}</div></div>`;
 }
 function peerTable(pa){
   const f=(v)=>v==null?"—":((v>=0?"+":"")+(v*100).toFixed(0)+"%");
