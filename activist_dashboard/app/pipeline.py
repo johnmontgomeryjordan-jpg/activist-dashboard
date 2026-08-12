@@ -85,11 +85,17 @@ _CASH = ["CashAndCashEquivalentsAtCarryingValue"]
 #   _LT_INVEST    — any long-term/noncurrent investment tag. Its presence means the base tag can't be
 #                   assumed current, so we don't count it (blocks miscounting long-term holdings as cash).
 _STI = ["ShortTermInvestments"]   # kept for reference; _STI_CURRENT supersedes it in _extract
+# HELD-TO-MATURITY note (#33): some cash-rich names park liquidity in current HTM Treasuries, which
+# the old list missed entirely — e.g. Copart holds ~$2.0B of HTM securities in current assets, so its
+# liquidity read was understated (~$2.1B vs a true ~$4.8B). We add the STANDARD current-HTM tags below.
+# CAVEAT: Copart itself files HTM under a *custom* (non-us-gaap) element, so this general fix helps
+# other issuers but does NOT recover Copart's specific figure — a known limitation for custom taggers.
 _STI_CURRENT = ["ShortTermInvestments", "MarketableSecuritiesCurrent",
                 "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
-                "AvailableForSaleSecuritiesCurrent", "OtherShortTermInvestments"]
+                "AvailableForSaleSecuritiesCurrent", "OtherShortTermInvestments",
+                "HeldToMaturitySecuritiesCurrent", "DebtSecuritiesHeldToMaturityAmortizedCostAfterAllowanceForCreditLossCurrent"]
 _STI_AMBIG = ["AvailableForSaleSecuritiesDebtSecurities", "MarketableSecurities",
-              "AvailableForSaleSecurities"]
+              "AvailableForSaleSecurities", "HeldToMaturitySecurities"]
 _LT_INVEST = ["AvailableForSaleSecuritiesDebtSecuritiesNoncurrent", "MarketableSecuritiesNoncurrent",
               "AvailableForSaleSecuritiesNoncurrent", "LongTermInvestments",
               "OtherLongTermInvestments", "HeldToMaturitySecuritiesNoncurrent"]
@@ -605,6 +611,16 @@ def _extract(facts):
     # (impairment, divestiture) distorting the quarter, not real distress (see scoring).
     annual_ni = _annual_latest(ni_f)
 
+    # Operating-margin TRAJECTORY (#36). Same-period YoY delta: current-period operating margin
+    # minus the prior-year same-period margin. A positive delta means margins are IMPROVING —
+    # which scoring uses to STOP a "margin turnaround / cut costs" thesis from firing on a company
+    # whose margins are already rising (e.g. AECOM). Same-period on both sides so the two are
+    # directly comparable, independent of the TTM smoothing used for the level metric above.
+    _op_prior_sp = _prior_year(op_f, p_end, p_days) if p_end else None
+    _m_now_sp = (opinc / rev) if (opinc is not None and rev and rev > 0) else None
+    _m_prior_sp = (_op_prior_sp / rev_prior) if (_op_prior_sp is not None and rev_prior and rev_prior > 0) else None
+    margin_yoy_delta = (_m_now_sp - _m_prior_sp) if (_m_now_sp is not None and _m_prior_sp is not None) else None
+
     metrics = {
         "revenue": m_rev, "revenue_growth": growth,
         "operating_margin": ratio_cap(m_opinc, m_rev, -5, 5), "sga_pct": ratio(m_sga, m_rev, 0, 5),
@@ -619,7 +635,7 @@ def _extract(facts):
         "revenue_growth_period": g_period,
         "sga": m_sga, "net_income": ni, "net_income_ann": m_ni,
         "margin_label": m_label, "margin_basis": m_basis,
-        "annual_net_income": annual_ni,
+        "annual_net_income": annual_ni, "margin_yoy_delta": margin_yoy_delta,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
         "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill, "operating_lease": op_lease,
         "finance_lease": fin_lease, "interest_expense": int_exp,

@@ -167,6 +167,13 @@ LABELS = {
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
 # insider_buying is shown as a 0-point defense/confidence note.
 INSIDER_KEYS = ("insider_selling", "insider_buying")
+# Materiality gate for the "cluster of insider selling" signal. A handful of insiders trimming
+# a trivial fraction of a large company is noise, not a crack in confidence: Copart insiders net-
+# sold ~$21M against a ~$27B market cap (0.08%), which fired the signal as if it were a real
+# cluster. Require the NET open-market selling to clear at least this share of market cap before
+# the signal triggers. When market cap is unknown we can't judge scale, so we fall back to the
+# seller-count test rather than suppress. Tune via INSIDER_NET_MIN_FRAC (fraction, not percent).
+INSIDER_NET_MIN_FRAC = float(os.getenv("INSIDER_NET_MIN_FRAC", "0.001"))   # 0.1% of market cap
 # Shareholder-vote discontent (8-K Item 5.07). Flag when say-on-pay support falls below
 # this fraction -- well under the ~90%+ norm, a recognized pre-activism warning.
 VOTE_KEYS = ("weak_vote_support",)
@@ -202,6 +209,12 @@ COMP_RAMP_SUSPECT = 1.0
 # but 10.3% with its finance leases, so operating-only let it slip the guard and draw a
 # questionable under-levered read (SIG: ~$1.1B leases / $5.73B ≈ 19%).
 LEASE_HEAVY = 0.10
+# Margin-trajectory gate (#36). A company whose operating margin IMPROVED by at least this much
+# year-over-year (same-period) is not a "margin turnaround / cut costs" target — the turnaround is
+# already underway (AECOM's margins are rising), so the operational-lever signals are suppressed.
+# Kept modest so ordinary noise doesn't clear it; a genuine laggard with flat/falling margins still
+# fires. margin_yoy_delta is computed in pipeline._extract (same-period current vs prior-year).
+MARGIN_IMPROVING_DELTA = float(os.getenv("MARGIN_IMPROVING_DELTA", "0.02"))   # +2 pts YoY
 
 
 def _leveraged_recap(r):
@@ -575,6 +588,23 @@ _FIN_METRICS = [
     ("cash_to_assets", "Cash / assets", "opp_high"),
     ("debt_to_assets", "Debt / assets", "opp_low"),
 ]
+# Absolute sanity bands (#35). Peer-relative quartiles alone can label an ABSOLUTELY extreme
+# metric "in line" — a 43x EV/EBITDA or 60%+ debt/assets reads as neutral just because the whole
+# sector sits at similar levels. These bands attach an explicit note so an extreme value is never
+# presented on the Financials tab as unremarkable. Display-only: they annotate the row; they do
+# NOT change the vulnerability score or the pitch text.
+#   metric -> (low_threshold, low_note, high_threshold, high_note); None disables that side.
+_FIN_ABS_BANDS = {
+    "pb_ratio":           (None, None,                 8.0,  "richly valued"),
+    "ev_ebitda":          (None, None,                 25.0, "richly valued"),
+    "goodwill_to_assets": (None, None,                 0.40, "goodwill-heavy"),
+    "operating_margin":   (-0.10, "deeply unprofitable", None, None),
+    "roa":                (-0.10, "deeply unprofitable", None, None),
+    "revenue_growth":     (-0.10, "revenue shrinking",   None, None),
+    "sga_pct":            (None, None,                 0.60, "overhead-heavy"),
+    "cash_to_assets":     (None, None,                 0.40, "cash-heavy"),
+    "debt_to_assets":     (None, None,                 0.55, "highly leveraged"),
+}
 def _fin_context(r, t, e):
     out = []
     # Mirror the trigger guards so the Financials tab matches the evidence cards (don't paint a
@@ -590,11 +620,16 @@ def _fin_context(r, t, e):
     _ol, _fl, _ta = _bs.get("operating_lease"), _bs.get("finance_lease"), _bs.get("total_assets")
     _lease_heavy = ((_ol is not None or _fl is not None) and _ta and _ta > 0
                     and ((_ol or 0) + (_fl or 0)) / _ta >= LEASE_HEAVY)
+    # Trajectory guards (#36), mirrored from the scorer so the Financials tab doesn't paint a
+    # red/gold lever the scorer suppressed for a fast grower or a company with rising margins.
+    _hg = (r.get("revenue_growth") is not None and r["revenue_growth"] > 0.20)
+    _mdelta = _bs.get("margin_yoy_delta")
+    _mimp = _mdelta is not None and _mdelta >= MARGIN_IMPROVING_DELTA
     _suppress = {
-        "operating_margin": _fin or _outperf or not _om_pos,
+        "operating_margin": _fin or _outperf or not _om_pos or _hg or _mimp,
         "roa": (r.get("roa") or 0) <= 0,
-        "sga_pct": _fin or _outperf or not _om_pos,
-        "cash_to_assets": _fin or _outperf or _leveraged_recap(r),
+        "sga_pct": _fin or _outperf or not _om_pos or _hg or _mimp,
+        "cash_to_assets": _fin or _outperf or _leveraged_recap(r) or _hg,
         "debt_to_assets": _fin or _outperf or _lease_heavy,
         "ev_ebitda": _fin,
     }
@@ -628,8 +663,20 @@ def _fin_context(r, t, e):
         # profitable), don't show this metric as a red/gold activist lever — keep it "in line".
         if verdict in ("bad", "opp") and _suppress.get(key):
             verdict = "mid"
+        # Absolute sanity band (#35): flag an absolutely extreme value so a peer-relative
+        # "in line" verdict is never read as unremarkable (e.g. a 43x EV/EBITDA in an
+        # expensive sector). Additive annotation only — does not recolor or rescore.
+        extreme, note = False, None
+        _band = _FIN_ABS_BANDS.get(key)
+        if _band:
+            _lo_t, _lo_note, _hi_t, _hi_note = _band
+            if _lo_t is not None and v <= _lo_t:
+                extreme, note = True, _lo_note
+            elif _hi_t is not None and v >= _hi_t:
+                extreme, note = True, _hi_note
         out.append({"key": key, "label": label, "value": v, "cutoff": cutoff,
-                    "pct": pct, "verdict": verdict, "n": n})
+                    "pct": pct, "verdict": verdict, "n": n,
+                    "extreme": extreme, "note": note})
     return out
 def _is_cash_burner(r):
     """Deeply unprofitable on operations -> a structural cash burner (clinical/platform
@@ -1275,6 +1322,16 @@ def recompute_all():
         _g5 = ((r.get("tsr_5y") - spy_5y) if (r.get("tsr_5y") is not None and spy_5y is not None) else None)
         _strong_outperformer = (_g3 is not None and _g3 >= 0.25) or (
             _g5 is not None and _g5 >= 0.40 and _g3 is not None and _g3 >= 0)
+        # Trajectory guards (#36): don't pin an "operational underperformance / cut costs /
+        # return of capital" thesis on a company that is GROWING fast or whose margins are already
+        # RISING. A hyper-grower (rev > 20%) is investing for growth — thin margins, high SG&A and
+        # a cash pile are growth characteristics, not activist levers (Celsius). A company whose
+        # operating margin improved YoY is not a "margin turnaround" target — the turnaround is
+        # already underway (AECOM). Both suppress the operational levers below; they still fire for
+        # genuine laggards (flat/shrinking names with flat-or-falling margins).
+        _hyper_growth = (r.get("revenue_growth") is not None and r["revenue_growth"] > 0.20)
+        _mdelta = (r.get("raw") or {}).get("margin_yoy_delta")
+        _margin_improving = _mdelta is not None and _mdelta >= MARGIN_IMPROVING_DELTA
         trig = []
         def low(metric):
             q1, _, _ = t.get(metric, (None, None, 0))
@@ -1304,6 +1361,7 @@ def recompute_all():
         # value targets (Kohl's, Advance Auto — profitable, thin margins). Subsumes the earlier
         # charge-distortion guard for these signals.
         if (low("operating_margin") and not _is_financial and not _strong_outperformer
+                and not _hyper_growth and not _margin_improving
                 and (r.get("operating_margin") or 0) > 0):
             trig.append("low_margin")
         if (r.get("tsr_1y") is not None and spy_1y is not None
@@ -1319,7 +1377,7 @@ def recompute_all():
         # multiple compression on a business the market still backs (Axon, AeroVironment,
         # Inspire), not a sale setup. Mature de-raters (TRUP, Lululemon-type) still fire;
         # unknown growth still fires (don't drop a possible target on missing data).
-        _hyper_growth = (r.get("revenue_growth") is not None and r["revenue_growth"] > 0.20)
+        # (_hyper_growth is defined once above with the other trajectory guards.)
         if (r.get("tsr_1y") is not None and r["tsr_1y"] <= STRATEGIC_DROP
                 and not _is_cash_burner(r) and not _hyper_growth and not _strong_outperformer):
             trig.append("strategic_review")
@@ -1328,12 +1386,15 @@ def recompute_all():
         if r.get("revenue_growth") is not None and (r["revenue_growth"] < 0 or low("revenue_growth")):
             trig.append("weak_growth")
         if (high("sga_pct") and not _is_financial and not _strong_outperformer
+                and not _hyper_growth and not _margin_improving
                 and (r.get("operating_margin") or 0) > 0):
             trig.append("high_sga")
         # Leveraged-recap / negative-equity names (Domino's) have already returned all their
         # capital via debt-funded buybacks — "cash = idle capital to return" is exactly wrong.
+        # Hyper-growers (#36) also get a pass: a fast grower's cash is growth runway, not idle
+        # capital to hand back (Celsius reads "cash-rich laggard" only because growth is misread).
         if (high("cash_to_assets") and not _is_financial and not _strong_outperformer
-                and not _leveraged_recap(r)):
+                and not _hyper_growth and not _leveraged_recap(r)):
             trig.append("cash_hoard")
         # Lease guard: a lease-heavy retailer at zero funded debt isn't really under-levered.
         _bs = r.get("raw") or {}
@@ -1413,7 +1474,14 @@ def recompute_all():
         # A "cluster of selling / crack in confidence" needs sellers to actually OUTNUMBER buyers.
         # A few large planned/secondary sales alongside broad insider buying (VITL: 12 buyers vs 10
         # sellers, insiders buying the post-miss dip) is NOT a confidence crack.
-        if ns >= 2 and sell_v > buy_v and nb < ns:
+        # It ALSO needs to be material to the company's size: a trivial net sale at a mega-cap
+        # (Copart: ~$21M net / ~$27B cap = 0.08%) is noise, not a cluster. Gate on net selling as a
+        # share of market cap; when market cap is unknown, fall back to the count test (don't
+        # suppress on missing data).
+        _net_sell = sell_v - buy_v
+        _mcap = r.get("market_cap")
+        _ins_material = (_mcap is None) or (_net_sell >= INSIDER_NET_MIN_FRAC * _mcap)
+        if ns >= 2 and sell_v > buy_v and nb < ns and _ins_material:
             trig.append("insider_selling")
         elif nb >= 1 and buy_v > sell_v and buy_v > 0:
             trig.append("insider_buying")
