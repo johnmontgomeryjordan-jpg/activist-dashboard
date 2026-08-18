@@ -22,7 +22,7 @@ import json
 import os
 import re
 from datetime import datetime
-from . import config, database, pitch, activists
+from . import config, database, pitch, activists, taxonomy
 MIN_PEERS = 5
 # 1-yr stock return must lag the S&P 500 by at least this much (in return terms) to flag.
 TSR_LAG_1Y = -0.15
@@ -611,7 +611,8 @@ def _fin_context(r, t, e):
     # red "vulnerability" / gold "opportunity" the scorer deliberately suppressed): financials
     # (SIC 60-64), strong multi-year outperformers, and the profitability rule (margin/ROA/SG&A
     # levers only apply to a profitable company).
-    _fin = (r.get("sector") or "") in ("60", "61", "62", "63", "64")
+    _fin = ((r.get("sector") or "") in ("60", "61", "62", "63", "64")
+            or taxonomy.is_financial(r.get("_industry")))
     _g3 = ((r.get("tsr_3y") - r.get("_spy_3y")) if (r.get("tsr_3y") is not None and r.get("_spy_3y") is not None) else None)
     _g5 = ((r.get("tsr_5y") - r.get("_spy_5y")) if (r.get("tsr_5y") is not None and r.get("_spy_5y") is not None) else None)
     _outperf = (_g3 is not None and _g3 >= 0.25) or (_g5 is not None and _g5 >= 0.40 and _g3 is not None and _g3 >= 0)
@@ -1060,7 +1061,9 @@ def _struct_evidence(key, r, t):
     v = r.get(metric)
     q1, q3, n = t.get(metric, (None, None, 0))
     raw = r.get("raw") or {}
-    sector_label = raw.get("sector_desc") or "sector"
+    # Prefer the GICS-style cohort label (e.g. "Health Care") over the raw SIC description
+    # (e.g. "Electronic Computers") so evidence cards name the right peer group.
+    sector_label = r.get("_cohort_label") or raw.get("sector_desc") or "sector"
     period_override = None
     # peer context
     if key == "cheap_abs":
@@ -1184,14 +1187,26 @@ def recompute_all():
     # This lets return-/fundamentals-driven targets clear the gate and score on their own merits
     # (no new API calls -- the data already exists). Kill switch: COVERAGE_MCAP_FALLBACK=0.
     ent_mcap = {}
-    if os.getenv("COVERAGE_MCAP_FALLBACK", "1") != "0":
+    # Finnhub industry per company (ticker-accurate, universe-wide in the entity master) — the
+    # source for the GICS-style peer cohorts below. Loaded alongside the market-cap fallback so we
+    # make no extra DB passes. Kill switch: PEER_TAXONOMY=0 reverts to pure 2-digit-SIC cohorts.
+    ent_industry = {}
+    _use_taxonomy = os.getenv("PEER_TAXONOMY", "1") != "0"
+    if os.getenv("COVERAGE_MCAP_FALLBACK", "1") != "0" or _use_taxonomy:
         try:
             for e in database.get_all_entities():
+                if not e.get("cik"):
+                    continue
+                _k = _pad_cik(e["cik"])
                 mc = e.get("market_cap")
-                if mc is not None and e.get("cik"):
-                    ent_mcap[_pad_cik(e["cik"])] = mc
+                if mc is not None:
+                    ent_mcap[_k] = mc
+                ind = e.get("industry")
+                if ind:
+                    ent_industry[_k] = ind
         except Exception:
             ent_mcap = {}
+            ent_industry = {}
     recs = []
     for f in funds:
         cik = _pad_cik(f["cik"])
@@ -1219,6 +1234,7 @@ def recompute_all():
         recs.append({
             "cik": cik, "ticker": f.get("ticker"),
             "sector": f.get("sector") or "??",
+            "_industry": ent_industry.get(cik),
             "operating_margin": f.get("operating_margin"), "roa": f.get("roa"),
             "revenue_growth": f.get("revenue_growth"), "sga_pct": f.get("sga_pct"),
             "cash_to_assets": f.get("cash_to_assets"), "debt_to_assets": f.get("debt_to_assets"),
@@ -1261,18 +1277,43 @@ def recompute_all():
     metrics = ["pb_ratio", "ev_ebitda", "goodwill_to_assets", "operating_margin",
                "tsr_1y", "tsr_3y", "roa", "revenue_growth", "sga_pct",
                "cash_to_assets", "debt_to_assets"]
+    # --- Peer cohorts (GICS-style) -------------------------------------------------------------
+    # Primary cohort = the company's Finnhub industry (ticker-accurate, so a med-tech name groups
+    # with Health Care, not "Electronic Computers"). A thin industry cohort (< MIN_PEERS) rolls up
+    # to its broad GICS sector; a name with no industry falls back to its 2-digit SIC (legacy
+    # behavior). This fixes both the peer LABEL and the peer CUTOFFS, and degrades safely where
+    # industry data is missing. PEER_TAXONOMY=0 forces the legacy SIC cohorts everywhere.
+    def _sic_cohort(r):
+        return "sic:" + (r.get("sector") or "??"), ((r.get("raw") or {}).get("sector_desc") or "sector")
+    for r in recs:
+        ind = taxonomy.canon(r.get("_industry")) if _use_taxonomy else None
+        if ind:
+            r["_cohort"], r["_cohort_label"] = "ind:" + ind.lower(), ind
+        else:
+            r["_cohort"], r["_cohort_label"] = _sic_cohort(r)
+    _sizes = {}
+    for r in recs:
+        _sizes[r["_cohort"]] = _sizes.get(r["_cohort"], 0) + 1
+    for r in recs:
+        if r["_cohort"].startswith("ind:") and _sizes.get(r["_cohort"], 0) < MIN_PEERS:
+            roll = taxonomy.broad_sector(r.get("_industry"))
+            r["_cohort"], r["_cohort_label"] = (("sec:" + roll[0], roll[1]) if roll
+                                                else _sic_cohort(r))
     by_sector = {}
     for r in recs:
-        by_sector.setdefault(r["sector"], []).append(r)
+        by_sector.setdefault(r["_cohort"], []).append(r)
     th = {sec: {m: _quantiles([x.get(m) for x in rows]) for m in metrics}
           for sec, rows in by_sector.items()}
-    # Sector tail anchors (5th/95th pct) used to scale each signal's severity.
+    # Cohort tail anchors (5th/95th pct) used to scale each signal's severity.
     ext = {sec: {m: _pct_lo_hi([x.get(m) for x in rows]) for m in metrics}
            for sec, rows in by_sector.items()}
+    _n_tax = sum(1 for r in recs if not r["_cohort"].startswith("sic:"))
+    print(f"[cohorts] {len(by_sector)} peer cohorts · {_n_tax}/{len(recs)} names on the industry "
+          f"taxonomy ({len(recs) - _n_tax} on SIC fallback)", flush=True)
     rows = []
     for r in recs:
-        t = th.get(r["sector"], {})
-        e = ext.get(r["sector"], {})
+        t = th.get(r["_cohort"], {})
+        e = ext.get(r["_cohort"], {})
         r["_spy_1y"] = spy_1y
         r["_spy_3y"] = spy_3y
         r["_spy_5y"] = spy_5y
@@ -1303,7 +1344,8 @@ def recompute_all():
         # aren't activist levers there (TRUP's $384M "idle cash" is claims reserves), so we
         # suppress them for financials. P/B discount, price underperformance, ROA-vs-peers,
         # goodwill, governance and events stay valid and still fire.
-        _is_financial = (r.get("sector") or "") in ("60", "61", "62", "63", "64")
+        _is_financial = ((r.get("sector") or "") in ("60", "61", "62", "63", "64")
+                         or taxonomy.is_financial(r.get("_industry")))
         # A STRONG MULTI-YEAR OUTPERFORMER (beat the S&P by >=25 pts over 3yr or >=40 pts over
         # 5yr) fails the screen's core premise — "sustained underperformer." A 1-yr pullback on
         # a multi-year market-beater (Axon: +138%/3yr, +163%/5yr, P/E ~200) is profit-taking,
