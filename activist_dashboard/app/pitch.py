@@ -153,6 +153,12 @@ def _archetype(trig):
     gov = _has(trig, "gov_classified", "gov_poison", "gov_dual")
     if cash and (weakperf or cheap):
         return "cash_laggard"
+    # A sharp de-rating (>=30% down on a still-viable business) is a sale / strategic-review story,
+    # NOT an operational "cut costs" turnaround — even when thin margins also trip the turnaround
+    # test. AECOM (down ~44% while operating income actually GREW) was mis-framed as a margin
+    # turnaround; the de-rating is the real story, so strategic_review outranks turnaround. (#5)
+    if "strategic_review" in trig:
+        return "strategic_review"
     if "low_margin" in trig and _has(trig, "high_sga", "low_roa"):
         return "turnaround"
     if cheap:
@@ -234,6 +240,12 @@ def _thesis(r, trig):
               f"{gov}.")
         s2 = ("A cash-rich laggard: the textbook setup for a return-of-capital or "
               "strategic-review campaign.")
+    elif arch == "strategic_review":
+        d = _drop(r.get("tsr_1y"))
+        s1 = (f"{name} has de-rated sharply — down {d} over the past year{gov}."
+              if d else f"{name} {perf}{gov}.")
+        s2 = ("A sharp de-rating rather than an operational stumble — the classic setup for a "
+              "sale, take-private, or strategic review, not a cut-costs turnaround.")
     elif arch == "turnaround":
         cost = "bloated overhead" if "high_sga" in trig else "weak returns on its assets"
         s1 = f"{name} {perf} with {cost}, well below its sector peers{gov}."
