@@ -22,7 +22,7 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 # Bump when _SYSTEM / _prompt changes so cached re-voicings are invalidated and every name
 # re-voices under the new rules (the hash keys on draft content, not the prompt, so without
 # this a prompt change would only reach names whose facts also happened to change).
-_PROMPT_VERSION = 3
+_PROMPT_VERSION = 4
 
 _SYSTEM = (
     "You are a senior analyst at a shareholder-activism DEFENSE advisory firm. You turn an "
@@ -37,6 +37,12 @@ _SYSTEM = (
     "a 'peer cutoff' or 'bottom-quartile' threshold is NOT a 'median' or 'average'; keep terms "
     "like 'operating margin', 'return on assets', 'debt-to-assets' verbatim. If unsure what a "
     "figure is, use the draft's own wording rather than substituting a different term.\n"
+    "- In a TALKING POINT, state only the company's OWN metric value and its implication. Do NOT add "
+    "a peer-group name, a peer count (e.g. '82 Electronic Computers peers'), or a numeric 'peer "
+    "cutoff' / 'bottom-quartile' threshold to a talking point — that peer context is shown separately "
+    "in the evidence, and stapling it into a point risks attaching one metric's cutoff to a different "
+    "metric (an ROA point must never carry the debt-to-assets cutoff). Keep the point about the one "
+    "figure it names.\n"
     "- Do NOT characterize the company or its STOCK as 'underperforming', 'lagging', "
     "'declining', 'falling', or 'struggling' unless the draft EXPLICITLY contains a negative "
     "stock-return or return-versus-index fact. A cheap valuation, weak revenue growth, a "
@@ -76,7 +82,9 @@ def _prompt(name, pitch, facts):
     return ("Rewrite the draft below into sharper prose. Return JSON with EXACTLY this shape:\n"
             '{"thesis": "<2-3 sentence thesis>", "points": ["<one sentence>", ...]}\n'
             "Keep the same number of talking points as the draft. Each point is one sentence. "
-            "Use only facts that appear in the draft.\n\nDRAFT:\n" + json.dumps(draft, indent=2))
+            "Use only facts that appear in the draft. Do NOT pull peer counts or 'peer cutoff' "
+            "numbers from supporting_facts into a talking point — a point states only the company's "
+            "own value for the metric it names.\n\nDRAFT:\n" + json.dumps(draft, indent=2))
 
 
 def _extract_json(text):

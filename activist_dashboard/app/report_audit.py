@@ -31,6 +31,17 @@ _MISTAG_GLOSS = re.compile(
 _KNOWN_SIGNALS = {"restatement", "ceo_departure", "earnings_miss", "impairment",
                   "layoffs", "leadership_change", "results_update"}
 
+# Numeric-attribution guard. A talking point should state only the company's OWN metric value —
+# it must NOT restate a peer-group cutoff figure or a peer count. The deterministic pitch templates
+# never do; when the AI revoicer adds one it can staple the WRONG metric's number onto a point (the
+# Omnicell case: the ROA point carried the debt-to-assets cutoff "16.2%" instead of ROA's own 3.0%).
+# Matches "peer cutoff 16.2%", "cutoff of 12.1x", or "82 Electronic Computers peers". Deliberately
+# does NOT match the templated phrase "below its peer cutoff" (no number follows).
+_PEER_STAT_RE = re.compile(
+    r"\bcutoff\s+(?:of\s+)?\$?\d[\d.,]*\s*%?x?"                          # "peer cutoff 16.2%" / "cutoff of 12.1x"
+    r"|\b\d+\s+[A-Za-z][\w&/.\-]*(?:\s+[A-Za-z][\w&/.\-]*){0,3}\s+peers\b",  # "82 Electronic Computers peers"
+    re.I)
+
 _SEV_RANK = {"HIGH": 0, "MED": 1, "LOW": 2}
 
 
@@ -77,6 +88,15 @@ def audit(model, *, credibility=None):
             _flag(flags, "HIGH", "empty thesis", tk, "board card has no thesis text")
         if not (c.get("points") or []):
             _flag(flags, "MED", "no pitch points", tk, "board card has no supporting points")
+        # A talking point must not restate a peer cutoff / peer count — that figure can be the wrong
+        # metric's (the Omnicell ROA-vs-debt-cutoff slip). HOLD for review if one appears.
+        for i, p in enumerate(c.get("points") or [], 1):
+            hit = _PEER_STAT_RE.search(p or "")
+            if hit:
+                _flag(flags, "HIGH", "pitch point restates a peer cutoff", tk,
+                      f"point {i} restates a peer statistic (“{hit.group(0).strip()}”) — a point should "
+                      f"carry only its own metric's value; verify this is not another card's cutoff: "
+                      f"“{(p or '').strip()[:90]}”")
         if not [m for m in (c.get("metrics") or []) if m.get("value") not in (None, "", "—")]:
             _flag(flags, "MED", "no financials", tk, "board card shows no metric values")
         mag = (c.get("catalyst") or {}).get("magnitude")
