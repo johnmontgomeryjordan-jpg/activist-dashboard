@@ -2,19 +2,26 @@
 SEC EDGAR ingestion + 8-K classification.
 
 We list each company's recent 8-K/10-K/10-Q filings (free submissions API) and
-classify them. For the two ambiguous-but-important item codes we READ the filing
+classify them. For the ambiguous-but-important item codes we READ the filing
 text to confirm the signal, instead of trusting the item code alone:
 
   * Item 5.02 (officer/director change): tag "ceo_departure" only if the text
     shows a real resignation/departure; otherwise "leadership_change" (low-weight).
   * Item 2.02 (results of operations): tag "earnings_miss" only if the text shows
     a miss / guidance cut; otherwise "results_update" (note only, 0 points).
+  * Item 1.01 (material definitive agreement) and Item 2.01 (completion of
+    acquisition/disposition): tag "divestiture" only if the text shows SELLER-side
+    transaction language (selling/divesting a business, segment, subsidiary, or
+    asset) and does NOT read as an acquisition (the company as buyer). Both codes
+    are bidirectional/overloaded on EDGAR -- 1.01 alone covers everything from
+    credit facilities to M&A, and 2.01 fires for both buying and selling -- so an
+    ambiguous or acquisition-only read gets no signal rather than a false tag.
 
 Item 2.06 (impairment), 2.05 (restructuring/exit costs), and 4.02 (non-reliance on
 previously issued financials — i.e. a restatement) are specific enough to trust by
 code: 4.02 is filed ONLY for a non-reliance/restatement event, so no text confirm is
-needed. Text is fetched only for NEW 5.02/2.02 filings (skip already-stored ones), so
-the extra requests stay bounded.
+needed. Text is fetched only for NEW 5.02/2.02/1.01/2.01 filings (skip already-stored
+ones), so the extra requests stay bounded.
 """
 import re
 import time
@@ -51,7 +58,13 @@ _INDEX_INCREMENTAL_DAYS = 14
 #             ("...furnished as Exhibit 99.1"), so the miss/guidance language was NEVER visible to
 #             the classifier — `earnings_miss` was unreachable universe-wide and every results 8-K
 #             fell through to note-only `results_update`. Re-classification is required to re-tag.
-CLASSIFIER_VERSION = "2026-07-22-miss-tiered-anchored-r9"  # r8: classify 2.02 on the press-release exhibit
+# 2026-08-21: added Item 1.01/2.01 divestiture detection. These two codes previously had ZERO
+#             handling at all (not even in ITEM_DIRECT, and their text was never fetched), so a
+#             pending or completed divestiture produced no signal whatsoever — caught auditing
+#             AHCO, whose Jul 20 2026 Cardinal Health divestiture (Diabetes Health Business,
+#             $235M, announced/pending) never appeared anywhere on the profile. Text-confirmed,
+#             seller-side only (see module docstring). Re-classification required to backfill.
+CLASSIFIER_VERSION = "2026-08-21-divestiture-r10"  # r9: miss-tiered-anchored (Item 2.02 exhibit read)
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
@@ -185,6 +198,49 @@ _RAISE_NEAR_GUIDANCE = re.compile(
     r"|(?:guidance|outlook)\s+(?:\S+\s+){0,8}?" + _HELD_OR_RAISED, re.I)
 
 
+# --- Item 1.01 / 2.01: divestiture detection ------------------------------------------------------
+# Item 1.01 ("Entry into a Material Definitive Agreement") is one of the most overloaded item codes
+# on EDGAR — credit facilities, supply contracts, leases, JV formation, executive agreements, and
+# M&A purchase agreements all file under it. Item 2.01 ("Completion of Acquisition or Disposition
+# of Assets") is narrower but still bidirectional — it fires for the company buying something AND
+# for the company selling something.
+#
+# The naive design (a "sell"-verb pattern vs. an "acquire"-verb pattern, tag when the former
+# fires and not the latter) FAILS on the exact case that motivated this fix: a divestiture is
+# almost always press-released from the BUYER's grammatical point of view — "[Cardinal Health]
+# will ACQUIRE the Company's Diabetes Health Business" — so a verb-only test reads our own
+# divestiture as an acquisition and drops it. Verbs don't carry the direction here; the OBJECT
+# does. Since every 8-K is filed BY the company the item describes, "the Company's" / "its" /
+# "the Registrant's" is always a self-reference — so whenever a deal verb (sell/acquire/divest/
+# dispose/purchase/spin off/carve out) sits near an object phrased as OUR OWN business/segment/
+# subsidiary/unit/operations/assets, that thing is leaving our balance sheet, regardless of who
+# is grammatically buying. A pure acquisition of a THIRD PARTY's business ("acquire XYZ Corp",
+# "XYZ's widget business") never produces that self-referential object, so it never matches —
+# no separate "acquirer-language" guard is needed. Ambiguous or off-pattern text gets no signal,
+# same bias as 5.02/2.02: a missed tag costs a signal, a false tag costs credibility.
+_DEAL_VERB = (r"(?:sell\w*|sold|sale\w*|divest\w*|dispos\w*|acquir\w*|purchas\w*|"
+             r"spin[-\s]?off\w*|carve[-\s]?out\w*)")
+# The object noun for "its"/"the Company's" itself, kept a few words out so "its recently
+# announced ACQUISITION of ..." (a nominalized action, not a business being sold) doesn't match.
+_OWN_BIZ = (r"(?:the\s+company'?s|the\s+registrant'?s|its|our)"
+           r"(?!\s+(?:recent(?:ly)?|previously|planned|pending)?\s*(?:acquisition|purchase)\b)"
+           r"\s+(?:[a-z]+\s+){0,2}?"
+           r"(?:business(?:es)?|segment|division|subsidiary|unit|operations?|assets?|"
+           r"product\s+line)")
+_DIVEST_RE = re.compile(
+    r"(?:" + _DEAL_VERB + r"(?:\s+\S+){0,10}?\s+" + _OWN_BIZ +          # verb ... own-biz object
+    r"|" + _OWN_BIZ + r"(?:\s+\S+){0,10}?\s+" + _DEAL_VERB +            # own-biz object ... verb (passive)
+    r"|exit(?:ed|ing|s)?\s+(?:its|the)\s+[a-z]+(?:\s+[a-z]+){0,2}\s+business)",  # "exit its X business"
+    re.I)
+
+
+def is_divestiture(deal_text):
+    """True only when a deal verb (sell/acquire/divest/dispose/purchase/spin off/carve out) sits
+    near an object phrased as the filer's OWN business/segment/subsidiary/unit/assets — see the
+    block comment above for why the object, not the verb, carries the buy/sell direction here."""
+    return bool(_DIVEST_RE.search(deal_text or ""))
+
+
 def _weak_miss_hit(t):
     """True if a weak miss phrase sits near forward-guidance language.
 
@@ -289,11 +345,13 @@ def _exhibit_text(cik_int, accession_nodash):
 def classify(form, item_codes, text, exhibit_text=""):
     """Return sorted list of signal keys for this filing.
 
-    `text` is the 8-K primary document; `exhibit_text` is the EX-99.1 press release (2.02 only).
-    The 5.02 officer-change logic reads ONLY the primary document on purpose — a results press
-    release is full of executive quotes and "transition"/"CEO" language that would otherwise
-    manufacture false departure tags. The 2.02 miss test reads both, since the guidance language
-    is only ever in the exhibit."""
+    `text` is the 8-K primary document; `exhibit_text` is a companion press-release exhibit
+    (fetched for 2.02, and now 1.01/2.01 too, since deal terms are sometimes furnished as a
+    press release rather than spelled out in the body). The 5.02 officer-change logic reads
+    ONLY the primary document on purpose — a results press release is full of executive quotes
+    and "transition"/"CEO" language that would otherwise manufacture false departure tags. The
+    2.02 miss test and the 1.01/2.01 divestiture test read both, since the substantive language
+    for those isn't reliably confined to the primary document alone."""
     sigs = set()
     codes = re.findall(r"\d+\.\d+", item_codes or "")
     for c in codes:
@@ -329,6 +387,12 @@ def classify(form, item_codes, text, exhibit_text=""):
         # essentially always in the exhibit, never the cover.
         results_text = t + " " + (exhibit_text or "")
         sigs.add("earnings_miss" if is_earnings_miss(results_text) else "results_update")
+    if "1.01" in codes or "2.01" in codes:
+        deal_text = t + " " + (exhibit_text or "")
+        if is_divestiture(deal_text):
+            sigs.add("divestiture")
+        # else: routine agreement (1.01), a pure third-party acquisition, or text with no clear
+        # deal-verb/own-business proximity -> no signal. See _DIVEST_RE comment above.
     return sorted(sigs)
 
 
@@ -340,6 +404,7 @@ PRETTY = {
     "impairment": "Material impairment",
     "layoffs": "Restructuring / exit costs",
     "restatement": "Restatement / non-reliance",
+    "divestiture": "Divestiture / asset sale",
 }
 
 
@@ -385,11 +450,15 @@ def fetch_recent_filings_for_cik(cik, ticker, company, days, existing):
         url = (f"{ARCHIVE_BASE}/{int(cik)}/{acc_nodash}/{doc}" if doc
                else f"{ARCHIVE_BASE}/{int(cik)}/{acc_nodash}")
 
-        need_text = form == "8-K" and ("5.02" in codes or "2.02" in codes)
+        need_text = form == "8-K" and (
+            "5.02" in codes or "2.02" in codes or "1.01" in codes or "2.01" in codes)
         text = _doc_text(int(cik), acc_nodash, doc) if need_text else ""
-        # For results filings, also pull EX-99.1 — the miss/guidance language is only there.
+        # For results filings and potential M&A/divestiture filings, also pull the press-release
+        # exhibit — for 2.02 the miss/guidance language is only ever there; for 1.01/2.01 some
+        # filers lead with a terse cover page and put deal terms in an accompanying press release.
         ex_text = (_exhibit_text(int(cik), acc_nodash)
-                   if (form == "8-K" and "2.02" in codes) else "")
+                   if (form == "8-K" and ("2.02" in codes or "1.01" in codes or "2.01" in codes))
+                   else "")
         sigs = classify(form, codes, text, ex_text)
 
         if form != "8-K" and not sigs:

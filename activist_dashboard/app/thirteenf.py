@@ -28,7 +28,7 @@ from datetime import date
 
 import requests
 
-from . import config, database, activists
+from . import config, database, activists, pipeline
 
 EFTS = "https://efts.sec.gov/LATEST/search-index"     # EDGAR full-text search (JSON API)
 SUBMISSIONS = "https://data.sec.gov/submissions/CIK{}.json"   # date-authoritative filing list
@@ -291,7 +291,13 @@ def refresh_13f():
             # gives the fund's true total position in that name and avoids a duplicate-key row.
             agg = {}
             for h in holds:
-                tk = database.ticker_for_cusip(h["cusip"])
+                # NOTE (2026-08): was database.ticker_for_cusip() directly, which only checks
+                # the FTD-derived cusip_map + entity.cusip and silently drops anything missing
+                # from both -- an ordinary, non-heavily-shorted name (e.g. MNRO) can have no FTD
+                # history at all and never enter that map. pipeline.resolve_cusip() is the same
+                # cached lookup PLUS an OpenFIGI gap-fill (caching the hit back into cusip_map),
+                # and is already the documented single call the 13F parser is meant to use.
+                tk = pipeline.resolve_cusip(h["cusip"])
                 if not tk:
                     continue
                 tk = tk.upper()

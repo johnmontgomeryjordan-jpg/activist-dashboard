@@ -58,8 +58,11 @@ _EARNINGS_WHY_DEFAULT = "Next earnings — a soft print sharpens the thesis and 
 # Filing materiality for the "Filings of note" panel, most → least activist-relevant. A routine
 # "results_update" is deliberately absent: padding the panel with generic quarterly-results 8-Ks
 # from uncovered companies is noise (and makes the AI gloss collapse into boilerplate).
-_FILING_RANK = {"restatement": 0, "ceo_departure": 1, "earnings_miss": 2,
-                "impairment": 3, "layoffs": 4, "leadership_change": 5}
+# "divestiture" (2026-08-21) ranks just behind a departure: a business/segment sale is often
+# exactly the action an activist is pushing for, so it's a thesis-defining catalyst whether it
+# validates an existing "sum of parts" pitch or heads one off.
+_FILING_RANK = {"restatement": 0, "ceo_departure": 1, "divestiture": 2, "earnings_miss": 3,
+                "impairment": 4, "layoffs": 5, "leadership_change": 6}
 
 
 def _filing_rank(sig_csv):
@@ -385,7 +388,7 @@ def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None, r
     )
     radar = assemble_radar(board, get_earnings=database.get_earnings,
                            get_governance=database.get_governance, today=today)
-    # Filings of note: MATERIAL events first (restatement > CEO exit > miss > impairment > ...),
+    # Filings of note: MATERIAL events first (restatement > CEO exit > divestiture > miss > ...),
     # ranked by materiality then recency. If that yields fewer than 5 we pad ONLY with filings from
     # companies on this issue's board — never with routine quarterly-results 8-Ks from uncovered
     # names, which read as filler and make the AI gloss generic.

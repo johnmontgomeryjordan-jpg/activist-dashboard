@@ -45,7 +45,7 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "lags_own_peers": 2, "strategic_review": 3, "activist_holder": 4}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "restatement": 2, "layoffs": 1, "leadership_change": 1,
-                "results_update": 0, "news_negative": 1}
+                "results_update": 0, "news_negative": 1, "divestiture": 2}
 POINTS = {**STRUCT_POINTS, **EVENT_POINTS}
 # The 0-100 number is an ABSOLUTE "activist-target profile" index, NOT a probability of
 # a campaign. Each triggered signal contributes its point weight scaled by *how severe*
@@ -150,6 +150,7 @@ LABELS = {
     "restatement": "financial restatement / non-reliance",
     "layoffs": "recent layoffs / restructuring",
     "leadership_change": "recent leadership change",
+    "divestiture": "announced or completed business/segment divestiture",
     "results_update": "recent results",
     "news_negative": "negative press headline",
     "gov_classified": "classified / staggered board",
@@ -271,7 +272,7 @@ EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
                 "impairment": "SEC 8-K", "restatement": "SEC 8-K Item 4.02",
                 "layoffs": "SEC 8-K",
                 "leadership_change": "SEC 8-K", "results_update": "SEC 8-K",
-                "news_negative": "News"}
+                "news_negative": "News", "divestiture": "SEC 8-K Item 1.01/2.01"}
 # A news headline only counts as an "active situation" when it BOTH (a) names an activist
 # -- a known fund, or an explicit proxy-fight / "activist" cue -- AND (b) names the company
 # itself. Requiring the company NAME (not just a loose ticker/keyword match) kills the

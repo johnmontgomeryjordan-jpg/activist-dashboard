@@ -74,7 +74,25 @@ _SGA = ["SellingGeneralAndAdministrativeExpense", "SellingGeneralAndAdministrati
 _NI = ["NetIncomeLoss"]
 _ASSETS = ["Assets"]
 _EQUITY = ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"]
-_CASH = ["CashAndCashEquivalentsAtCarryingValue"]
+# Cash. Was a SINGLE tag with no fallback and no staleness guard -- the one gap in this file's
+# otherwise-universal "companies abandon XBRL tags over time" defense (revenue/debt/goodwill all
+# have multi-tag fallbacks; debt additionally has _DEBT_STALE_DAYS). Root-caused auditing AHCO:
+# its CashAndCashEquivalentsAtCarryingValue series stopped at 2019-03-31 ($744,766) while its
+# current balance sheet (2026-03-31, $47.964M) reports cash under
+# CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents instead -- a 7-year-stale value
+# was surfacing as "current" because nothing else was ever checked and nothing flagged the age.
+# _usd()/_instant() already pick the MOST RECENT tag among candidates (see _usd's docstring), so
+# listing every common current-cash tag here — plus the _CASH_STALE_DAYS guard below — closes
+# both halves of the gap: the missing fallback AND the missing staleness check.
+_CASH = ["CashAndCashEquivalentsAtCarryingValue",
+        "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+        "CashAndCashEquivalentsAtCarryingValueIncludingDiscontinuedOperations",
+        "Cash"]
+# If even the freshest available cash tag trails the company's current balance-sheet date (the
+# Assets tag) by more than this, every candidate has been abandoned -> treat cash as unknown
+# rather than show a frozen figure as current. Tighter than _DEBT_STALE_DAYS (550): cash is a
+# required, universally-reported line every single quarter, unlike debt structure.
+_CASH_STALE_DAYS = 400
 # Short-term investments added to cash for the liquidity ("cash-rich") read. Precision-first so it
 # can NEVER inflate liquidity into a false cash-rich flag:
 #   _STI_CURRENT  — tags that are UNAMBIGUOUSLY current. Safe to count as-is.
@@ -159,6 +177,14 @@ _DEP = ["DepreciationDepletionAndAmortization", "DepreciationAmortizationAndAccr
 # real borrowing cost on the P&L — so we can tell "correctly $0 debt" from "we missed the debt."
 _INT_EXP = ["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense",
             "InterestExpenseNonoperating", "InterestExpenseBorrowings"]
+# Dividends paid (cash-flow statement) -> a LOCALLY-computed yield cross-check against Finnhub's
+# dividendYieldIndicatedAnnual. Motivated auditing MNRO: FactSet showed a 9.36% yield, comfortably
+# under the existing 15% sanity cap, so nothing there would flag it as unreliable -- the real gap
+# is having no independent source to catch Finnhub's figure being wrong or stale in the first
+# place (the same abandoned-tag/stale-source risk XBRL fields already get multi-tag + staleness
+# defenses for). This doesn't change any signal or score; it only stores a second, independently
+# sourced yield alongside Finnhub's so a material divergence between the two is visible.
+_DIV_PAID = ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"]
 _GOODWILL = ["Goodwill"]                                     # balance-sheet goodwill -> M&A
 _OP_LEASE_NC = ["OperatingLeaseLiabilityNoncurrent"]        # ASC 842 operating-lease liability:
 _OP_LEASE_CUR = ["OperatingLeaseLiabilityCurrent"]          # a mall retailer's real leverage
@@ -264,6 +290,16 @@ def _instant_dated(facts, tag):
         return None, None
     rows.sort(key=lambda x: x[0], reverse=True)
     return rows[0]
+
+
+def _latest_instant_end(facts, tags):
+    """Freshest 'end' date across a candidate tag LIST, using the same tag-recency selection
+    _usd()/_instant() already apply (whichever candidate tag's data is most recent wins) --
+    lets a caller staleness-check the value _instant(facts, tags) returned without re-deriving
+    which tag it came from."""
+    rows = [e.get("end") for e in _usd(facts, tags) if e.get("end")
+            and (not e.get("start") or e.get("start") == e.get("end"))]
+    return max(rows) if rows else None
 
 
 # *AndCapitalLeaseObligations tags already bundle finance (capital) leases into the funded-debt
@@ -495,7 +531,7 @@ def _extract(facts):
     quarterly while never doing worse than annual."""
     rev_f = _flows(facts, _REV); op_f = _flows(facts, _OPINC)
     sga_f = _flows(facts, _SGA); ni_f = _flows(facts, _NI); dep_f = _flows(facts, _DEP)
-    int_f = _flows(facts, _INT_EXP)
+    int_f = _flows(facts, _INT_EXP); div_f = _flows(facts, _DIV_PAID)
 
     # Use the recent period only when operating income is reported for it; else annual.
     base = _latest_period(rev_f)
@@ -517,7 +553,18 @@ def _extract(facts):
 
     assets = _instant(facts, _ASSETS)
     equity = _instant(facts, _EQUITY)
-    cash_c = _instant(facts, _CASH[:1]); sti = _short_term_investments(facts, cash_c)
+    cash_c = _instant(facts, _CASH)
+    # Staleness guard: if even the freshest candidate cash tag trails the current balance sheet
+    # (the Assets tag) by more than _CASH_STALE_DAYS, every candidate has been abandoned -- treat
+    # cash as unknown rather than surface a frozen figure as current (see _CASH comment above).
+    if cash_c is not None:
+        _cash_end = _latest_instant_end(facts, _CASH)
+        _assets_end, _ = _instant_dated(facts, _ASSETS[0])
+        if _cash_end and _assets_end:
+            _cash_gap = _ddays(_cash_end, _assets_end)
+            if _cash_gap is not None and _cash_gap > _CASH_STALE_DAYS:
+                cash_c = None
+    sti = _short_term_investments(facts, cash_c)
     cash = (cash_c or 0) + (sti or 0) if (cash_c is not None or sti is not None) else None
     debt = _total_debt(facts)
     goodwill = _instant(facts, _GOODWILL)
@@ -565,6 +612,16 @@ def _extract(facts):
         t_ni = _ttm_from(_annual_latest(ni_f), ni, _prior_year(ni_f, p_end, p_days))
     else:
         t_rev = t_opinc = t_sga = t_ni = None
+
+    # Trailing-12mo dividends paid, same TTM machinery as above (falls back to the latest full
+    # year when a clean TTM isn't available). Cash-flow tag reports the outflow as a positive
+    # figure, matching PaymentsOfDividends* convention.
+    if p_end:
+        div_paid_ttm = (_ttm_from(_annual_latest(div_f), _at(div_f, p_end, p_days),
+                                  _prior_year(div_f, p_end, p_days))
+                        if _is_interim else None) or _annual_latest(div_f)
+    else:
+        div_paid_ttm = _annual_latest(div_f)
     if _is_interim and t_rev and t_rev > 0 and t_opinc is not None:
         m_rev, m_opinc, m_sga, m_ni = t_rev, t_opinc, t_sga, t_ni
         m_label = ("trailing 12 mo to " + _pd(p_end).strftime("%b %Y")) if _pd(p_end) else "trailing 12 mo"
@@ -639,6 +696,7 @@ def _extract(facts):
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
         "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill, "operating_lease": op_lease,
         "finance_lease": fin_lease, "interest_expense": int_exp,
+        "dividends_paid_ttm": div_paid_ttm,
         "period_end": p_end, "period_days": p_days,
         "period_label": _period_label(p_end, p_days) if p_end else None,
         "source_accn": p_accn,
@@ -1734,6 +1792,22 @@ def refresh_enrichment(fetch_desc=True):
             raw = {}
         book = raw.get("book_equity")
         pb = (mcap / book) if (mcap and book and book > 0) else met.get("pb")
+
+        # Locally-computed dividend-yield cross-check: TTM dividends paid (SEC XBRL cash-flow
+        # statement) / market cap, independent of Finnhub's dividendYieldIndicatedAnnual. Prefer
+        # Finnhub's figure when present and roughly consistent (Finnhub's "indicated annual"
+        # basis is timelier for a rate just changed mid-quarter); fall back to the local figure
+        # when Finnhub has none; either way, flag a material divergence so a wrong/stale Finnhub
+        # read (or a bad local extraction) doesn't sit unnoticed.
+        div_paid = raw.get("dividends_paid_ttm")
+        div_yield_local = (abs(div_paid) / mcap) if (div_paid and mcap) else None
+        div_yield_fh = met.get("dividend_yield")
+        div_yield = div_yield_fh if div_yield_fh is not None else div_yield_local
+        if div_yield_fh is not None and div_yield_local is not None:
+            _base = max(div_yield_fh, div_yield_local, 1e-6)
+            if abs(div_yield_fh - div_yield_local) / _base > 0.35:
+                print(f"[enrich] {tk}: dividend yield mismatch — Finnhub={div_yield_fh:.2%} "
+                      f"local(XBRL)={div_yield_local:.2%} — worth a manual check")
         if mcap is not None and met.get("tsr_1y") is not None:
             database.set_company_market(_unpad(cik), market_cap=mcap, pb_ratio=pb,
                                         tsr_1y=met.get("tsr_1y"))
@@ -1757,7 +1831,9 @@ def refresh_enrichment(fetch_desc=True):
             "MarketCapitalization": mcap,
             "PriceToBookRatio": pb,
             "PERatio": met.get("pe"),
-            "DividendYield": met.get("dividend_yield"),
+            "DividendYield": div_yield,
+            "DividendYieldFinnhub": div_yield_fh,
+            "DividendYieldLocal": div_yield_local,
             "52WeekHigh": met.get("wk_hi"),
             "52WeekLow": met.get("wk_lo"),
         }

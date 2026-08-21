@@ -367,13 +367,17 @@ def _point(key, r):
                 "that hands an activist a board-accountability and audit-committee-refresh campaign.")
     if key == "earnings_miss":
         return "A recent earnings miss — a natural moment for a shareholder to press for change."
+    if key == "divestiture":
+        return ("A recent business/segment divestiture shows the board is already willing to "
+                 "reshape the portfolio — a concrete opening for a sum-of-the-parts or "
+                 "further-breakup case.")
     return None
 
 
 # Order points by how compelling they are in a pitch (not raw score weight).
 _POINT_PRIORITY = [
-    "cash_hoard", "overpaid_ceo", "restatement", "exec_reaction_drop", "lags_own_peers", "weak_tsr_1y",
-    "weak_tsr_3y", "cheap_ev_ebitda", "low_margin", "high_sga", "low_roa", "cheap_pb",
+    "cash_hoard", "divestiture", "overpaid_ceo", "restatement", "exec_reaction_drop", "lags_own_peers",
+    "weak_tsr_1y", "weak_tsr_3y", "cheap_ev_ebitda", "low_margin", "high_sga", "low_roa", "cheap_pb",
     "cheap_abs", "high_goodwill", "weak_growth", "gov_classified", "gov_poison", "gov_dual",
     "ceo_departure", "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",
 ]
