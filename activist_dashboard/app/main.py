@@ -737,6 +737,12 @@ def api_company(cik: str):
         "pitch": pitch_obj,
         "ai_pitch": ai_pitch,
         "fin_context": fin_context,
+        # Known-activist 13F positions in this name. The sweep has always collected these (the
+        # MNRO diagnostic showed Icahn Capital at 16.9%, 5,078,573 shares, filed 2026-08-14) but
+        # the company profile had nowhere to show them: #156 removed 13F from scoring, and the
+        # Accumulating tab only covers sub-5% stakes, so a marquee holder above that threshold
+        # appeared nowhere on the page. Display-only — this does not feed the score.
+        "holders": database.holders_for_ticker(ticker) if ticker else [],
         "peer_analysis": peer_analysis,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
@@ -838,6 +844,9 @@ def api_company(cik: str):
             "pb_ratio": avf("PriceToBookRatio"),
             "profit_margin": _sec_ratio("net_income_ann", "revenue") if _sec_ratio("net_income_ann", "revenue") is not None else avf("ProfitMargin"),
             "dividend_yield": avf("DividendYield"),
+            # 'paying' / 'cut' / 'suspended' from the declared per-share series (pipeline.py).
+            # Drives the Financials readout so a suspended payout can't render as a live yield.
+            "dividend_status": (av or {}).get("DividendStatus"),
             "week52_high": avf("52WeekHigh"),
             "week52_low": avf("52WeekLow"),
             "analyst_target": avf("AnalystTargetPrice"),

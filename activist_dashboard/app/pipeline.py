@@ -185,6 +185,19 @@ _INT_EXP = ["InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense",
 # defenses for). This doesn't change any signal or score; it only stores a second, independently
 # sourced yield alongside Finnhub's so a material divergence between the two is visible.
 _DIV_PAID = ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"]
+# Declared dividend PER SHARE, quarter by quarter. Needed because a trailing yield cannot tell a
+# healthy payer from one that just suspended: WHR paid $5.30/sh through Feb 2026 and then went to
+# zero, so a trailing-12mo yield still reads ~13% while the true forward yield is 0%. Comparing the
+# most recent declared quarter against the prior ones is what distinguishes the two.
+_DIV_PER_SHARE = ["CommonStockDividendsPerShareDeclared",
+                 "CommonStockDividendsPerShareCashPaid"]
+# Share repurchases (cash-flow statement). Cumulative treasury stock is the wrong measure -- it is
+# decades of history and would light up any long-lived company -- so we sum the trailing few YEARS
+# of actual buyback spend and compare it to what the company is worth today. PZZA: ~$1.1B of
+# treasury against a $788M market cap, funded with debt, equity at -$445M, stock -81% over 5 years.
+_BUYBACK = ["PaymentsForRepurchaseOfCommonStock",
+           "PaymentsForRepurchaseOfEquity",
+           "TreasuryStockValueAcquiredCostMethod"]
 _GOODWILL = ["Goodwill"]                                     # balance-sheet goodwill -> M&A
 _OP_LEASE_NC = ["OperatingLeaseLiabilityNoncurrent"]        # ASC 842 operating-lease liability:
 _OP_LEASE_CUR = ["OperatingLeaseLiabilityCurrent"]          # a mall retailer's real leverage
@@ -497,6 +510,37 @@ def _ttm_from(annual_v, interim_v, prior_v):
     return annual_v + interim_v - prior_v
 
 
+def _dividend_state(facts):
+    """(latest_dps, prior_dps_run_rate, status) from the per-share declared-dividend series.
+
+    A trailing yield is blind to a board that has just stopped paying, which is exactly the case
+    that matters most: a suspension is one of the strongest distress/capital-allocation catalysts
+    there is, and it is also when a stale third-party 'indicated yield' is most wrong (WHR showed
+    6.8% on the dashboard with a $0.00 indicated dividend at FactSet). So we read the declared
+    per-share series directly and compare the most recent QUARTERLY declaration against the median
+    of the preceding four.
+
+    status is one of: 'paying', 'cut', 'suspended', or None when there is not enough history.
+    Quarterly entries only (55-115 days) so an annual roll-up can't be mistaken for a quarter."""
+    q = [e for e in _flows(facts, _DIV_PER_SHARE) if 55 <= e["days"] <= 115 and e.get("end")]
+    if len(q) < 3:
+        return None, None, None
+    q.sort(key=lambda e: e["end"], reverse=True)
+    latest = q[0]["val"]
+    prior = [e["val"] for e in q[1:5] if e["val"] is not None]
+    if not prior or latest is None:
+        return latest, None, None
+    prior.sort()
+    run_rate = prior[len(prior) // 2]                # median of the preceding quarters
+    if run_rate <= 0:
+        return latest, run_rate, ("paying" if latest > 0 else None)
+    if latest <= 0:
+        return latest, run_rate, "suspended"
+    if latest <= run_rate * 0.60:                    # a 40%+ cut is a deliberate policy change
+        return latest, run_rate, "cut"
+    return latest, run_rate, "paying"
+
+
 def _short_term_investments(facts, cash_c):
     """Short-term investments to add to cash for the liquidity read — precision over recall, so it
     can never manufacture a false 'cash-rich' flag.
@@ -532,6 +576,7 @@ def _extract(facts):
     rev_f = _flows(facts, _REV); op_f = _flows(facts, _OPINC)
     sga_f = _flows(facts, _SGA); ni_f = _flows(facts, _NI); dep_f = _flows(facts, _DEP)
     int_f = _flows(facts, _INT_EXP); div_f = _flows(facts, _DIV_PAID)
+    buyback_f = _flows(facts, _BUYBACK)
 
     # Use the recent period only when operating income is reported for it; else annual.
     base = _latest_period(rev_f)
@@ -663,6 +708,21 @@ def _extract(facts):
             g_cur, g_prior = rev, rev_prior
             g_period = _period_label(p_end, p_days) if p_end else None
 
+    # Dividend policy state (paying / cut / suspended) from the declared per-share series.
+    _div_latest, _div_run, _div_status = _dividend_state(facts)
+
+    # Trailing ~3 years of actual buyback spend. Compared downstream against market cap: a board
+    # that spent more repurchasing stock than the company is now worth, while the stock fell, is
+    # the most common capital-allocation attack an activist runs.
+    _bb_dated = sorted([e for e in buyback_f if 350 <= e["days"] <= 380 and e.get("end")],
+                       key=lambda e: e["end"], reverse=True)[:3]
+    _buybacks_3y = sum(abs(e["val"]) for e in _bb_dated if e.get("val")) or None
+
+    # EV debt = total debt less operating-lease liabilities (see the note in `raw` below).
+    _ev_debt = (debt - op_lease) if (debt is not None and op_lease is not None) else None
+    if _ev_debt is not None and _ev_debt < 0:
+        _ev_debt = None                              # inconsistent inputs -> fall back to `debt`
+
     # Most recent FULL-YEAR net income — the profitability sanity check. A GAAP-profitable
     # year means a negative latest-period margin/ROA is almost certainly a one-time charge
     # (impairment, divestiture) distorting the quarter, not real distress (see scoring).
@@ -697,6 +757,16 @@ def _extract(facts):
         "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill, "operating_lease": op_lease,
         "finance_lease": fin_lease, "interest_expense": int_exp,
         "dividends_paid_ttm": div_paid_ttm,
+        "dividend_dps_latest": _div_latest, "dividend_dps_run_rate": _div_run,
+        "dividend_status": _div_status,
+        "buybacks_3y": _buybacks_3y,
+        # EV-specific debt: funded debt + FINANCE leases, EXCLUDING operating-lease liabilities.
+        # Under ASC 842 operating-lease rent stays inside operating income, so EBITDA is already
+        # net of it -- capitalising the same leases into EV as well charges the company twice.
+        # Verified on PZZA: stripping operating leases lands within 0.6% of FactSet's own EV.
+        # Finance leases stay in: their cost sits in D&A/interest, so EBITDA is gross of them.
+        # None when the split is unknown, and consumers fall back to `debt` so nothing regresses.
+        "ev_debt": _ev_debt,
         "period_end": p_end, "period_days": p_days,
         "period_label": _period_label(p_end, p_days) if p_end else None,
         "source_accn": p_accn,
@@ -1790,24 +1860,47 @@ def refresh_enrichment(fetch_desc=True):
             raw = json.loads((database.get_fundamentals_one(cik) or {}).get("raw") or "{}")
         except (ValueError, TypeError):
             raw = {}
+        # P/B. A company with NEGATIVE book equity has no meaningful price-to-book, and the old
+        # `book > 0` guard silently handed those to Finnhub instead -- which returned 303.03x for
+        # Papa John's (book equity -$444.8M) and the Financials tab rendered it "richly valued".
+        # Report None so the metric is absent rather than wrong; the leverage signal is where a
+        # negative-equity balance sheet should surface, and it now does.
         book = raw.get("book_equity")
-        pb = (mcap / book) if (mcap and book and book > 0) else met.get("pb")
+        pb = (mcap / book) if (mcap and book and book > 0) else None
 
-        # Locally-computed dividend-yield cross-check: TTM dividends paid (SEC XBRL cash-flow
-        # statement) / market cap, independent of Finnhub's dividendYieldIndicatedAnnual. Prefer
-        # Finnhub's figure when present and roughly consistent (Finnhub's "indicated annual"
-        # basis is timelier for a rate just changed mid-quarter); fall back to the local figure
-        # when Finnhub has none; either way, flag a material divergence so a wrong/stale Finnhub
-        # read (or a bad local extraction) doesn't sit unnoticed.
+        # P/E, computed locally from TTM net income for the same reason. Finnhub reported 45.19x
+        # for Monro against $2.2M of net income (a true trailing multiple near 178x).
+        _ni_ttm = raw.get("net_income_ann") or raw.get("annual_net_income")
+        pe = (mcap / _ni_ttm) if (mcap and _ni_ttm and _ni_ttm > 0) else None
+        if pe is not None and pe > 400:
+            pe = None                                # beyond this the multiple is noise, not signal
+
+        # Dividend yield. Third-party indicated yields were wrong on every name we audited --
+        # Monro 3.8% vs 8.92%, Papa John's 2.7% vs 7.69%, Whirlpool 6.8% against a dividend the
+        # board had SUSPENDED -- because the vendor divides a stale indicated rate by a stale
+        # price. So the local, filing-traceable figure is primary and the vendor is the check.
+        #
+        # A trailing yield is itself wrong once a payer stops paying, so the dividend STATE gates
+        # it: a suspended dividend reports 0.0, a cut reports the new run-rate annualised, and only
+        # an intact payer reports the trailing figure.
         div_paid = raw.get("dividends_paid_ttm")
         div_yield_local = (abs(div_paid) / mcap) if (div_paid and mcap) else None
+        div_status = raw.get("dividend_status")
+        shares_out = raw.get("shares") or (raw.get("book_equity") and None)
+        if div_status == "suspended":
+            div_yield = 0.0
+        elif div_status == "cut" and raw.get("dividend_dps_latest") is not None and shares_out and mcap:
+            div_yield = (raw["dividend_dps_latest"] * 4.0 * shares_out) / mcap
+        else:
+            div_yield = div_yield_local
         div_yield_fh = met.get("dividend_yield")
-        div_yield = div_yield_fh if div_yield_fh is not None else div_yield_local
+        if div_yield is None:
+            div_yield = div_yield_fh                 # no XBRL dividend data -> vendor as fallback
         if div_yield_fh is not None and div_yield_local is not None:
             _base = max(div_yield_fh, div_yield_local, 1e-6)
             if abs(div_yield_fh - div_yield_local) / _base > 0.35:
                 print(f"[enrich] {tk}: dividend yield mismatch — Finnhub={div_yield_fh:.2%} "
-                      f"local(XBRL)={div_yield_local:.2%} — worth a manual check")
+                      f"local(XBRL)={div_yield_local:.2%} status={div_status or 'unknown'}")
         if mcap is not None and met.get("tsr_1y") is not None:
             database.set_company_market(_unpad(cik), market_cap=mcap, pb_ratio=pb,
                                         tsr_1y=met.get("tsr_1y"))
@@ -1830,8 +1923,9 @@ def refresh_enrichment(fetch_desc=True):
             "OfficialSite": prof.get("weburl") or prev.get("OfficialSite"),
             "MarketCapitalization": mcap,
             "PriceToBookRatio": pb,
-            "PERatio": met.get("pe"),
+            "PERatio": pe if pe is not None else met.get("pe"),
             "DividendYield": div_yield,
+            "DividendStatus": raw.get("dividend_status"),
             "DividendYieldFinnhub": div_yield_fh,
             "DividendYieldLocal": div_yield_local,
             "52WeekHigh": met.get("wk_hi"),

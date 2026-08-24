@@ -61,8 +61,10 @@ _EARNINGS_WHY_DEFAULT = "Next earnings — a soft print sharpens the thesis and 
 # "divestiture" (2026-08-21) ranks just behind a departure: a business/segment sale is often
 # exactly the action an activist is pushing for, so it's a thesis-defining catalyst whether it
 # validates an existing "sum of parts" pitch or heads one off.
-_FILING_RANK = {"restatement": 0, "ceo_departure": 1, "divestiture": 2, "earnings_miss": 3,
-                "impairment": 4, "layoffs": 5, "leadership_change": 6}
+# "dividend_cut" (2026-08-24) ranks alongside a divestiture: a board that stops paying is making
+# the same kind of forced capital-allocation statement, and it reliably precedes activist interest.
+_FILING_RANK = {"restatement": 0, "ceo_departure": 1, "dividend_cut": 2, "divestiture": 3,
+                "earnings_miss": 4, "impairment": 5, "layoffs": 6, "leadership_change": 7}
 
 
 def _filing_rank(sig_csv):

@@ -42,10 +42,12 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "gov_classified": 1, "gov_poison": 1, "gov_dual": 0,
                  "insider_selling": 1, "insider_buying": 0,
                  "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2,
-                 "lags_own_peers": 2, "strategic_review": 3, "activist_holder": 4}
+                 "lags_own_peers": 2, "strategic_review": 3, "activist_holder": 4,
+                 "overlevered": 2, "buyback_drag": 2}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "restatement": 2, "layoffs": 1, "leadership_change": 1,
-                "results_update": 0, "news_negative": 1, "divestiture": 2}
+                "results_update": 0, "news_negative": 1, "divestiture": 2,
+                "dividend_cut": 2}
 POINTS = {**STRUCT_POINTS, **EVENT_POINTS}
 # The 0-100 number is an ABSOLUTE "activist-target profile" index, NOT a probability of
 # a campaign. Each triggered signal contributes its point weight scaled by *how severe*
@@ -164,6 +166,9 @@ LABELS = {
     "lags_own_peers": "trails its self-selected proxy peer group",
     "strategic_review": "sharp de-rating — strategic-review / sale candidate",
     "activist_holder": "known activist already a holder (13F)",
+    "overlevered": "over-levered balance sheet (constrains capital return)",
+    "buyback_drag": "buybacks above today's price — capital destroyed",
+    "dividend_cut": "dividend cut or suspended",
 }
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
 # insider_buying is shown as a 0-point defense/confidence note.
@@ -216,6 +221,33 @@ LEASE_HEAVY = 0.10
 # Kept modest so ordinary noise doesn't clear it; a genuine laggard with flat/falling margins still
 # fires. margin_yoy_delta is computed in pipeline._extract (same-period current vs prior-year).
 MARGIN_IMPROVING_DELTA = float(os.getenv("MARGIN_IMPROVING_DELTA", "0.02"))   # +2 pts YoY
+# --- Over-leverage -----------------------------------------------------------------------------
+# The screen has always treated LOW debt as the activist lever (releverage, return capital) and had
+# no counterpart, so a company whose liabilities exceed its assets read "IN LINE" on the Financials
+# tab: Papa John's at 117% debt/assets against a 43.8% peer cutoff, Whirlpool at 46.4% against
+# 17.7%. Extreme leverage is its own vulnerability -- it forecloses exactly the buyback/dividend/
+# spin remedies an activist would demand, and it is how a cheap name becomes a distressed one.
+#
+# Measured on FUNDED debt + finance leases (config: the same ex-operating-lease figure EV uses),
+# NOT the lease-inclusive total. That distinction is what keeps a lease-funded retailer out of it:
+# Monro looks levered at 31% of assets, but $196M of that is operating leases and its actual funded
+# debt is $60M -- 3.8% of assets. Papa John's, by contrast, is 85% funded debt.
+# Debt/ASSETS alone is a weak proxy, because an asset-heavy manufacturer can carry a stressed
+# balance sheet and still look moderate against its own asset base: Whirlpool is only 39% of assets
+# on funded debt but 264% of EQUITY, with interest coverage under 2x — it suspended its dividend
+# and issued equity to repair exactly this. Leverage is fundamentally debt against the equity
+# cushion, so debt/equity is the primary test and debt/assets stays as a backstop for asset-light
+# names. A company clears the signal only if it trips one of them.
+OVERLEVERED_FLOOR = float(os.getenv("OVERLEVERED_FLOOR", "0.45"))     # funded debt / assets
+OVERLEVERED_DE = float(os.getenv("OVERLEVERED_DE", "2.0"))            # funded debt / book equity
+# Negative book equity is over-levered by definition, whatever the ratios say.
+OVERLEVERED_ON_NEGATIVE_EQUITY = os.getenv("OVERLEVERED_ON_NEGATIVE_EQUITY", "1") != "0"
+# --- Buyback drag ------------------------------------------------------------------------------
+# Trailing-3yr repurchase spend as a share of today's market cap. Above this, with the stock down
+# over the same window, the board demonstrably destroyed capital buying its own stock too high --
+# the most common capital-allocation campaign there is. PZZA: ~$1.1B against a $788M market cap.
+BUYBACK_DRAG_MIN = float(os.getenv("BUYBACK_DRAG_MIN", "0.30"))     # 3yr buybacks / market cap
+BUYBACK_DRAG_TSR = float(os.getenv("BUYBACK_DRAG_TSR", "-0.20"))    # and the stock fell this much
 
 
 def _leveraged_recap(r):
@@ -272,7 +304,8 @@ EVENT_SOURCE = {"ceo_departure": "SEC 8-K", "earnings_miss": "SEC 8-K",
                 "impairment": "SEC 8-K", "restatement": "SEC 8-K Item 4.02",
                 "layoffs": "SEC 8-K",
                 "leadership_change": "SEC 8-K", "results_update": "SEC 8-K",
-                "news_negative": "News", "divestiture": "SEC 8-K Item 1.01/2.01"}
+                "news_negative": "News", "divestiture": "SEC 8-K Item 1.01/2.01",
+                "dividend_cut": "SEC XBRL (declared dividend per share)"}
 # A news headline only counts as an "active situation" when it BOTH (a) names an activist
 # -- a known fund, or an explicit proxy-fight / "activist" cue -- AND (b) names the company
 # itself. Requiring the company NAME (not just a loose ticker/keyword match) kills the
@@ -567,6 +600,24 @@ def _severity(key, r, t, e):
         w = h.get("weight_in_fund") or 0.0
         o = h.get("ownership_pct") or 0.0
         return _clamp(0.55 + min(0.3, w * 6.0) + min(0.15, o * 3.0))
+    if key == "overlevered":
+        # Scale by how far past the floor the funded leverage runs; negative equity pins it high.
+        _fl = _funded_leverage(r)
+        if (r.get("book_equity") or 0) < 0 or (r.get("raw") or {}).get("book_equity", 0) < 0:
+            return 1.0
+        if _fl is None:
+            return 0.5
+        return _clamp(0.4 + (_fl - OVERLEVERED_FLOOR) / 0.55)
+    if key == "buyback_drag":
+        # Sharper the more they spent relative to what's left, and the worse the stock did.
+        _bb = (r.get("raw") or {}).get("buybacks_3y")
+        _mc = r.get("market_cap")
+        ratio = (_bb / _mc) if (_bb and _mc) else None
+        t3 = r.get("tsr_3y")
+        sev = 0.4 + min(0.4, ((ratio or 0) - BUYBACK_DRAG_MIN) * 0.8)
+        if t3 is not None:
+            sev += min(0.2, max(0.0, -t3) * 0.3)
+        return _clamp(sev)
     if key == "lags_own_peers":
         pa = r.get("_peers") or {}
         med = (pa.get("median") or {}).get("tsr_1y")
@@ -606,6 +657,43 @@ _FIN_ABS_BANDS = {
     "cash_to_assets":     (None, None,                 0.40, "cash-heavy"),
     "debt_to_assets":     (None, None,                 0.55, "highly leveraged"),
 }
+def _funded_leverage(r):
+    """Funded debt (+ finance leases, excluding operating leases) / total assets, or None.
+
+    Deliberately NOT the headline debt_to_assets: that figure is lease-inclusive, which is right
+    for judging total obligations but wrong for judging whether a balance sheet is over-levered.
+    A tire-shop chain whose 'debt' is mostly store leases is not a releveraging story in either
+    direction -- Monro reads 31% lease-inclusive but 3.8% on funded debt."""
+    raw = r.get("raw") or {}
+    ev_debt, assets = raw.get("ev_debt"), raw.get("total_assets")
+    if ev_debt is None or not assets or assets <= 0:
+        return None
+    return ev_debt / assets
+
+
+def _negative_equity(r):
+    """True when book equity is negative — over-levered by definition (PZZA: -$444.8M)."""
+    be = (r.get("raw") or {}).get("book_equity")
+    return be is not None and be < 0
+
+
+def _overlevered(r):
+    """The single over-leverage test, shared by the scored signal and the Financials verdict so
+    the chip and the score can never disagree. Financials are exempt: structurally high leverage
+    is the business model for a bank or insurer, not a vulnerability (the existing carve-out)."""
+    if ((r.get("sector") or "") in ("60", "61", "62", "63", "64")
+            or taxonomy.is_financial(r.get("_industry"))):
+        return False
+    if OVERLEVERED_ON_NEGATIVE_EQUITY and _negative_equity(r):
+        return True
+    raw = r.get("raw") or {}
+    ev_debt, eq = raw.get("ev_debt"), raw.get("book_equity")
+    if ev_debt is not None and eq and eq > 0 and (ev_debt / eq) >= OVERLEVERED_DE:
+        return True
+    fl = _funded_leverage(r)
+    return fl is not None and fl >= OVERLEVERED_FLOOR
+
+
 def _fin_context(r, t, e):
     out = []
     # Mirror the trigger guards so the Financials tab matches the evidence cards (don't paint a
@@ -665,6 +753,13 @@ def _fin_context(r, t, e):
         # profitable), don't show this metric as a red/gold activist lever — keep it "in line".
         if verdict in ("bad", "opp") and _suppress.get(key):
             verdict = "mid"
+        # Debt / assets is the one DUAL-SIDED metric: low is an opportunity (releverage) and high
+        # is a vulnerability. The rule table can only express one direction, so the over-levered
+        # side is applied here, off the same funded-debt test the scored signal uses. Without this
+        # the tab rendered PZZA's 117% and WHR's 46.4% as "In line" while the caption beside them
+        # read "highly leveraged" — the annotation and the verdict contradicting each other.
+        if key == "debt_to_assets" and verdict != "opp" and _overlevered(r):
+            verdict = "bad"
         # Absolute sanity band (#35): flag an absolutely extreme value so a peer-relative
         # "in line" verdict is never read as unremarkable (e.g. a 43x EV/EBITDA in an
         # expensive sector). Additive annotation only — does not recolor or rescore.
@@ -962,6 +1057,47 @@ def _impaired_fundamentals(r):
     return ani is not None and ani < 0
 
 
+def _capital_evidence(key, r):
+    """Evidence card for the two balance-sheet / capital-allocation signals."""
+    raw = r.get("raw") or {}
+    mc = r.get("market_cap")
+    if key == "overlevered":
+        fl = _funded_leverage(r)
+        be = raw.get("book_equity")
+        if _negative_equity(r):
+            val = _money(be)
+            ctx = (f"shareholders' equity is negative ({_money(be)}) — liabilities exceed assets, "
+                   f"so the balance sheet forecloses the buyback / dividend / spin remedies an "
+                   f"activist would push for. Diligence the path back to positive equity.")
+            inputs = f"total equity {_money(be)} · total assets {_money(raw.get('total_assets'))}"
+        else:
+            _eq = raw.get("book_equity")
+            _de = (raw.get("ev_debt") / _eq) if (raw.get("ev_debt") and _eq and _eq > 0) else None
+            val = (f"{_de:.1f}x equity" if _de is not None else f"{(fl or 0) * 100:.0f}% of assets")
+            ctx = (f"funded debt runs {val}"
+                   + (f" ({(fl or 0) * 100:.0f}% of assets)" if _de is not None else "")
+                   + " — enough to constrain the buyback, dividend and spin remedies a campaign "
+                     "would demand. Measured excluding operating leases, so this is real "
+                     "borrowing rather than rent.")
+            inputs = (f"funded debt + finance leases {_money(raw.get('ev_debt'))} ÷ "
+                      f"equity {_money(_eq)} · total assets {_money(raw.get('total_assets'))}")
+        return {"key": key, "label": LABELS.get(key, key), "value": val, "context": ctx,
+                "inputs": inputs, "period": raw.get("period_label") or "",
+                "source": "SEC XBRL", "url": _source_url(r.get("cik"), raw.get("source_accn"))}
+    bb = raw.get("buybacks_3y")
+    t3 = r.get("tsr_3y")
+    ratio = (bb / mc) if (bb and mc) else None
+    ctx = (f"the board spent {_money(bb)} repurchasing stock over the last three years — "
+           f"{(ratio or 0) * 100:.0f}% of what the whole company is worth today — while the "
+           f"shares fell {abs((t3 or 0)) * 100:.0f}% over the same period. Capital returned at "
+           f"prices the market has not since supported is the most direct capital-allocation case.")
+    return {"key": key, "label": LABELS.get(key, key),
+            "value": f"{(ratio or 0) * 100:.0f}% of mkt cap", "context": ctx,
+            "inputs": f"3-yr buybacks {_money(bb)} ÷ market cap {_money(mc)}",
+            "period": "trailing 3 yrs", "source": "SEC XBRL",
+            "url": _source_url(r.get("cik"), raw.get("source_accn"))}
+
+
 def _strategic_evidence(key, r):
     ret = r.get("tsr_1y")
     val = _fmt_metric("tsr_1y", ret) if ret is not None else ""
@@ -1121,14 +1257,22 @@ def _struct_evidence(key, r, t):
                   else "price ÷ book value — price from Alpha Vantage, book value from SEC")
     elif key == "cheap_ev_ebitda":
         mc = r.get("market_cap")
-        debt = raw.get("debt")
+        # ev_debt excludes operating-lease liabilities (EBITDA is already net of the rent); falls
+        # back to the lease-inclusive total on rows cached before that field existed.
+        debt = raw.get("ev_debt") if raw.get("ev_debt") is not None else raw.get("debt")
         cash = raw.get("cash")
         ebitda = raw.get("ebitda")
         if mc is not None and ebitda:
             ev = mc + (debt or 0) - (cash or 0)
+            _lease_note = (" (debt excludes operating leases — EBITDA is already net of the rent)"
+                           if raw.get("ev_debt") is not None else "")
             inputs = (f"EV {_money(ev)} (mkt cap {_money(mc)} + debt {_money(debt or 0)} "
                       f"− cash {_money(cash or 0)}) ÷ EBITDA {_money(ebitda)} "
-                      f"— EBITDA = operating income + D&A (SEC XBRL)")
+                      f"— EBITDA = operating income + D&A (SEC XBRL){_lease_note}")
+        # EBITDA is an ANNUAL/TTM figure, but this card fell through to the generic period label,
+        # which is the latest interim — so it printed "6-mo to Jun 2026" over a full-year number
+        # while the margin card beside it correctly said "trailing 12 mo". Name the real basis.
+        period_override = raw.get("margin_label") or _period_label(raw)
     url = _source_url(r.get("cik"), raw.get("source_accn")) if source == "SEC XBRL" else None
     return {"key": key, "label": LABELS.get(key, key), "value": _fmt_metric(metric, v),
             "context": ctx, "inputs": inputs, "period": period_override or _period_label(raw),
@@ -1221,7 +1365,10 @@ def recompute_all():
         ebitda = raw.get("ebitda")
         ev_ebitda = None
         if mcap is not None and ebitda is not None and ebitda > 0:
-            ev = mcap + (raw.get("debt") or 0) - (raw.get("cash") or 0)
+            # Operating leases excluded from EV — EBITDA is already net of the rent, so
+            # capitalising them here too charges the company twice. See pipeline._extract.
+            _evd = raw.get("ev_debt")
+            ev = mcap + ((_evd if _evd is not None else raw.get("debt")) or 0) - (raw.get("cash") or 0)
             if ev > 0:
                 ev_ebitda = ev / ebitda
                 # A multiple this high means EBITDA is negligible relative to EV — the ratio
@@ -1444,6 +1591,19 @@ def recompute_all():
         _ol, _fl, _ta = _bs.get("operating_lease"), _bs.get("finance_lease"), _bs.get("total_assets")
         _lease_heavy = ((_ol is not None or _fl is not None) and _ta and _ta > 0
                         and ((_ol or 0) + (_fl or 0)) / _ta >= LEASE_HEAVY)
+        # Over-leverage: the counterpart to under-levered. Measured on funded debt (ex operating
+        # leases) or negative book equity, so a lease-funded retailer isn't swept in. Mutually
+        # exclusive with underlevered by construction.
+        if _overlevered(r):
+            trig.append("overlevered")
+        # Capital destroyed on buybacks: three years of repurchases large against what the company
+        # is worth today, with the stock down over the same window. Requires BOTH so a healthy
+        # compounder returning cash isn't punished for it.
+        _bb3 = (r.get("raw") or {}).get("buybacks_3y")
+        _bb_ratio = (_bb3 / _mcap) if (_bb3 and _mcap) else None
+        if (_bb_ratio is not None and _bb_ratio >= BUYBACK_DRAG_MIN
+                and r.get("tsr_3y") is not None and r["tsr_3y"] <= BUYBACK_DRAG_TSR):
+            trig.append("buyback_drag")
         if low("debt_to_assets") and not _is_financial and not _strong_outperformer and not _lease_heavy:
             trig.append("underlevered")
         # Governance red flags (from DEF 14A; only present for parsed names).
@@ -1524,9 +1684,14 @@ def recompute_all():
         _net_sell = sell_v - buy_v
         _mcap = r.get("market_cap")
         _ins_material = (_mcap is None) or (_net_sell >= INSIDER_NET_MIN_FRAC * _mcap)
+        # The buy side needs the SAME materiality floor the sell side has always had. Without it a
+        # single trivial purchase read as a company-level "confidence signal": Whirlpool showed
+        # "insiders buying" off one $199K buy — 0.008% of a $2.5B market cap.
+        _net_buy = max(0.0, buy_v - sell_v)
+        _buy_material = (_mcap is None) or (_net_buy >= INSIDER_NET_MIN_FRAC * _mcap)
         if ns >= 2 and sell_v > buy_v and nb < ns and _ins_material:
             trig.append("insider_selling")
-        elif nb >= 1 and buy_v > sell_v and buy_v > 0:
+        elif nb >= 1 and buy_v > sell_v and buy_v > 0 and _buy_material:
             trig.append("insider_buying")
         # Shareholder-vote discontent (8-K 5.07; only present for parsed names).
         vrow = votes_all.get(r["cik"]) or {}
@@ -1536,6 +1701,17 @@ def recompute_all():
             trig.append("weak_vote_support")
         struct = sum(STRUCT_POINTS[s] for s in trig)
         events, top, ev, activist = _event_signals(r["cik"], r["ticker"], r["name"])
+        # Dividend cut / suspension. Sourced from the declared per-share series in XBRL rather than
+        # an 8-K, because boards announce it in a press release the classifier never sees as a
+        # distinct item code. Whirlpool's suspension was invisible everywhere on the profile while
+        # the Financials tab showed a 6.8% yield.
+        _dstat = (r.get("raw") or {}).get("dividend_status")
+        if _dstat in ("cut", "suspended"):
+            events = list(events) + ["dividend_cut"]
+            ev.setdefault("dividend_cut", {
+                "title": (f"{r['name']} — dividend "
+                          + ("suspended" if _dstat == "suspended" else "cut")),
+                "url": _source_url(r.get("cik"), (r.get("raw") or {}).get("source_accn"))})
         total = struct + sum(EVENT_POINTS[s] for s in events)
         trig += list(events)
         aflag = aflags.get(r["cik"])
@@ -1636,6 +1812,8 @@ def recompute_all():
                 evidence.append(_strategic_evidence(key, r))
             elif key == "activist_holder":
                 evidence.append(_holder_evidence(key, r))
+            elif key in ("overlevered", "buyback_drag"):
+                evidence.append(_capital_evidence(key, r))
             elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:

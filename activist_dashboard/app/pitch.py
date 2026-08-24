@@ -367,6 +367,27 @@ def _point(key, r):
                 "that hands an activist a board-accountability and audit-committee-refresh campaign.")
     if key == "earnings_miss":
         return "A recent earnings miss — a natural moment for a shareholder to press for change."
+    if key == "buyback_drag":
+        raw = r.get("raw") or {}
+        bb, mc, t3 = raw.get("buybacks_3y"), r.get("market_cap"), r.get("tsr_3y")
+        if bb and mc:
+            return (f"The board spent {_money(bb)} on buybacks over three years — "
+                    f"{bb / mc * 100:.0f}% of today's market cap — while the stock fell "
+                    f"{abs(t3 or 0) * 100:.0f}%. Capital was returned at prices the market "
+                    f"has not supported since.")
+        return ("Sustained buybacks at prices well above today's — a capital-allocation record "
+                "an activist can attack directly.")
+    if key == "overlevered":
+        raw = r.get("raw") or {}
+        be = raw.get("book_equity")
+        if be is not None and be < 0:
+            return (f"Shareholders' equity is negative ({_money(be)}) — the balance sheet itself "
+                    f"forecloses the buyback, dividend and spin remedies a campaign would demand.")
+        return ("An over-levered balance sheet limits every capital-return lever — deleveraging "
+                "becomes the campaign rather than a byproduct of one.")
+    if key == "dividend_cut":
+        return ("The dividend has been cut or suspended — a board signalling it can no longer "
+                "fund the payout, and the moment income holders turn into sellers.")
     if key == "divestiture":
         return ("A recent business/segment divestiture shows the board is already willing to "
                  "reshape the portfolio — a concrete opening for a sum-of-the-parts or "
@@ -376,7 +397,8 @@ def _point(key, r):
 
 # Order points by how compelling they are in a pitch (not raw score weight).
 _POINT_PRIORITY = [
-    "cash_hoard", "divestiture", "overpaid_ceo", "restatement", "exec_reaction_drop", "lags_own_peers",
+    "cash_hoard", "buyback_drag", "dividend_cut", "divestiture", "overpaid_ceo", "restatement",
+    "exec_reaction_drop", "lags_own_peers", "overlevered",
     "weak_tsr_1y", "weak_tsr_3y", "cheap_ev_ebitda", "low_margin", "high_sga", "low_roa", "cheap_pb",
     "cheap_abs", "high_goodwill", "weak_growth", "gov_classified", "gov_poison", "gov_dual",
     "ceo_departure", "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",
