@@ -909,6 +909,17 @@ async function renderPitchKit(){
   const fEl=document.getElementById("pkFilings");
   if(fEl){ const fil=(FEED.filings||[]).slice(0,5); fEl.innerHTML=fil.length?fil.map(filingItemRow).join(""):`<div class="empty">No filings yet.</div>`; }
 }
+// A suspended dividend must never render as a healthy-looking yield. Whirlpool showed 6.8% here
+// with a $0.00 indicated dividend at FactSet — the vendor keeps reporting a stale indicated rate
+// after a board stops paying, and at 6.8% it is far too plausible for the old 15% sanity cap to
+// catch. The status comes from the declared per-share series in XBRL, not from the vendor.
+function divYield(f){
+  const st=f.dividend_status;
+  if(st==="suspended") return `<span style="color:var(--hot)">Suspended</span>`;
+  if(f.dividend_yield==null) return "—";
+  const v=fmtPct(f.dividend_yield);
+  return st==="cut" ? `${v} <span style="color:var(--hot);font-size:12px;">· cut</span>` : v;
+}
 function fmtMetricVal(key,v){
   if(v==null) return "—";
   if(key==="pb_ratio") return fmtNum(v)+"x";
@@ -1040,7 +1051,7 @@ function renderTab(){
     const kv=(k,v)=>`<div class="kv"><div class="k">${k}</div><div class="v">${v}</div></div>`;
     const rawGrid=`<div class="grid">
       ${kv("Market cap",fmtCap(d.market_cap))}${kv("P / E",fmtNum(f.pe_ratio))}${kv("Profit margin",fmtPct(f.profit_margin))}
-      ${kv("Return on equity",fmtPct(f.return_on_equity))}${kv("Revenue",fmtCap(f.revenue))}${kv("Dividend yield",fmtPct(f.dividend_yield))}
+      ${kv("Return on equity",fmtPct(f.return_on_equity))}${kv("Revenue",fmtCap(f.revenue))}${kv("Dividend yield",divYield(f))}
       ${kv("52-wk range",(f.week52_low!=null&&f.week52_high!=null)?("$"+fmtNum(f.week52_low)+" – $"+fmtNum(f.week52_high)):"—")}
       ${kv("Analyst target",f.analyst_target!=null?("$"+fmtNum(f.analyst_target)):"—")}</div>`;
     body.innerHTML=(finGrid?`<div class="mh3">Versus peers — what each number means</div>
@@ -1077,6 +1088,22 @@ function renderTab(){
       ${kvMini("Window", ins.window_days?(ins.window_days+"d"):"—")}</div>
       ${ins.top_url?`<div class="links" style="margin-top:10px;"><a class="extlink" href="${esc(ins.top_url)}" target="_blank" rel="noopener">Largest Form 4 ↗</a></div>`:""}`
       : `<div class="gov-note">No open-market insider trades on record in the recent window.</div>`;
+    // Known-activist 13F positions. These were being collected but had nowhere to surface on a
+    // company profile — Icahn's 16.9% of Monro was in the data and invisible on the page.
+    // Strongest stake first; ownership is quarterly and ~45 days lagged, so the filing date matters.
+    const hold=(d.holders||[]).slice().sort((a,b)=>(b.ownership_pct||0)-(a.ownership_pct||0));
+    const holdPanel=hold.length?`<div class="mh3">Known activists on the register (13F)</div>
+      <div class="gov-note" style="text-transform:none;letter-spacing:0;margin:0 0 8px;">From each fund's latest quarterly Form 13F — a ~45-day lag, so treat it as a position that exists, not a position taken today.</div>
+      <div class="panel" style="padding:4px 0;">${hold.map(h=>{
+        const own=h.ownership_pct!=null?`${(h.ownership_pct*100).toFixed(1)}% of shares out`:"";
+        const wt=h.weight_in_fund!=null?`${(h.weight_in_fund*100).toFixed(1)}% of the fund's book`:"";
+        const bits=[own,wt].filter(Boolean).join(" · ");
+        const disc=(h.ownership_pct||0)>=0.05?`<span class="chip bad" style="margin-left:6px;">≥5% — 13D/G on file</span>`:"";
+        return `<div class="sit-audit-row" style="justify-content:space-between;">
+          <span><b>${esc((h.fund||"").replace(/\b\w/g,c=>c.toUpperCase()))}</b>${disc}
+          <span class="meta"> ${esc(bits)}</span></span>
+          <span class="meta">${esc(h.quarter||"")}${h.filed?` · filed ${esc(fmtDateY(h.filed))}`:""}</span></div>`;
+      }).join("")}</div>`:"";
     const insiderEv=(d.evidence||[]).filter(e=>e.key==="insider_selling"||e.key==="insider_buying");
     const se=d.sentiment||{}; let sentHtml="";
     // MSPR (Finnhub monthly buy/sell skew) suppressed (#2): it repeatedly contradicted our own
@@ -1097,7 +1124,8 @@ function renderTab(){
           ${ct.website?`<a class="extlink" href="${esc(ct.website)}" target="_blank" rel="noopener">Company site ↗</a>`:""}
           <a class="extlink" href="https://www.google.com/search?q=${encodeURIComponent((d.company||"")+" investor relations")}" target="_blank" rel="noopener">IR / contacts ↗</a></div>`
       : `<div class="gov-note">No contact data yet — add an FMP_API_KEY (then "Run enrichment now") to populate CEO, HQ &amp; IR.</div>`;
-    body.innerHTML=`<div class="mh3">Insider activity (Form 4)</div>${insPanel}
+    body.innerHTML=holdPanel
+      +`<div class="mh3">Insider activity (Form 4)</div>${insPanel}
       ${insiderEv.length?`<div class="mh3">Detail</div><div class="evlist">${insiderEv.map(evCard).join("")}</div>`:""}
       ${sentHtml}
       <div class="mh3">Contacts</div>${contactsHtml}`;
