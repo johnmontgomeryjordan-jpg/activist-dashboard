@@ -677,12 +677,33 @@ def _negative_equity(r):
     return be is not None and be < 0
 
 
+def _is_outperformer(r):
+    """A strong multi-year market-beater, on the same test the scorer and the Financials tab
+    already use (>=25 pts over 3yr, or >=40 over 5yr while at least flat over 3yr). Factored out
+    here so the over-leverage signal can honour the same guard every other structural signal does
+    rather than re-deriving it."""
+    g3 = ((r.get("tsr_3y") - r.get("_spy_3y"))
+          if (r.get("tsr_3y") is not None and r.get("_spy_3y") is not None) else None)
+    g5 = ((r.get("tsr_5y") - r.get("_spy_5y"))
+          if (r.get("tsr_5y") is not None and r.get("_spy_5y") is not None) else None)
+    return (g3 is not None and g3 >= 0.25) or (g5 is not None and g5 >= 0.40
+                                               and g3 is not None and g3 >= 0)
+
+
 def _overlevered(r):
     """The single over-leverage test, shared by the scored signal and the Financials verdict so
     the chip and the score can never disagree. Financials are exempt: structurally high leverage
     is the business model for a bank or insurer, not a vulnerability (the existing carve-out)."""
     if ((r.get("sector") or "") in ("60", "61", "62", "63", "64")
             or taxonomy.is_financial(r.get("_industry"))):
+        return False
+    # A STRONG MULTI-YEAR OUTPERFORMER is exempt, same as every other structural signal. The first
+    # live run surfaced AutoZone, Domino's and Yum! Brands — all negative-equity by DESIGN, having
+    # bought back stock with debt for years while beating the market. That capital structure is the
+    # strategy, not a vulnerability, and no activist is pitching AutoZone on leverage. The guard
+    # keeps the names where leverage actually bites: Papa John's (-46% 1yr / -68% 3yr) and
+    # Whirlpool (-54% / -71%), which are levered AND losing, stay flagged.
+    if _is_outperformer(r):
         return False
     if OVERLEVERED_ON_NEGATIVE_EQUITY and _negative_equity(r):
         return True
@@ -723,9 +744,19 @@ def _fin_context(r, t, e):
         "debt_to_assets": _fin or _outperf or _lease_heavy,
         "ev_ebitda": _fin,
     }
+    # Price-to-book is UNDEFINED when book equity is negative, and the stored value cannot be
+    # trusted to have been cleared: pipeline sets pb=None for those names, but
+    # database.set_company_market writes it with COALESCE(?, pb_ratio) — so a None PRESERVES the
+    # last good number instead of clearing it. Papa John's kept rendering a Finnhub-sourced
+    # 303.03x "richly valued" on this tab (equity -$444.8M) while the header correctly showed "—",
+    # because the header reads av_overview, which IS overwritten wholesale. Suppress it here, at
+    # the point of use, so both paths agree no matter what is sitting in the column.
+    _neg_book = _negative_equity(r)
     for key, label, rule in _FIN_METRICS:
         v = r.get(key)
         if v is None:
+            continue
+        if key == "pb_ratio" and _neg_book:
             continue
         q1, q3, n = t.get(key, (None, None, 0))
         lo, hi = e.get(key, (None, None))
@@ -1531,9 +1562,15 @@ def recompute_all():
             _, q3, _ = t.get(metric, (None, None, 0))
             v = r.get(metric)
             return q3 is not None and v is not None and v >= q3
-        if r.get("pb_ratio") is not None and 0 < r["pb_ratio"] < 1.5:
+        # Same guard as the Financials tab: with negative book equity the stored pb_ratio may be a
+        # stale carry-over (set_company_market COALESCEs a None), and "cheap to book" is meaningless
+        # against a deficit anyway. Today's stale value happens to be far too HIGH to fire these,
+        # but a company whose last good reading was ~1.2x would have tripped "cheap" on a balance
+        # sheet with no book value at all.
+        _pb_ok = r.get("pb_ratio") is not None and not _negative_equity(r)
+        if _pb_ok and 0 < r["pb_ratio"] < 1.5:
             trig.append("cheap_abs")
-        elif r.get("pb_ratio") is not None and r["pb_ratio"] > 0 and low("pb_ratio"):
+        elif _pb_ok and r["pb_ratio"] > 0 and low("pb_ratio"):
             trig.append("cheap_pb")
         if (r.get("ev_ebitda") is not None and r["ev_ebitda"] > 0 and low("ev_ebitda")
                 and not _is_financial):
