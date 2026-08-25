@@ -1636,8 +1636,12 @@ def recompute_all():
         # Capital destroyed on buybacks: three years of repurchases large against what the company
         # is worth today, with the stock down over the same window. Requires BOTH so a healthy
         # compounder returning cash isn't punished for it.
+        # NB: read market cap off `r` directly — the local _mcap alias isn't bound until the
+        # insider block ~80 lines below, and referencing it here raised UnboundLocalError on
+        # every pass through recompute_all().
         _bb3 = (r.get("raw") or {}).get("buybacks_3y")
-        _bb_ratio = (_bb3 / _mcap) if (_bb3 and _mcap) else None
+        _bb_mcap = r.get("market_cap")
+        _bb_ratio = (_bb3 / _bb_mcap) if (_bb3 and _bb_mcap) else None
         if (_bb_ratio is not None and _bb_ratio >= BUYBACK_DRAG_MIN
                 and r.get("tsr_3y") is not None and r["tsr_3y"] <= BUYBACK_DRAG_TSR):
             trig.append("buyback_drag")
