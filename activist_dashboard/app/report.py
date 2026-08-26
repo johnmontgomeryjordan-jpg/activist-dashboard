@@ -212,8 +212,81 @@ def assemble_board(rows, *, get_catalyst, get_ai_pitch, get_governance,
     return cards
 
 
+def _financing_mislabelled_as_divestiture(f):
+    """A DEBT filing wrongly classified as an asset sale — keep it out of Filings of Note.
+
+    Item 2.03 is 'Creation of a Direct Financial Obligation'; Item 2.01 is 'Completion of
+    Acquisition or Disposition of Assets'. A filing carrying 2.03 and NOT 2.01 is a financing, and
+    an 8-K with Items 1.01 + 2.03 + 9.01 is the standard senior-notes / revolver signature. The
+    2026-08-25 issue ran Universal Health Services under exactly that item set as 'Divestiture /
+    asset sale', with an AI gloss beneath it describing proceeds from a sale that never happened;
+    AutoZone carries the same false flag from its recurring notes offerings (Jul 2026, Apr 2025,
+    Oct 2023, Aug 2022), where the indenture covenant boilerplate — 'sell all or substantially all
+    of ITS ASSETS' — satisfies the divestiture pattern's self-referential-object test.
+
+    This is a display veto only: it does not touch edgar.py's classifier or any score, so nothing
+    re-classifies and no cached filing is rewritten. The classifier fix is a separate change."""
+    sigs = (f.get("signals") or "").lower()
+    if "divestiture" not in sigs:
+        return False
+    title = f.get("title") or ""
+    return ("2.03" in title) and ("2.01" not in title)
+
+
+_NAME_STOP = {"the", "inc", "inc.", "corp", "corp.", "co", "co.", "company", "companies",
+              "holdings", "holding", "group", "ltd", "ltd.", "limited", "plc", "corporation",
+              "international", "&", "and", "plc.", "sa", "nv", "ag"}
+
+
+_APOS = "'’ʼ´`"
+
+
+def _norm_words(s):
+    """Lowercased alphanumeric tokens. Apostrophes are DROPPED rather than treated as separators,
+    so "Papa John's" folds to papa/johns and matches a headline writing "Papa Johns" — splitting
+    on them instead yields papa/john/s, and the bare "john" then fails against "johns". Every
+    other punctuation mark separates."""
+    out, cur = [], []
+    for ch in (s or "").lower():
+        if ch in _APOS:
+            continue
+        if ch.isalnum():
+            cur.append(ch)
+        elif cur:
+            out.append("".join(cur))
+            cur = []
+    if cur:
+        out.append("".join(cur))
+    return out
+
+
+def _names_company(headline, ticker, company):
+    """True when the headline plausibly refers to this company: it carries the ticker as a word, or
+    the company's IDENTIFYING words.
+
+    Identity is the first one or two distinctive words of the name, and where there are two we
+    require BOTH. Matching on any single distinctive word is not enough: "NAPCO Security
+    Technologies" and "Travelodge CEO Steps Down Amid Hotel Security Overhaul" share the word
+    "Security", which is exactly how that story reached NAPCO's card. The same trap catches
+    "American Eagle Outfitters" on any headline about American anything. Requiring napco+security,
+    or american+eagle, closes it while single-word names (Fiserv, Kohl's) still match on their own.
+    Generic corporate suffixes never count — "Holdings" is how Hannon Armstrong picked up an
+    Algorhythm Holdings story. Unknown company AND unknown ticker means the link can't be
+    verified, so the item is dropped rather than shown against a name it may not be about."""
+    words = set(_norm_words(headline))
+    if not words:
+        return False
+    tk = (ticker or "").strip().lower()
+    if len(tk) >= 3 and tk in words:
+        return True
+    distinctive = [w for w in _norm_words(company) if len(w) >= 4 and w not in _NAME_STOP]
+    if not distinctive:
+        return False
+    return all(w in words for w in distinctive[:2])
+
+
 def assemble_headlines(board, *, get_news, get_broad, is_relevant, rank_relevant,
-                       per_ticker=1, total=5):
+                       get_company=None, per_ticker=1, total=5):
     """Relevant headlines for the issue. Lead with the board names' own headlines (reusing the
     news filters, not the GDELT firehose), then BACKFILL from the broad relevance-curated feed so
     the section always fills to `total` even when a fortnight is quiet on the board — off-profile
@@ -223,6 +296,17 @@ def assemble_headlines(board, *, get_news, get_broad, is_relevant, rank_relevant
     def _add(n, ticker, company, on_board):
         uid = n.get("url") or n.get("headline")
         if not uid or uid in seen:
+            return
+        # The headline must actually NAME the company it is filed under. The 2026-08-25 issue ran
+        # "Tapestry Outlook Misses Estimates" under Capri, "Algorhythm Holdings Announces Strategic
+        # Review" under Hannon Armstrong, and "Travelodge CEO Steps Down Amid Hotel Security
+        # Overhaul" under NAPCO Security -- three different companies, each with an AI gloss beneath
+        # it confidently explaining why the story mattered to the wrong name. The auto-audit caught
+        # them, but only by luck: the backfill path below passed company=None, so the audit's own
+        # `ticker in headline or name in headline` test was running its name half against an empty
+        # string ('doesn\'t mention FISV or ""'), leaving it ticker-only for exactly the off-board
+        # population most likely to be mismatched. Checking it HERE drops the mis-tags at source.
+        if not _names_company(n.get("headline"), ticker, company):
             return
         seen.add(uid)
         collected.append({"ticker": ticker, "company": company, "on_board": on_board,
@@ -248,7 +332,16 @@ def assemble_headlines(board, *, get_news, get_broad, is_relevant, rank_relevant
         tk = (n.get("matched_tickers") or "").split(",")[0].strip()
         if not tk:
             continue
-        _add(n, tk, None, False)
+        # Resolve the name so _add can verify the headline actually refers to this company. Passing
+        # None here was the original defect: it left every backfilled item unverifiable, and left
+        # the auto-audit checking a blank name downstream.
+        co = None
+        if get_company:
+            try:
+                co = get_company(tk)
+            except Exception:
+                co = None
+        _add(n, tk, co, False)
     return collected[:total]
 
 
@@ -382,11 +475,25 @@ def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None, r
         get_governance=database.get_governance,
         exclude_tickers=exclude, limit=limit,
     )
+    # Ticker -> company name, for verifying that a backfilled headline actually refers to the
+    # company it is filed under. Built lazily off the scored universe already in memory rather
+    # than a new query, and cached for the life of the call.
+    _co_cache = {}
+
+    def _company_for(tk):
+        if not _co_cache:
+            for _r in (database.get_scores(limit=max(pool_n, 2000)) or []):
+                _t = (_r.get("ticker") or "").upper()
+                if _t:
+                    _co_cache[_t] = _r.get("company")
+        return _co_cache.get((tk or "").upper())
+
     headlines = assemble_headlines(
         board,
         get_news=lambda tk: database.get_news_for_ticker(tk, limit=12),
         get_broad=lambda: database.recent_news(limit=40, relevant_only=True),
         is_relevant=news.is_relevant, rank_relevant=news.rank_relevant,
+        get_company=_company_for,
     )
     radar = assemble_radar(board, get_earnings=database.get_earnings,
                            get_governance=database.get_governance, today=today)
@@ -397,7 +504,8 @@ def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None, r
     recent = database.recent_filings(limit=60) or []
     board_tickers = {(c.get("ticker") or "").upper() for c in board if c.get("ticker")}
     board_names = {(c.get("company") or "").strip().lower() for c in board if c.get("company")}
-    material = [f for f in recent if _filing_rank(f.get("signals")) is not None]
+    material = [f for f in recent if _filing_rank(f.get("signals")) is not None
+                and not _financing_mislabelled_as_divestiture(f)]
     material.sort(key=lambda f: (f.get("filed_at") or ""), reverse=True)   # recency
     material.sort(key=lambda f: _filing_rank(f.get("signals")))            # then materiality (stable)
     filings = material[:5]

@@ -711,6 +711,20 @@ def api_company(cik: str):
         n, d = fraw.get(num_key), fraw.get(den_key)
         return (n / d) if (n is not None and d not in (None, 0)) else None
 
+    # Book equity too small (or negative) for an equity-DENOMINATED ratio to carry meaning. Mirrors
+    # scoring._thin_book so the profile header, the Financials tab and the Peer Analysis table all
+    # agree. Audited 2026-08-25: Papa John's rendered ROE -6.1% while EARNING $30.5M (the sign came
+    # entirely from dividing by -$453M of equity), Bath & Body Works -64.2% on $649M of net income
+    # at a 5.4x P/E, and Capri +110.9% off a $138M book. FactSet declines to print an ROE for any of
+    # them. A negative-only test missed Capri, whose equity is positive but 4.3% of assets.
+    _thin_book = True
+    try:
+        _be, _ta = fraw.get("book_equity"), fraw.get("total_assets")
+        if _be is not None and _be > 0:
+            _thin_book = bool(_ta and _ta > 0 and (_be / _ta) < 0.10)
+    except (TypeError, ZeroDivisionError):
+        _thin_book = True
+
     def avf(key):
         v = av.get(key)
         if v in (None, "", "None", "-", "NaN"):
@@ -841,7 +855,7 @@ def api_company(cik: str):
             "cash_to_assets": fund.get("cash_to_assets"),
             "debt_to_assets": fund.get("debt_to_assets"),
             "pe_ratio": avf("PERatio"),
-            "pb_ratio": avf("PriceToBookRatio"),
+            "pb_ratio": None if _thin_book else avf("PriceToBookRatio"),
             "profit_margin": _sec_ratio("net_income_ann", "revenue") if _sec_ratio("net_income_ann", "revenue") is not None else avf("ProfitMargin"),
             "dividend_yield": avf("DividendYield"),
             # 'paying' / 'cut' / 'suspended' from the declared per-share series (pipeline.py).
@@ -850,7 +864,10 @@ def api_company(cik: str):
             "week52_high": avf("52WeekHigh"),
             "week52_low": avf("52WeekLow"),
             "analyst_target": avf("AnalystTargetPrice"),
-            "return_on_equity": _sec_ratio("net_income_ann", "book_equity") if _sec_ratio("net_income_ann", "book_equity") is not None else avf("ReturnOnEquityTTM"),
+            "return_on_equity": None if _thin_book else (
+                _sec_ratio("net_income_ann", "book_equity")
+                if _sec_ratio("net_income_ann", "book_equity") is not None
+                else avf("ReturnOnEquityTTM")),
         },
         "filings": database.get_filings_by_cik(cik, limit=12),
         "news": _gated_company_news(ticker, score.get("company")),

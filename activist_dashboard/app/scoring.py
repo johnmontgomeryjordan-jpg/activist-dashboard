@@ -242,6 +242,13 @@ OVERLEVERED_FLOOR = float(os.getenv("OVERLEVERED_FLOOR", "0.45"))     # funded d
 OVERLEVERED_DE = float(os.getenv("OVERLEVERED_DE", "2.0"))            # funded debt / book equity
 # Negative book equity is over-levered by definition, whatever the ratios say.
 OVERLEVERED_ON_NEGATIVE_EQUITY = os.getenv("OVERLEVERED_ON_NEGATIVE_EQUITY", "1") != "0"
+# Operating income / interest expense, above which the balance sheet is a CHOICE rather than a
+# constraint and the over-leverage signal is suppressed. 3.0x sits clear of both sides of the
+# 2026-08-25 FactSet audit: PZZA at 2.25x stays flagged, BBWI at 4.20x drops. See _overlevered().
+COVERAGE_MIN = float(os.getenv("COVERAGE_MIN", "3.0"))
+# Book equity below this share of total assets makes every equity-denominated ratio meaningless
+# -- see _thin_book(). Capri sat at 4.3%; a healthy filer is comfortably north of 20%.
+THIN_BOOK_FRAC = float(os.getenv("THIN_BOOK_FRAC", "0.10"))
 # --- Buyback drag ------------------------------------------------------------------------------
 # Trailing-3yr repurchase spend as a share of today's market cap. Above this, with the stock down
 # over the same window, the board demonstrably destroyed capital buying its own stock too high --
@@ -677,6 +684,38 @@ def _negative_equity(r):
     return be is not None and be < 0
 
 
+def _thin_book(r):
+    """True when book equity is too small (or negative) for any equity-DENOMINATED ratio to mean
+    anything — P/B, ROE, debt/equity. Negative book flips the sign (Papa John's rendered ROE
+    -6.1% while EARNING $30.5M; Bath & Body Works -64.2% on $649M of net income), and a merely
+    TINY book explodes the ratio instead (Capri: $138M of equity on $3.21B of assets renders P/B
+    10.95x "richly valued" and ROE +110.9%). The earlier guard tested `< 0` only, so Capri —
+    positive equity, 4.3% of assets — sailed straight through it. Testing equity RELATIVE to the
+    asset base catches all three. Missing equity is treated as thin: we cannot verify it."""
+    raw = r.get("raw") or {}
+    be, assets = raw.get("book_equity"), raw.get("total_assets")
+    if be is None:
+        return True
+    if be <= 0:
+        return True
+    if assets and assets > 0 and (be / assets) < THIN_BOOK_FRAC:
+        return True
+    return False
+
+
+def _interest_coverage(r):
+    """Operating income / interest expense. The honest test of whether a balance sheet is a
+    burden, and the replacement for the debt-ratio tests below -- see _overlevered()."""
+    raw = r.get("raw") or {}
+    opi, ie = raw.get("operating_income"), raw.get("interest_expense")
+    if opi is None or ie is None:
+        return None
+    ie = abs(ie)
+    if ie <= 0:
+        return None
+    return opi / ie
+
+
 def _is_outperformer(r):
     """A strong multi-year market-beater, on the same test the scorer and the Financials tab
     already use (>=25 pts over 3yr, or >=40 over 5yr while at least flat over 3yr). Factored out
@@ -705,11 +744,37 @@ def _overlevered(r):
     # Whirlpool (-54% / -71%), which are levered AND losing, stay flagged.
     if _is_outperformer(r):
         return False
+    # COMFORTABLE INTEREST COVER is exempt. Audited 2026-08-25 against FactSet on the five names in
+    # that issue plus the two the outperformer guard was written for, and the balance-sheet ratios
+    # got three of them wrong in BOTH directions:
+    #     AHCO  0.54x cover -> MISSED (funded leverage 44.5%, under the 45% floor by half a point)
+    #     KSS   1.77x cover -> MISSED (46.2% debt/assets read "in line" vs a 29.5% peer cutoff)
+    #     PZZA  2.25x cover -> caught, and correctly
+    #     BBWI  4.20x cover -> FALSE FIRE (negative book from the '21 Victoria's Secret spin; the
+    #                          card claimed the balance sheet "forecloses buyback, dividend and
+    #                          spin" on the same page that credited the board with $1.2B of
+    #                          buybacks, while it also pays a 4.2% dividend)
+    #     YUM   ~5x, AZO ~6-7x -> FALSE FIRE, the cases the outperformer guard already caught
+    # Coverage separates all of them, because it asks the question the signal is actually about:
+    # can the company carry the debt? A profitable filer covering interest several times over is
+    # making a capital-structure CHOICE, not labouring under a constraint. Suppression only for
+    # now -- the thin-cover CATCH side (AHCO, KSS) would newly flag names across the universe and
+    # move the whole board, so it waits for a cycle where that can be screened.
+    _cov = _interest_coverage(r)
+    if _cov is not None and _cov >= COVERAGE_MIN:
+        return False
     if OVERLEVERED_ON_NEGATIVE_EQUITY and _negative_equity(r):
         return True
     raw = r.get("raw") or {}
     ev_debt, eq = raw.get("ev_debt"), raw.get("book_equity")
-    if ev_debt is not None and eq and eq > 0 and (ev_debt / eq) >= OVERLEVERED_DE:
+    # The debt/EQUITY test carries the same thin-book defect as P/B and ROE, so it gets the same
+    # guard. Capri showed "funded debt runs 2.4x equity" on $338M of borrowing — ELEVEN PERCENT of
+    # assets, against a five-year average interest cover of 19x. The ratio was high only because
+    # the Versace writedowns had cut book equity to $138M; the card then argued that this balance
+    # sheet "limits the capital-return levers", which is the opposite of true. Debt/ASSETS below
+    # keeps a stable denominator and still catches genuinely levered names.
+    if (ev_debt is not None and eq and eq > 0 and not _thin_book(r)
+            and (ev_debt / eq) >= OVERLEVERED_DE):
         return True
     fl = _funded_leverage(r)
     return fl is not None and fl >= OVERLEVERED_FLOOR
@@ -751,7 +816,10 @@ def _fin_context(r, t, e):
     # 303.03x "richly valued" on this tab (equity -$444.8M) while the header correctly showed "—",
     # because the header reads av_overview, which IS overwritten wholesale. Suppress it here, at
     # the point of use, so both paths agree no matter what is sitting in the column.
-    _neg_book = _negative_equity(r)
+    # WIDENED 2026-08-25: the test is now _thin_book, not "negative" -- a merely tiny positive book
+    # explodes the ratio rather than flipping its sign, and Capri (equity 4.3% of assets) rendered
+    # a "richly valued" 10.95x straight through the old `< 0` guard.
+    _neg_book = _thin_book(r)
     for key, label, rule in _FIN_METRICS:
         v = r.get(key)
         if v is None:
@@ -996,6 +1064,14 @@ PEER_RANK_MIN = 3
 def _peer_analysis(r, peer_ciks, rec_by_cik):
     """Build the company-vs-self-selected-peers comparison (for the Peer Analysis tab and
     the lags_own_peers signal). Only peers we also cover (have a rec for) are included."""
+    # Price-to-book is dropped for any row whose book is thin or negative, exactly as it is on the
+    # Financials tab (_fin_context). This tab renders straight off the stored record, so it MISSED
+    # the earlier negative-book suppression entirely and printed Bath & Body Works at 1379.7x
+    # against a 1.8x peer median -- in a client-facing comparison table, with the header on the
+    # same page correctly showing "—". A meaningless ratio must not reach the median either.
+    def _pb(rec):
+        return None if _thin_book(rec) else rec.get("pb_ratio")
+
     peers = []
     for pc in peer_ciks:
         pr = rec_by_cik.get(pc)
@@ -1003,13 +1079,13 @@ def _peer_analysis(r, peer_ciks, rec_by_cik):
             continue
         peers.append({"ticker": pr.get("ticker"), "name": pr.get("name"),
                       "tsr_1y": pr.get("tsr_1y"), "operating_margin": pr.get("operating_margin"),
-                      "pb_ratio": pr.get("pb_ratio"), "ev_ebitda": pr.get("ev_ebitda")})
+                      "pb_ratio": _pb(pr), "ev_ebitda": pr.get("ev_ebitda")})
     if not peers:
         return None
     med = {m: _median([p[m] for p in peers])
            for m in ("tsr_1y", "operating_margin", "pb_ratio", "ev_ebitda")}
     self_obj = {"ticker": r.get("ticker"), "name": r.get("name"), "tsr_1y": r.get("tsr_1y"),
-                "operating_margin": r.get("operating_margin"), "pb_ratio": r.get("pb_ratio"),
+                "operating_margin": r.get("operating_margin"), "pb_ratio": _pb(r),
                 "ev_ebitda": r.get("ev_ebitda")}
     # rank the company by 1-yr TSR within {self + peers} (1 = best return)
     rated = [(self_obj["ticker"], self_obj["tsr_1y"])] + [(p["ticker"], p["tsr_1y"]) for p in peers]
@@ -1567,7 +1643,7 @@ def recompute_all():
         # against a deficit anyway. Today's stale value happens to be far too HIGH to fire these,
         # but a company whose last good reading was ~1.2x would have tripped "cheap" on a balance
         # sheet with no book value at all.
-        _pb_ok = r.get("pb_ratio") is not None and not _negative_equity(r)
+        _pb_ok = r.get("pb_ratio") is not None and not _thin_book(r)
         if _pb_ok and 0 < r["pb_ratio"] < 1.5:
             trig.append("cheap_abs")
         elif _pb_ok and r["pb_ratio"] > 0 and low("pb_ratio"):
