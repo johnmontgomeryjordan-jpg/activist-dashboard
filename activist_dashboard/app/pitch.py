@@ -406,12 +406,15 @@ _POINT_PRIORITY = [
 
 
 def _points(r, trig, n=3):
+    """Return up to n (key, text) pairs -- the key is which signal the point came from, kept
+    alongside the rendered text so a later stage (the audit) can check a printed claim still has
+    a live evidence card behind it, without having to guess from the wording (D13)."""
     out, seen = [], set()
     for key in _POINT_PRIORITY:
         if key in trig and key not in seen:
             p = _point(key, r)
             if p:
-                out.append(p)
+                out.append((key, p))
                 seen.add(key)
         if len(out) >= n:
             break
@@ -421,15 +424,22 @@ def _points(r, trig, n=3):
 # ---- public -----------------------------------------------------------------
 def build_pitch(r, trig):
     """r: the scoring rec (name, raw, metrics, tsr, _spy_1y...). trig: firing signal keys.
-    Returns {thesis, points, archetype}. Pure + deterministic."""
+    Returns {thesis, points, point_keys, archetype}. Pure + deterministic.
+
+    point_keys[i] names the signal that points[i] came from (same order, same length) -- see
+    _points(). AI-revoicing (aithesis.py) only ever rephrases the text; it never sees or changes
+    point_keys, so the pairing survives however the point ends up worded."""
     trig = list(trig or [])
     pts = _points(r, trig)
     if _acq_rerate(r, trig):
-        # Lead with the acquisition-rerate point and drop a plain goodwill point to avoid dup.
-        pts = [p for p in pts if "goodwill" not in p.lower()]
-        pts = ([_acq_rerate_point(r)] + pts)[:3]
+        # Lead with the acquisition-rerate point in place of the plain goodwill one -- it's a
+        # replacement wording for the SAME underlying signal (_acq_rerate requires "high_goodwill"
+        # in trig already), not a new fact, so it keeps that key rather than inventing a new one.
+        pts = [p for p in pts if p[0] != "high_goodwill"]
+        pts = ([("high_goodwill", _acq_rerate_point(r))] + pts)[:3]
     return {
         "thesis": _thesis(r, trig),
-        "points": pts,
+        "points": [text for _key, text in pts],
+        "point_keys": [key for key, _text in pts],
         "archetype": _archetype(trig),
     }

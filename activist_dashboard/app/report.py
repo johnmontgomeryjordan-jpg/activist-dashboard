@@ -185,6 +185,11 @@ def assemble_board(rows, *, get_catalyst, get_ai_pitch, get_governance,
         cik = r.get("cik")
         pitch = aithesis.effective_pitch(r, get_ai_pitch(cik))
         fin_context = _loads(r.get("fin_context"), [])
+        # D13: the LIVE set of signal keys this row's Evidence tab currently backs -- read fresh
+        # off this same row, so a stale/skip-recompute render is checked against whatever
+        # evidence actually exists right now, not what existed when the pitch was last built.
+        evidence_keys = sorted({e.get("key") for e in _loads(r.get("evidence"), [])
+                               if isinstance(e, dict) and e.get("key")})
         band_name, band_cls = _band(r.get("vuln"))
         gov = get_governance(cik) or {}
         caveat = None
@@ -204,6 +209,8 @@ def assemble_board(rows, *, get_catalyst, get_ai_pitch, get_governance,
                           else (pitch.get("archetype") or "").replace("_", " ").title()),
             "thesis": pitch.get("thesis") or r.get("signals") or "",
             "points": (pitch.get("points") or [])[:3],
+            "point_keys": (pitch.get("point_keys") or [])[:3],
+            "evidence_keys": evidence_keys,
             "metrics": _metrics_for(fin_context),
             "catalyst": cat,
             "caveat": caveat,
