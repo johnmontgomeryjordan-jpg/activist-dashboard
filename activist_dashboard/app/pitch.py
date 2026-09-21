@@ -146,7 +146,12 @@ def _perf_phrase(r, trig):
 
 
 # ---- archetype selection ----------------------------------------------------
-def _archetype(trig):
+def _archetype(trig, prior_approaches=None):
+    # A real, curated prior-approach record (item 8) is the strongest, most concrete case
+    # available -- a board-accountability thesis with a hard number attached -- so it outranks
+    # every signal-derived archetype below when present.
+    if prior_approaches:
+        return "board_accountability"
     cash = "cash_hoard" in trig
     weakperf = _has(trig, "weak_tsr_1y", "low_margin", "low_roa", "weak_growth")
     cheap = _has(trig, "cheap_abs", "cheap_pb")
@@ -223,8 +228,56 @@ def _derate_caveat(r, trig):
     return ""
 
 
+def _approach_thesis(r, approaches):
+    """s1 for the board_accountability archetype -- the concrete rejected/rumored-approach fact
+    that makes this thesis worth leading with. Every number comes straight off the curated
+    prior_approaches record (see that module); nothing here is invented or estimated."""
+    name = r.get("name") or "The company"
+    mcap = _money(r.get("market_cap"))
+    rejected = [a for a in approaches if (a.get("status") or "").lower() == "cancelled"]
+    lead = rejected or approaches
+    amounts = [a.get("amount") for a in lead if a.get("amount")]
+    years = sorted({(a.get("date") or "")[:4] for a in lead if a.get("date")})
+    year_txt = years[0] if len(years) <= 1 else f"{years[0]}-{years[-1]}"
+    if len(rejected) >= 2 and amounts:
+        lo, hi = min(amounts), max(amounts)
+        range_txt = _money(lo) if lo == hi else f"{_money(lo)}-{_money(hi)}"
+        mcap_txt = f", and the company is worth {mcap} today" if mcap else ""
+        return (f"{name}'s board rejected {len(rejected)} takeover approaches at {range_txt} "
+                f"in {year_txt}{mcap_txt}.")
+    a = lead[0]
+    amt = _money(a.get("amount"))
+    status = (a.get("status") or "").lower()
+    if status == "cancelled":
+        mcap_txt = f", and the company is worth {mcap} today" if mcap else ""
+        return f"{name}'s board rejected a {amt} takeover approach in {year_txt}{mcap_txt}."
+    if status == "rumored":
+        return f"{name} was the subject of a rumored {amt} take-private approach in {year_txt}."
+    if status in ("pending", "announced/pending", "announced"):
+        return f"{name} has a pending {amt} approach on the table, announced in {year_txt}."
+    return f"{name} was the subject of a {amt} acquisition approach in {year_txt}."
+
+
+def _prior_approach_point(r, approaches):
+    """Talking-point phrasing for the same fact -- distinct wording from the thesis (which sets
+    the scene), reframed as the 'so what' for a bullet, matching every other signal's pattern."""
+    rejected = [a for a in approaches if (a.get("status") or "").lower() == "cancelled"]
+    if len(rejected) >= 2:
+        amounts = [a.get("amount") for a in rejected if a.get("amount")]
+        lo, hi = min(amounts), max(amounts)
+        range_txt = _money(lo) if lo == hi else f"{_money(lo)}-{_money(hi)}"
+        mcap = _money(r.get("market_cap"))
+        mcap_txt = f" against a {mcap} market cap today" if mcap else ""
+        return (f"The board has already turned down {len(rejected)} bids at {range_txt}"
+                f"{mcap_txt} — a board-accountability case with a hard number attached.")
+    a = (rejected or approaches)[0]
+    status = (a.get("status") or "prior").lower()
+    return (f"A {_money(a.get('amount'))} {status} approach is on the public record — a concrete "
+            f"data point for a board-accountability conversation.")
+
+
 # ---- thesis -----------------------------------------------------------------
-def _thesis(r, trig):
+def _thesis(r, trig, prior_approaches=None):
     name = r.get("name") or "The company"
     raw = r.get("raw") or {}
     cash = _money(raw.get("cash"))
@@ -233,9 +286,13 @@ def _thesis(r, trig):
     perf = _perf_phrase(r, trig)
     gov = _gov_phrase(trig)
     extra = _catalyst_sentence(trig)
-    arch = _archetype(trig)
+    arch = _archetype(trig, prior_approaches)
 
-    if arch == "cash_laggard" and cash and cash_pct:
+    if arch == "board_accountability":
+        s1 = _approach_thesis(r, prior_approaches)
+        s2 = ("A board-accountability case with a hard number attached — not a valuation "
+              "story, a track record the board itself created.")
+    elif arch == "cash_laggard" and cash and cash_pct:
         s1 = (f"{name} {perf}, yet sits on {cash} of cash ({cash_pct} of its assets)"
               f"{gov}.")
         s2 = ("A cash-rich laggard: the textbook setup for a return-of-capital or "
@@ -432,8 +489,10 @@ def _points(r, trig, n=3):
 
 
 # ---- public -----------------------------------------------------------------
-def build_pitch(r, trig):
+def build_pitch(r, trig, prior_approaches=None):
     """r: the scoring rec (name, raw, metrics, tsr, _spy_1y...). trig: firing signal keys.
+    prior_approaches: this company's curated prior-M&A-approach rows (item 8, prior_approaches.py)
+    or None/[] -- NOT a scoring signal, so it never appears in trig; passed separately.
     Returns {thesis, points, point_keys, archetype}. Pure + deterministic.
 
     point_keys[i] names the signal that points[i] came from (same order, same length) -- see
@@ -447,9 +506,15 @@ def build_pitch(r, trig):
         # in trig already), not a new fact, so it keeps that key rather than inventing a new one.
         pts = [p for p in pts if p[0] != "high_goodwill"]
         pts = ([("high_goodwill", _acq_rerate_point(r))] + pts)[:3]
+    if prior_approaches:
+        # Lead with the real approach-history point -- keyed "prior_approach" to match the
+        # evidence card scoring.py._prior_approach_evidence() always attaches alongside it, same
+        # D13 discipline as every other point.
+        pts = [p for p in pts if p[0] != "prior_approach"]
+        pts = ([("prior_approach", _prior_approach_point(r, prior_approaches))] + pts)[:3]
     return {
-        "thesis": _thesis(r, trig),
+        "thesis": _thesis(r, trig, prior_approaches),
         "points": [text for _key, text in pts],
         "point_keys": [key for key, _text in pts],
-        "archetype": _archetype(trig),
+        "archetype": _archetype(trig, prior_approaches),
     }

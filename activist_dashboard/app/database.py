@@ -146,6 +146,20 @@ CREATE TABLE IF NOT EXISTS activist_holdings (
     PRIMARY KEY (ticker, fund)
 );
 CREATE INDEX IF NOT EXISTS idx_holdings_ticker ON activist_holdings (ticker);
+-- Prior M&A approaches (item 8): a small, CURATED, manually-sourced table of known past
+-- takeover/buyout approaches -- NOT a live-refreshing pipeline feed. Free filing-based sources
+-- (SC TO-T/14D9, 13D) can't reconstruct most real approaches (Kohl's four 2022 bids were never
+-- tender offers), so a filing detector would silently imply "no history" where real history
+-- exists -- worse than no source at all. See prior_approaches.py for the seed data and rationale.
+-- Deliberately outside the scoring signal set: this data is sparse by construction (covers a
+-- handful of names, never the whole universe), so it can never fairly feed the 0-92 score --
+-- it only enriches the evidence/pitch content for names it covers.
+CREATE TABLE IF NOT EXISTS prior_approaches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, cik TEXT, date TEXT, description TEXT,
+    amount REAL, status TEXT, source_url TEXT, created_at TEXT,
+    UNIQUE (cik, date, description)
+);
+CREATE INDEX IF NOT EXISTS idx_prior_approaches_cik ON prior_approaches (cik);
 """
 
 
@@ -464,6 +478,34 @@ def clear_all_holdings():
     funds (e.g. an old 'third point' alias, a fund that stopped filing) can't linger."""
     with get_conn() as conn:
         conn.execute("DELETE FROM activist_holdings")
+
+
+# --- Prior M&A approaches (item 8) -- curated, not a live feed. See prior_approaches.py. --------
+def get_prior_approaches(cik):
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT * FROM prior_approaches WHERE cik=? ORDER BY date DESC", (cik,))]
+
+
+def get_all_prior_approaches():
+    """{cik: [row, ...]} for every CIK with at least one curated approach on record -- one bulk
+    read for recompute_all() to key off per row, same pattern as get_all_governance()/
+    get_all_insider() etc."""
+    out = {}
+    with get_conn() as conn:
+        for r in conn.execute("SELECT * FROM prior_approaches ORDER BY date DESC"):
+            out.setdefault(r["cik"], []).append(dict(r))
+    return out
+
+
+def add_prior_approach(cik, date, description, amount, status, source_url):
+    """Idempotent: (cik, date, description) is UNIQUE, so re-seeding the same curated row is a
+    no-op rather than a duplicate."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO prior_approaches "
+            "(cik,date,description,amount,status,source_url,created_at) VALUES (?,?,?,?,?,?,?)",
+            (cik, date, description, amount, status, source_url, now_iso()))
 
 
 def _holder_material(h):

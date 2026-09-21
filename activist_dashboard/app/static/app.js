@@ -825,7 +825,8 @@ function publishDayIndex(){
 }
 /* A short, DISTINCTIVE descriptor so target cards don't all read the same generic signals. */
 const ARCH_LABEL={cash_laggard:"Cash-rich laggard",turnaround:"Operational turnaround",
-  value:"Cheap / break-up candidate",governance:"Entrenched · governance",default:"Multi-signal profile"};
+  value:"Cheap / break-up candidate",governance:"Entrenched · governance",
+  board_accountability:"Board accountability",default:"Multi-signal profile"};
 const _DISTINCT=["cash-heavy","staggered","poison pill","dual-class","insider selling","say-on-pay",
   "ceo/exec departure","impairment","under-levered","1-yr stock return","shrinking","bloated sg&a",
   "low return on assets","low operating margin","cheap"];
@@ -1027,11 +1028,29 @@ function renderTab(){
     const ptsHtml = points.length
       ? `<div class="mh3">The pitch</div><ol class="pitch-points">${points.map((p,i)=>`<li><span class="num">${i+1}</span><span>${esc(p)}</span></li>`).join("")}</ol>`
       : "";
+    // Curated prior-M&A-approach table (item 8) -- see prior_approaches.py. Only present for the
+    // handful of names it's been sourced for; empty (no "none on record" placeholder) otherwise,
+    // since a sparse curated list saying "none" for almost every name would read as a finding
+    // it isn't.
+    const approaches=d.prior_approaches||[];
+    const approachesHtml=approaches.length
+      ? `<div class="mh3">Prior M&amp;A approaches on record</div>
+         <table style="width:100%;border-collapse:collapse;font-size:13px;">
+         <thead><tr>${["Date","Transaction","Amount","Status"].map(h=>`<th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--line2);color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em;">${h}</th>`).join("")}</tr></thead>
+         <tbody>${approaches.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(a=>
+           `<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);">${esc(fmtDateY(a.date))}</td>`+
+           `<td style="padding:5px 8px;border-bottom:1px solid var(--line);">${esc(a.description)}</td>`+
+           `<td style="padding:5px 8px;border-bottom:1px solid var(--line);">${fmtCap(a.amount)}</td>`+
+           `<td style="padding:5px 8px;border-bottom:1px solid var(--line);">${esc((a.status||"").replace(/^\w/,c=>c.toUpperCase()))}</td></tr>`
+         ).join("")}</tbody></table>
+         <div class="gov-note" style="text-transform:none;letter-spacing:0;margin-top:4px;">Curated, manually sourced${approaches[0].source_url?` — <a class="extlink" href="${esc(approaches[0].source_url)}" target="_blank" rel="noopener">source ↗</a>`:""}</div>`
+      : "";
     const strip=pitchStrip(d);
     body.innerHTML=`
       <div class="mh3">Why it's a potential target${aiTag}</div>
       ${thesisHtml}
       ${ptsHtml}
+      ${approachesHtml}
       ${strip}
       ${pchart?`<div class="mh3">Price · 1-year</div>${pchart}`:""}
       ${tsrPanel?`<div class="mh3">Returns</div>${tsrPanel}`:""}

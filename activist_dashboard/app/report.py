@@ -54,6 +54,7 @@ _EARNINGS_WHY = {
     "Turnaround": "Next earnings — the margin trajectory is the whole thesis; a miss hands a dissident the operating argument.",
     "Value": "Next earnings — a weak print deepens the discount and the pressure for a strategic review.",
     "Governance": "Next earnings — a soft quarter adds fuel to the board-accountability case ahead of the annual meeting.",
+    "Board Accountability": "Next earnings — another quarter of underperformance sharpens the contrast with what the board turned down.",
 }
 _EARNINGS_WHY_DEFAULT = "Next earnings — a soft print sharpens the thesis and the timing of any outreach."
 

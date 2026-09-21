@@ -131,8 +131,29 @@ def _overview(d):
     pts = "".join(f'<li><span class="num">{i}</span><span>{_esc(p)}</span></li>'
                   for i, p in enumerate(pitch.get("points") or [], 1))
     pts_html = f'<ul class="pitch-points">{pts}</ul>' if pts else ""
+    approaches_html = _prior_approaches_table(d.get("prior_approaches") or [])
 
-    return _section("Overview", f"{desc}{facts}{situation}{sig}{thesis}{pts_html}")
+    return _section("Overview", f"{desc}{facts}{situation}{sig}{thesis}{pts_html}{approaches_html}")
+
+
+def _prior_approaches_table(rows):
+    """Curated prior-M&A-approach table (item 8) -- see prior_approaches.py. Empty (not even a
+    'none on record' placeholder) when this company isn't one of the handful covered, since a
+    curated, sparse dataset saying "none" for 1,490 of 1,500 names would read as a finding it
+    isn't -- absence here means "not yet sourced," never "checked, and there isn't one."""
+    if not rows:
+        return ""
+    rows = sorted(rows, key=lambda a: a.get("date") or "", reverse=True)
+    trs = "".join(
+        f'<tr><td>{_date(a.get("date"))}</td><td>{_esc(a.get("description"))}</td>'
+        f'<td>{_money(a.get("amount"))}</td><td>{_esc((a.get("status") or "").title())}</td></tr>'
+        for a in rows)
+    table = (f'<table class="plain"><thead><tr><th>Date</th><th>Transaction</th><th>Amount</th>'
+            f'<th>Status</th></tr></thead><tbody>{trs}</tbody></table>')
+    src = next((a.get("source_url") for a in rows if a.get("source_url")), None)
+    src_html = (f'<p class="evsrc">Source: <a href="{_esc(src)}">curated, manually sourced</a></p>'
+               if src else '<p class="evsrc">Source: curated, manually sourced</p>')
+    return f'<h3 class="sub">Prior M&amp;A approaches on record</h3>{table}{src_html}'
 
 
 # --- 2. Evidence -------------------------------------------------------------------------------
