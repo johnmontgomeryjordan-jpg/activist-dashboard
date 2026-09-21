@@ -338,8 +338,12 @@ def _funded_debt(facts):
     BLDR's "LongTermDebt" froze at 2015 ($408.9M) while it now reports debt under
     "LongTermDebtAndCapitalLeaseObligations" (2026 = $4.6B). So: read every candidate debt tag's
     latest (date, value), find the company's most recent balance-sheet date, and build debt ONLY from
-    tags reporting at that date. Returns (funded_debt, via_caplease) — via_caplease True when the value
-    came from a *AndCapitalLeaseObligations tag (which already bundles finance leases)."""
+    tags reporting at that date. Returns (funded_debt, via_caplease, current_portion) —
+    via_caplease True when the value came from a *AndCapitalLeaseObligations tag (which already
+    bundles finance leases); current_portion is the slice of funded_debt maturing within 12
+    months, or None when the filer's tags don't let us see that split (a single combined
+    LongTermDebt total tag, or a combined-instrument fallback) rather than reporting a false $0 —
+    see the maturity-wall signal in scoring.py, which depends on that None meaning "unknown"."""
     dated = {}                                   # tag -> (end_date, value)
     for t in (_DEBT_TOTAL + _DEBT_NC_TOTAL + _DEBT_NC_PARTS
               + _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS + _DEBT_COMBINED_PARTS):
@@ -347,7 +351,7 @@ def _funded_debt(facts):
         if ed is not None and v is not None:
             dated[t] = (ed, v)
     if not dated:
-        return None, False
+        return None, False, None
     latest = max(ed for ed, _v in dated.values())
     # Staleness guard: anchor to the company's CURRENT balance sheet (the Assets date). If the
     # newest debt tag is far older than that, the debt is gone (tag abandoned) -> report none.
@@ -359,7 +363,7 @@ def _funded_debt(facts):
         except (ValueError, TypeError):
             _gap = 0
         if _gap > _DEBT_STALE_DAYS:
-            return 0.0, False
+            return 0.0, False, 0.0
 
     def src_at_latest(tags):                     # (value, tag) for first tag (pref order) at `latest`
         for t in tags:
@@ -371,10 +375,11 @@ def _funded_debt(facts):
         vals = [dated[t][1] for t in tags if t in dated and dated[t][0] == latest]
         return sum(vals) if vals else None
 
-    # A single all-in total tag (per US-GAAP LongTermDebt already includes current maturities).
+    # A single all-in total tag (per US-GAAP LongTermDebt already includes current maturities) —
+    # current/noncurrent split unknown from this tag alone.
     total, _tag = src_at_latest(_DEBT_TOTAL)
     if total is not None:
-        return total, False                      # _DEBT_TOTAL tags are debt-only (no leases)
+        return total, False, None                # _DEBT_TOTAL tags are debt-only (no leases)
     # Else build from noncurrent + current. Prefer a TOTAL tag on each side; only if none reports
     # at the latest date do we SUM the instrument-level parts (so a proper total is never
     # double-counted with its own components).
@@ -390,12 +395,13 @@ def _funded_debt(facts):
         # instead file only plain COMBINED instrument tags (SeniorNotes / UnsecuredDebt /
         # SecuredDebt — each already current+noncurrent). Sum those at the latest date BEFORE the
         # last-resort stale fallback so DLR/FR/JBGS et al. get real debt instead of a false $0.
+        # Either way, the current/noncurrent split is unknown.
         combined = sum_at_latest(_DEBT_COMBINED_PARTS)
         if combined is not None:
-            return combined, False
+            return combined, False, None
         # nothing from our known tags at the latest date — use the most recent value we do have
-        return max(dated.values(), key=lambda ev: ev[0])[1], False
-    return (nc or 0) + (cur or 0), via_caplease
+        return max(dated.values(), key=lambda ev: ev[0])[1], False, None
+    return (nc or 0) + (cur or 0), via_caplease, cur
 
 
 def _total_debt(facts):
@@ -404,8 +410,12 @@ def _total_debt(facts):
     services), badly understating Debt/Assets and EV — INSP/VITL showed $0 total debt vs ~$30M / ~$53M
     at FactSet/BoardroomAlpha, and ACI read 34% vs a real ~59%. Operating leases are never in a
     funded-debt tag (no double-count); finance leases are added only when funded didn't already bundle
-    them (a *AndCapitalLeaseObligations tag)."""
-    funded, via_caplease = _funded_debt(facts)
+    them (a *AndCapitalLeaseObligations tag).
+
+    Returns (total_debt, debt_current) — debt_current is the funded-debt slice maturing within
+    12 months (see _funded_debt), passed through unchanged since leases aren't a maturity-wall
+    instrument (operating leases roll continuously; finance leases are a minor add-on)."""
+    funded, via_caplease, cur = _funded_debt(facts)
     op = (_instant(facts, _OP_LEASE_NC) or 0) + (_instant(facts, _OP_LEASE_CUR) or 0)
     fin = _instant(facts, _FIN_LEASE_TOTAL)
     if fin is None:
@@ -413,8 +423,8 @@ def _total_debt(facts):
     fin = 0 if via_caplease else (fin or 0)      # don't double-count finance leases already in funded
     leases = (op or 0) + fin
     if funded is None:
-        return leases if leases else None        # a lease-only balance sheet (no funded debt)
-    return funded + leases
+        return (leases if leases else None), None    # a lease-only balance sheet (no funded debt)
+    return funded + leases, cur
 
 
 def _latest_period(flows):
@@ -637,7 +647,7 @@ def _extract(facts):
                 cash_c = None
     sti = _short_term_investments(facts, cash_c)
     cash = (cash_c or 0) + (sti or 0) if (cash_c is not None or sti is not None) else None
-    debt = _total_debt(facts)
+    debt, debt_current = _total_debt(facts)
     goodwill = _instant(facts, _GOODWILL)
     _ol_nc = _instant(facts, _OP_LEASE_NC); _ol_cur = _instant(facts, _OP_LEASE_CUR)
     op_lease = ((_ol_nc or 0) + (_ol_cur or 0)) if (_ol_nc is not None or _ol_cur is not None) else None
@@ -780,6 +790,10 @@ def _extract(facts):
         "margin_label": m_label, "margin_basis": m_basis,
         "annual_net_income": annual_ni, "margin_yoy_delta": margin_yoy_delta,
         "total_assets": assets, "book_equity": equity, "cash": cash, "debt": debt,
+        # Funded debt maturing within 12 months (None when the filer's tags don't show the
+        # current/noncurrent split -- see _funded_debt -- NOT the same as "$0 due soon"). Feeds
+        # the maturity-wall signal in scoring.py.
+        "debt_current": debt_current,
         "dep_amort": dep, "ebitda": ebitda, "goodwill": goodwill, "operating_lease": op_lease,
         "finance_lease": fin_lease, "interest_expense": int_exp,
         "dividends_paid_ttm": div_paid_ttm,
