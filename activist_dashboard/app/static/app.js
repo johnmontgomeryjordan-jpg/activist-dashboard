@@ -668,6 +668,7 @@ function renderCompany(){
         <button class="ghost" id="cvStar" onclick="toggleStar('${esc(d.cik)}',this)">${star}</button>
         <button class="ghost" onclick="openSituationModal('${esc(d.cik)}')">⚑ Active situation</button>
         <button class="ghost" onclick="switchTab('notes')">✎ Notes</button>
+        <a class="ghost" href="/api/company/pdf?cik=${encodeURIComponent(d.cik)}" download>&#8681; Download PDF</a>
       </div>
     </div>
     ${warn}

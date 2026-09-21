@@ -18,7 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from . import (config, database, pipeline, emailer, scoring, spotlight, universe, thirteenf,
-              credibility, aithesis)
+              credibility, aithesis, pdf, profile_pdf)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -231,6 +231,18 @@ _REPORT_NOCACHE = {
 }
 
 
+def _current_report_html():
+    """The HTML /report shows: the last SENT issue's frozen web snapshot, the frozen email body
+    for a pre-snapshot issue, or a live render if nothing has shipped yet. Factored out so the
+    page view and the PDF download (below) can never show two different reports."""
+    issue = database.get_last_sent_issue()
+    if issue and issue.get("html_web"):
+        return issue["html_web"]
+    if issue and issue.get("html"):
+        return issue["html"]                                              # pre-snapshot issue
+    return emailer.build_report_html()                                    # nothing sent yet
+
+
 @app.get("/report", response_class=HTMLResponse)
 def report_page():
     """The biweekly Activist Vulnerability report as a standalone page — embedded on the landing tab
@@ -238,16 +250,26 @@ def report_page():
     page shows exactly what went to the list rather than a live re-rendered top-5. Falls back to the
     frozen email body, then a live render, only if no issue has shipped yet."""
     try:
-        issue = database.get_last_sent_issue()
-        if issue and issue.get("html_web"):
-            return HTMLResponse(issue["html_web"], headers=_REPORT_NOCACHE)
-        if issue and issue.get("html"):
-            return HTMLResponse(issue["html"], headers=_REPORT_NOCACHE)   # pre-snapshot issue
-        body = emailer.build_report_html()                                # nothing sent yet
+        body = _current_report_html()
     except Exception as e:  # pragma: no cover
         return HTMLResponse(f"<p style='font-family:sans-serif;padding:24px'>Report temporarily "
                             f"unavailable: {e}</p>", status_code=500, headers=_REPORT_NOCACHE)
     return HTMLResponse(body, headers=_REPORT_NOCACHE)
+
+
+@app.get("/api/report/pdf")
+def report_pdf():
+    """Download the same report /report shows, as a PDF -- same HTML, just converted (see
+    _current_report_html). Uses WeasyPrint, not a headless browser, to fit the free-tier Render
+    deployment (see pdf.py's module docstring)."""
+    try:
+        body = _current_report_html()
+        data = pdf.html_to_pdf(body)
+    except Exception as e:  # pragma: no cover
+        return JSONResponse({"ok": False, "error": f"PDF generation failed: {e}"}, status_code=500)
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=activist-vulnerability-report.pdf",
+                            **_REPORT_NOCACHE})
 
 
 @app.get("/api/report/preview", response_class=HTMLResponse)
@@ -637,13 +659,13 @@ def _gated_company_news(ticker, name, limit=10):
     return (gated if gated else rows)[:limit]
 
 
-@app.get("/api/company")
-def api_company(cik: str):
-    """Full detail for one flagged company."""
+def _company_payload(cik: str):
+    """Full detail for one flagged company, or None if not found. Factored out of api_company()
+    so the JSON endpoint and the PDF download (below) build the identical payload from one place
+    -- never a second copy that can drift from what the JSON endpoint actually returns."""
     score = database.get_score_one(cik)
     if not score:
-        return JSONResponse({"ok": False, "error": "Company not found."},
-                            status_code=404)
+        return None
     ticker = score.get("ticker")
     fund = database.get_fundamentals_one(cik)
     av = database.get_av_overview(cik)
@@ -879,6 +901,32 @@ def api_company(cik: str):
         "filings": database.get_filings_by_cik(cik, limit=12),
         "news": _gated_company_news(ticker, score.get("company")),
     }
+
+
+@app.get("/api/company")
+def api_company(cik: str):
+    d = _company_payload(cik)
+    if d is None:
+        return JSONResponse({"ok": False, "error": "Company not found."}, status_code=404)
+    return d
+
+
+@app.get("/api/company/pdf")
+def company_pdf(cik: str):
+    """Download a company's profile as a PDF -- every tab's content laid out flat on one document
+    (see profile_pdf.py's module docstring for why this needs its own server-side renderer rather
+    than reusing the live page's JavaScript)."""
+    d = _company_payload(cik)
+    if d is None:
+        return JSONResponse({"ok": False, "error": "Company not found."}, status_code=404)
+    try:
+        html_str = profile_pdf.render_html(d)
+        data = pdf.html_to_pdf(html_str)
+    except Exception as e:  # pragma: no cover
+        return JSONResponse({"ok": False, "error": f"PDF generation failed: {e}"}, status_code=500)
+    fname = f"{(d.get('ticker') or d.get('cik') or 'company')}-profile.pdf"
+    return Response(content=data, media_type="application/pdf",
+                    headers={"Content-Disposition": f"attachment; filename={fname}"})
 
 
 @app.get("/api/status")

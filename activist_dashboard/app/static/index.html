@@ -36,10 +36,10 @@
   .page { display:block; }
   /* Toolbar + buttons */
   .toolbar { display:flex; gap:9px; align-items:center; flex-wrap:wrap; margin-bottom:20px; }
-  button { background:var(--panel); color:var(--text); border:1px solid var(--line2); padding:8px 14px;
-    border-radius:6px; font-weight:500; cursor:pointer; font-size:13px; }
-  button:hover { border-color:var(--brand); color:var(--brand); }
-  button.ghost { background:transparent; }
+  button, a.ghost { background:var(--panel); color:var(--text); border:1px solid var(--line2); padding:8px 14px;
+    border-radius:6px; font-weight:500; cursor:pointer; font-size:13px; text-decoration:none; display:inline-block; }
+  button:hover, a.ghost:hover { border-color:var(--brand); color:var(--brand); }
+  button.ghost, a.ghost { background:transparent; }
   button:disabled { opacity:.5; cursor:default; }
   .updated { color:var(--dim); font-size:12px; }
   .hint { color:var(--muted); font-size:13px; margin:0 0 16px; line-height:1.55; max-width:860px; }
@@ -383,7 +383,10 @@
 </nav>
 
 <!-- BIWEEKLY REPORT (landing page) -->
-<div class="page" id="page-report">
+<div class="page" id="page-report" style="position:relative;">
+  <a href="/api/report/pdf" class="ghost" download
+    style="position:absolute;top:14px;right:16px;z-index:2;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.15);">
+    &#8681; Download PDF</a>
   <iframe id="reportFrame" title="Biweekly Activist Vulnerability report" src="/report"
     style="width:100%;height:calc(100vh - 118px);border:none;background:#f6f4ee;display:block;"></iframe>
 </div>
