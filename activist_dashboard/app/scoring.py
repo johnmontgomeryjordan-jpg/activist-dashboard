@@ -1242,6 +1242,21 @@ def _impaired_fundamentals(r):
     return ani is not None and ani < 0
 
 
+def _prior_approach_evidence(r, approaches):
+    """Evidence card for a curated prior-M&A-approach record (item 8, prior_approaches.py) --
+    NOT a scoring signal (see that module and database.py's schema comment for why), just a
+    citable fact backing the pitch's lead claim for the handful of names this covers."""
+    rows = sorted(approaches, key=lambda a: a.get("date") or "", reverse=True)
+    n = len(rows)
+    lines = [f"{a.get('date', '')}: {a.get('description', '')} "
+            f"({_money(a.get('amount'))}, {a.get('status', '')})" for a in rows]
+    url = next((a.get("source_url") for a in rows if a.get("source_url")), None)
+    return {"key": "prior_approach", "label": "Prior M&A approach on record",
+            "value": f"{n} known approach{'es' if n != 1 else ''}",
+            "context": " · ".join(lines), "inputs": "curated, manually sourced",
+            "period": "", "source": "Curated / public reporting", "url": url}
+
+
 def _capital_evidence(key, r):
     """Evidence card for the balance-sheet / capital-allocation signals: overlevered,
     maturity_wall, buyback_drag."""
@@ -1622,6 +1637,9 @@ def recompute_all():
     # 13F activist holders, keyed by ticker (early-warning: an activist is in the stock but
     # hasn't agitated). Materiality gating happens per-row below.
     holders_by_ticker = database.holders_for_all()
+    # Prior M&A approaches (item 8) -- a small, curated, non-scoring dataset (see
+    # prior_approaches.py). Same CIK-padding normalization as aflags/manual above.
+    prior_approaches_by_cik = {_pad_cik(k): v for k, v in database.get_all_prior_approaches().items()}
     metrics = ["pb_ratio", "ev_ebitda", "goodwill_to_assets", "operating_margin",
                "tsr_1y", "tsr_3y", "roa", "revenue_growth", "sga_pct",
                "cash_to_assets", "debt_to_assets"]
@@ -2034,6 +2052,13 @@ def recompute_all():
                 evidence.append(_struct_evidence(key, r, t))
             elif key in EVENT_POINTS:
                 evidence.append(_event_evidence(key, ev))
+        # Prior M&A approaches (item 8): NOT in trig (see prior_approaches.py -- deliberately no
+        # scoring weight), so handled outside the trig-dispatch loop above. Still gets a real
+        # evidence card, keyed "prior_approach", so pitch.py's lead point can cite it the same way
+        # every other point cites a live evidence card (the D13 invariant).
+        approaches = prior_approaches_by_cik.get(r["cik"]) or []
+        if approaches:
+            evidence.append(_prior_approach_evidence(r, approaches))
         # Headline item + situation metadata for the Active Situations card.
         if aflag:
             item = {"title": f"{r['name']} — {aflag.get('label')}", "url": aflag.get("url")}
@@ -2067,7 +2092,7 @@ def recompute_all():
             "situation_tier": tier,
             "situation_meta": smeta,
             "evidence": evidence,
-            "pitch": pitch.build_pitch(r, trig),
+            "pitch": pitch.build_pitch(r, trig, prior_approaches=approaches),
             "fin_context": _fin_context(r, t, e),
             "peer_analysis": r.get("_peers") or {},
             "first_flagged": database.now_iso()[:10],

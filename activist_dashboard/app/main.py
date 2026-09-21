@@ -18,7 +18,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from . import (config, database, pipeline, emailer, scoring, spotlight, universe, thirteenf,
-              credibility, aithesis, pdf, profile_pdf)
+              credibility, aithesis, pdf, profile_pdf, prior_approaches)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -119,6 +119,7 @@ def _report_send():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     database.init_db()
+    prior_approaches.seed_known_approaches(database)
     pipeline.get_universe()
     scheduler.add_job(pipeline.refresh_data,
                       IntervalTrigger(minutes=config.REFRESH_MINUTES),
@@ -786,6 +787,11 @@ def _company_payload(cik: str):
         # Accumulating tab only covers sub-5% stakes, so a marquee holder above that threshold
         # appeared nowhere on the page. Display-only — this does not feed the score.
         "holders": database.holders_for_ticker(ticker) if ticker else [],
+        # Curated prior M&A approaches (item 8) -- a small, manually-sourced list, not a live
+        # feed; see prior_approaches.py. Display-only, same as holders above: does not feed the
+        # score. The pitch/evidence already narrate this when present; this is the structured
+        # date/amount/status table version for the profile page and PDF.
+        "prior_approaches": database.get_prior_approaches(cik),
         "peer_analysis": peer_analysis,
         "first_flagged": score.get("first_flagged"),
         "market_cap": score.get("market_cap"),
