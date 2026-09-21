@@ -111,7 +111,17 @@ def effective_pitch(row, ai_row):
 
     `row` needs 'company', 'pitch' (json str) and 'evidence' (json str) -- the same shape
     as a `scores` table row / dict. `ai_row` is whatever database.get_ai_pitch(cik)
-    returns ({} if this company has never been revoiced)."""
+    returns ({} if this company has never been revoiced).
+
+    D13: the template's point_keys (which signal each point came from -- see pitch.py) always
+    ride along unchanged, from `pj`, never from the AI. revoice() only ever rephrases text and
+    is never shown or asked about keys, so the AI's points can be swapped in here (same
+    positions) without disturbing which key labels which position -- AS LONG AS the count still
+    matches what point_keys was built against. If a revoice() response somehow came back with a
+    different number of points than the draft it rephrased (the prompt asks it not to, but never
+    trust an LLM's arithmetic), applying it here would silently mis-pair keys to the wrong point
+    text, which is worse than just keeping the template -- so that mismatch is treated the same
+    as a stale hash: fall back to the template's own points instead of guessing an alignment."""
     try:
         pj = json.loads(row.get("pitch") or "{}")
     except (ValueError, TypeError):
@@ -132,8 +142,11 @@ def effective_pitch(row, ai_row):
         return pj   # cached AI text no longer matches today's facts -- don't apply it
     p = dict(pj)
     p["thesis"] = ai["thesis"]
-    if ai.get("points"):
-        p["points"] = ai["points"]
+    _ai_pts = ai.get("points")
+    _keys = pj.get("point_keys") or []
+    if _ai_pts and (not _keys or len(_ai_pts) == len(_keys)):
+        p["points"] = _ai_pts
+    # p["point_keys"] is whatever `pj` already carried -- untouched either way.
     return p
 
 

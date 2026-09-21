@@ -90,12 +90,31 @@ def audit(model, *, credibility=None):
             _flag(flags, "MED", "no pitch points", tk, "board card has no supporting points")
         # A talking point must not restate a peer cutoff / peer count — that figure can be the wrong
         # metric's (the Omnicell ROA-vs-debt-cutoff slip). HOLD for review if one appears.
-        for i, p in enumerate(c.get("points") or [], 1):
+        pts = c.get("points") or []
+        keys = c.get("point_keys") or []
+        ev_keys = set(c.get("evidence_keys") or [])
+        for i, p in enumerate(pts, 1):
             hit = _PEER_STAT_RE.search(p or "")
             if hit:
                 _flag(flags, "HIGH", "pitch point restates a peer cutoff", tk,
                       f"point {i} restates a peer statistic (“{hit.group(0).strip()}”) — a point should "
                       f"carry only its own metric's value; verify this is not another card's cutoff: "
+                      f"“{(p or '').strip()[:90]}”")
+            # D13: every printed point is built from a specific signal (see pitch.py); assert that
+            # signal's evidence card still exists on THIS row RIGHT NOW. A point can only go stale
+            # relative to its own evidence between when the pitch was built and when the report was
+            # rendered -- a re-render that skipped recomputing (generate-now&recompute=0), or a
+            # future bug that breaks the invariant pitch.py otherwise guarantees. point_keys is
+            # missing (empty list) on any row scored before this check shipped, and on a row whose
+            # AI-revoiced text came back with a different point count than the draft (aithesis.py
+            # falls back to the template rather than guess an alignment there) -- either way, no
+            # key at this position means "can't verify", which is silence, not a pass: it is
+            # never treated as confirmation the point is backed by evidence.
+            k = keys[i - 1] if i - 1 < len(keys) else None
+            if k and k not in ev_keys:
+                _flag(flags, "HIGH", "pitch point has no supporting evidence", tk,
+                      f"point {i} is keyed to signal '{k}', which has no live evidence card on "
+                      f"this row right now — the claim may be stale relative to current data: "
                       f"“{(p or '').strip()[:90]}”")
         if not [m for m in (c.get("metrics") or []) if m.get("value") not in (None, "", "—")]:
             _flag(flags, "MED", "no financials", tk, "board card shows no metric values")
