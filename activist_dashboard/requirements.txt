@@ -4,3 +4,4 @@ apscheduler==3.10.4
 requests==2.32.3
 python-dotenv==1.0.1
 yfinance==0.2.40
+weasyprint==70.0
