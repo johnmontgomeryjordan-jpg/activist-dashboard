@@ -385,6 +385,16 @@ def _point(key, r):
                     f"forecloses the buyback, dividend and spin remedies a campaign would demand.")
         return ("An over-levered balance sheet limits every capital-return lever — deleveraging "
                 "becomes the campaign rather than a byproduct of one.")
+    if key == "maturity_wall":
+        raw = r.get("raw") or {}
+        cur, cash = raw.get("debt_current"), raw.get("cash")
+        if cur is not None and cash is not None:
+            return (f"{_money(cur)} of debt matures within a year against {_money(cash)} of cash on "
+                    f"hand — a refinancing the board will have to negotiate from a position of need, "
+                    f"not choice.")
+        return ("A concentrated slug of debt comes due within a year, more than the company can "
+                "cover from cash on hand — a refinancing the board will have to negotiate from a "
+                "position of need, not choice.")
     if key == "dividend_cut":
         return ("The dividend has been cut or suspended — a board signalling it can no longer "
                 "fund the payout, and the moment income holders turn into sellers.")
@@ -397,8 +407,8 @@ def _point(key, r):
 
 # Order points by how compelling they are in a pitch (not raw score weight).
 _POINT_PRIORITY = [
-    "cash_hoard", "buyback_drag", "dividend_cut", "divestiture", "overpaid_ceo", "restatement",
-    "exec_reaction_drop", "lags_own_peers", "overlevered",
+    "cash_hoard", "buyback_drag", "dividend_cut", "maturity_wall", "divestiture", "overpaid_ceo",
+    "restatement", "exec_reaction_drop", "lags_own_peers", "overlevered",
     "weak_tsr_1y", "weak_tsr_3y", "cheap_ev_ebitda", "low_margin", "high_sga", "low_roa", "cheap_pb",
     "cheap_abs", "high_goodwill", "weak_growth", "gov_classified", "gov_poison", "gov_dual",
     "ceo_departure", "weak_vote_support", "insider_selling", "earnings_miss", "underlevered",

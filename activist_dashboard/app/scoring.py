@@ -43,7 +43,7 @@ STRUCT_POINTS = {"cheap_abs": 2, "cheap_pb": 2, "cheap_ev_ebitda": 2, "low_margi
                  "insider_selling": 1, "insider_buying": 0,
                  "weak_vote_support": 1, "overpaid_ceo": 2, "exec_reaction_drop": 2,
                  "lags_own_peers": 2, "strategic_review": 3, "activist_holder": 4,
-                 "overlevered": 2, "buyback_drag": 2}
+                 "overlevered": 2, "buyback_drag": 2, "maturity_wall": 2}
 EVENT_POINTS = {"ceo_departure": 2, "earnings_miss": 2, "impairment": 2,
                 "restatement": 2, "layoffs": 1, "leadership_change": 1,
                 "results_update": 0, "news_negative": 1, "divestiture": 2,
@@ -169,6 +169,7 @@ LABELS = {
     "overlevered": "over-levered balance sheet (constrains capital return)",
     "buyback_drag": "buybacks above today's price — capital destroyed",
     "dividend_cut": "dividend cut or suspended",
+    "maturity_wall": "near-term debt maturity exceeds cash on hand",
 }
 # Insider activity (Form 4). insider_selling is a leading vulnerability signal;
 # insider_buying is shown as a 0-point defense/confidence note.
@@ -249,6 +250,16 @@ COVERAGE_MIN = float(os.getenv("COVERAGE_MIN", "3.0"))
 # Book equity below this share of total assets makes every equity-denominated ratio meaningless
 # -- see _thin_book(). Capri sat at 4.3%; a healthy filer is comfortably north of 20%.
 THIN_BOOK_FRAC = float(os.getenv("THIN_BOOK_FRAC", "0.10"))
+# --- Near-term maturity wall ---------------------------------------------------------------------
+# A separate vulnerability from being over-levered generally: debt coming due SOON that the
+# company can't just pay off from cash on hand forces a refinancing on someone else's timetable --
+# the classic setup for a dilutive equity raise, an asset sale, or a covenant renegotiation, all
+# of which an activist can turn into board-accountability pressure. Requires BOTH a liquidity
+# shortfall (cash can't cover it) AND real concentration (it's not a trivial sliver of total
+# borrowing), so a company idly carrying a small current-maturities line inside a huge, well-laddered
+# debt stack doesn't fire just because its cash happens to be light this quarter.
+MATURITY_WALL_MIN = float(os.getenv("MATURITY_WALL_MIN", "25000000"))         # $25M floor
+MATURITY_WALL_CONCENTRATION = float(os.getenv("MATURITY_WALL_CONCENTRATION", "0.25"))  # 25% of debt
 # --- Buyback drag ------------------------------------------------------------------------------
 # Trailing-3yr repurchase spend as a share of today's market cap. Above this, with the stock down
 # over the same window, the board demonstrably destroyed capital buying its own stock too high --
@@ -625,6 +636,16 @@ def _severity(key, r, t, e):
         if t3 is not None:
             sev += min(0.2, max(0.0, -t3) * 0.3)
         return _clamp(sev)
+    if key == "maturity_wall":
+        # Scale by how far cash falls short of what's due, and how concentrated that debt is
+        # within the total stack -- worse on either axis reads as more severe.
+        raw = r.get("raw") or {}
+        cur, cash = raw.get("debt_current"), raw.get("cash")
+        denom = raw.get("ev_debt") or raw.get("debt")
+        shortfall = (cur / cash) if (cur and cash and cash > 0) else 2.0
+        conc = (cur / denom) if (cur and denom) else MATURITY_WALL_CONCENTRATION
+        sev = 0.4 + min(0.35, (shortfall - 1.0) * 0.2) + min(0.25, (conc - MATURITY_WALL_CONCENTRATION) * 0.5)
+        return _clamp(sev)
     if key == "lags_own_peers":
         pa = r.get("_peers") or {}
         med = (pa.get("median") or {}).get("tsr_1y")
@@ -778,6 +799,34 @@ def _overlevered(r):
         return True
     fl = _funded_leverage(r)
     return fl is not None and fl >= OVERLEVERED_FLOOR
+
+
+def _maturity_wall(r):
+    """Near-term debt-maturity risk: real money coming due within 12 months that cash on hand
+    can't cover, and that isn't just a trivial sliver of the company's total borrowing (see the
+    module-level comment above MATURITY_WALL_MIN/_CONCENTRATION). Same carve-outs as
+    _overlevered(): financials continuously roll short-term debt as their business model, and a
+    strong multi-year outperformer refinancing from a position of strength isn't the distress
+    case this signal is about.
+
+    raw['debt_current'] is None (not 0) when the filer's XBRL tags don't show the current/
+    noncurrent split at all (see pipeline._funded_debt) -- treated as "can't verify", same
+    discipline as every other structural signal here, never as "nothing due"."""
+    if ((r.get("sector") or "") in ("60", "61", "62", "63", "64")
+            or taxonomy.is_financial(r.get("_industry"))):
+        return False
+    if _is_outperformer(r):
+        return False
+    raw = r.get("raw") or {}
+    cur, cash = raw.get("debt_current"), raw.get("cash")
+    if cur is None or cash is None or cur < MATURITY_WALL_MIN:
+        return False
+    if cur <= cash:
+        return False                              # cash on hand covers it -- not a wall
+    denom = raw.get("ev_debt") or raw.get("debt")
+    if not denom or denom <= 0 or (cur / denom) < MATURITY_WALL_CONCENTRATION:
+        return False                               # a trivial slice of total debt, not concentrated
+    return True
 
 
 def _fin_context(r, t, e):
@@ -1181,7 +1230,8 @@ def _impaired_fundamentals(r):
 
 
 def _capital_evidence(key, r):
-    """Evidence card for the two balance-sheet / capital-allocation signals."""
+    """Evidence card for the balance-sheet / capital-allocation signals: overlevered,
+    maturity_wall, buyback_drag."""
     raw = r.get("raw") or {}
     mc = r.get("market_cap")
     if key == "overlevered":
@@ -1204,6 +1254,20 @@ def _capital_evidence(key, r):
                      "borrowing rather than rent.")
             inputs = (f"funded debt + finance leases {_money(raw.get('ev_debt'))} ÷ "
                       f"equity {_money(_eq)} · total assets {_money(raw.get('total_assets'))}")
+        return {"key": key, "label": LABELS.get(key, key), "value": val, "context": ctx,
+                "inputs": inputs, "period": raw.get("period_label") or "",
+                "source": "SEC XBRL", "url": _source_url(r.get("cik"), raw.get("source_accn"))}
+    if key == "maturity_wall":
+        cur, cash = raw.get("debt_current"), raw.get("cash")
+        denom = raw.get("ev_debt") or raw.get("debt")
+        pct = (cur / denom) if (cur and denom) else None
+        val = f"{_money(cur)} due within a year"
+        ctx = (f"{_money(cur)} of debt matures within 12 months against {_money(cash)} of cash on "
+               f"hand" + (f" — {pct * 100:.0f}% of total debt" if pct is not None else "")
+               + " — a refinancing the board negotiates from need, not choice, and a natural "
+                 "opening for an activist to press on capital allocation or a sale.")
+        inputs = (f"debt due within 12mo {_money(cur)} vs cash {_money(cash)}"
+                  + (f" · total debt {_money(denom)}" if denom else ""))
         return {"key": key, "label": LABELS.get(key, key), "value": val, "context": ctx,
                 "inputs": inputs, "period": raw.get("period_label") or "",
                 "source": "SEC XBRL", "url": _source_url(r.get("cik"), raw.get("source_accn"))}
@@ -1725,6 +1789,12 @@ def recompute_all():
         # exclusive with underlevered by construction.
         if _overlevered(r):
             trig.append("overlevered")
+        # Near-term maturity wall: real debt due within a year that cash on hand can't cover and
+        # that isn't just a trivial sliver of total borrowing. Independent of _overlevered (a
+        # moderately-levered company can still face a concentrated near-term maturity, and a
+        # heavily-levered one can be fine if its debt is laddered years out).
+        if _maturity_wall(r):
+            trig.append("maturity_wall")
         # Capital destroyed on buybacks: three years of repurchases large against what the company
         # is worth today, with the stock down over the same window. Requires BOTH so a healthy
         # compounder returning cash isn't punished for it.
@@ -1945,7 +2015,7 @@ def recompute_all():
                 evidence.append(_strategic_evidence(key, r))
             elif key == "activist_holder":
                 evidence.append(_holder_evidence(key, r))
-            elif key in ("overlevered", "buyback_drag"):
+            elif key in ("overlevered", "buyback_drag", "maturity_wall"):
                 evidence.append(_capital_evidence(key, r))
             elif key in STRUCT_META or key in GOV_KEYS:
                 evidence.append(_struct_evidence(key, r, t))
