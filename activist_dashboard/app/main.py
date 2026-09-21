@@ -17,7 +17,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from . import config, database, pipeline, emailer, scoring, spotlight, universe, thirteenf, credibility
+from . import (config, database, pipeline, emailer, scoring, spotlight, universe, thirteenf,
+              credibility, aithesis)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -685,10 +686,6 @@ def api_company(cik: str):
     except (ValueError, TypeError):
         situation_meta = {}
     try:
-        pitch_obj = json.loads(score.get("pitch") or "{}")
-    except (ValueError, TypeError):
-        pitch_obj = {}
-    try:
         fin_context = json.loads(score.get("fin_context") or "[]")
     except (ValueError, TypeError):
         fin_context = []
@@ -696,10 +693,20 @@ def api_company(cik: str):
         peer_analysis = json.loads(score.get("peer_analysis") or "{}")
     except (ValueError, TypeError):
         peer_analysis = {}
+    # D12 covered report.py/emailer.py; the company-profile page had its own THIRD copy of this
+    # merge (app.js's effPitch()), which applied ai_pitch's thesis/points unconditionally with no
+    # check that the cached AI text still matches today's facts -- the same staleness bug, just in
+    # the browser instead of the PDF/email. Route through the one centralized, freshness-checked
+    # merge here too, and send the client the already-resolved result instead of two raw pieces to
+    # merge itself; pitch_ai_polished tells it whether to show the "AI-polished" badge, without it
+    # needing to know anything about facts_hash.
+    ai_row = database.get_ai_pitch(cik)
     try:
-        ai_pitch = json.loads((database.get_ai_pitch(cik) or {}).get("pitch") or "{}")
+        ai_raw_thesis = json.loads((ai_row or {}).get("pitch") or "{}").get("thesis")
     except (ValueError, TypeError):
-        ai_pitch = {}
+        ai_raw_thesis = None
+    pitch_obj = aithesis.effective_pitch(score, ai_row)
+    pitch_ai_polished = bool(ai_raw_thesis) and pitch_obj.get("thesis") == ai_raw_thesis
     manual_sit = database.get_manual_situation(cik)
 
     try:
@@ -749,7 +756,7 @@ def api_company(cik: str):
         "signals": score.get("signals"),
         "evidence": evidence,
         "pitch": pitch_obj,
-        "ai_pitch": ai_pitch,
+        "pitch_ai_polished": pitch_ai_polished,
         "fin_context": fin_context,
         # Known-activist 13F positions in this name. The sweep has always collected these (the
         # MNRO diagnostic showed Icahn Capital at 16.9%, 5,078,573 shares, filed 2026-08-14) but
