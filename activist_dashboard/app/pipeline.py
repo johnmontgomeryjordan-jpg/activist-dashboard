@@ -191,6 +191,13 @@ _DIV_PAID = ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"]
 # most recent declared quarter against the prior ones is what distinguishes the two.
 _DIV_PER_SHARE = ["CommonStockDividendsPerShareDeclared",
                  "CommonStockDividendsPerShareCashPaid"]
+# D5: per-share concepts are perShareItemType and are filed under the "USD/shares" unit, not
+# "USD" -- reading them with _usd()'s default unit returned an empty series on every filer in
+# the universe, silently disabling dividend-status detection entirely. See _dividend_state().
+# If the freshest declared quarter trails the company's current balance sheet by more than this,
+# the filer has abandoned the concept -- a suspension can't be told apart from a dropped tag, so
+# report none rather than a stale "paying" (mirrors _DEBT_STALE_DAYS / _CASH_STALE_DAYS).
+_DIV_STALE_DAYS = 400
 # Share repurchases (cash-flow statement). Cumulative treasury stock is the wrong measure -- it is
 # decades of history and would light up any long-lived company -- so we sum the trailing few YEARS
 # of actual buyback spend and compare it to what the company is worth today. PZZA: ~$1.1B of
@@ -228,19 +235,23 @@ def _get(sess, url):
     return None
 
 
-def _usd(facts, tags):
-    """USD unit series for the first of `tags` that has data — but, when several tags carry
+def _usd(facts, tags, unit="USD"):
+    """`unit` series for the first of `tags` that has data — but, when several tags carry
     data, prefer the one whose data is MOST RECENT. Companies switch XBRL concepts over time
     (e.g. 'Revenues' -> 'RevenueFromContractWithCustomerExcludingAssessedTax'); returning the
     first tag with *any* data froze names like TMDX on a stale 2022 series under an abandoned
-    tag. Ties (same latest end-date) fall back to the given preference order."""
+    tag. Ties (same latest end-date) fall back to the given preference order.
+
+    `unit` defaults to "USD" (every existing caller is unaffected); pass "USD/shares" for a
+    perShareItemType concept -- e.g. the declared-dividend-per-share tags, which are filed
+    under that unit and return an empty series against the default (see _DIV_PER_SHARE)."""
     g = facts.get("facts", {}).get("us-gaap", {})
     best, best_end = [], ""
     for t in tags:
         node = g.get(t)
         if not node:
             continue
-        u = node.get("units", {}).get("USD")
+        u = node.get("units", {}).get(unit)
         if not u:
             continue
         mx = max((e.get("end") or "") for e in u)
@@ -271,10 +282,11 @@ def _minus_year(e):
         return d.replace(year=d.year - 1, day=28).isoformat()
 
 
-def _flows(facts, tags):
-    """Duration (income-statement) entries: dicts of end, val, days, accn."""
+def _flows(facts, tags, unit="USD"):
+    """Duration (income-statement) entries: dicts of end, val, days, accn. `unit` passed
+    through to _usd() -- see its docstring."""
     out = []
-    for e in _usd(facts, tags):
+    for e in _usd(facts, tags, unit=unit):
         s, en, v = e.get("start"), e.get("end"), e.get("val")
         if s and en and v is not None:
             d = _ddays(s, en)
@@ -522,10 +534,24 @@ def _dividend_state(facts):
 
     status is one of: 'paying', 'cut', 'suspended', or None when there is not enough history.
     Quarterly entries only (55-115 days) so an annual roll-up can't be mistaken for a quarter."""
-    q = [e for e in _flows(facts, _DIV_PER_SHARE) if 55 <= e["days"] <= 115 and e.get("end")]
+    q = [e for e in _flows(facts, _DIV_PER_SHARE, unit="USD/shares")
+         if 55 <= e["days"] <= 115 and e.get("end")]
+    # Dedup by period end: the SAME quarter is re-filed across later 10-Qs/10-Ks, and an
+    # undeduped duplicate would occupy two slots in the prior-quarter run-rate window below.
+    # A dict keyed on end-date keeps whichever occurrence is LAST in the underlying facts
+    # list -- the most recently filed value for that quarter.
+    q = list({e["end"]: e for e in q}.values())
     if len(q) < 3:
         return None, None, None
     q.sort(key=lambda e: e["end"], reverse=True)
+    # Staleness guard, same pattern as _DEBT_STALE_DAYS / _CASH_STALE_DAYS: anchor to the
+    # company's CURRENT balance sheet (the Assets tag's date). A filer that has abandoned this
+    # concept looks identical to one that suspended -- stay silent rather than assert either.
+    _bs_end, _ = _instant_dated(facts, _ASSETS[0])
+    if _bs_end:
+        _gap = _ddays(q[0]["end"], _bs_end)
+        if _gap is not None and _gap > _DIV_STALE_DAYS:
+            return None, None, None
     latest = q[0]["val"]
     prior = [e["val"] for e in q[1:5] if e["val"] is not None]
     if not prior or latest is None:
