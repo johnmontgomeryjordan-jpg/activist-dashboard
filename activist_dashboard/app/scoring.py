@@ -854,11 +854,27 @@ def _fin_context(r, t, e):
             verdict = "mid"
         # Debt / assets is the one DUAL-SIDED metric: low is an opportunity (releverage) and high
         # is a vulnerability. The rule table can only express one direction, so the over-levered
-        # side is applied here, off the same funded-debt test the scored signal uses. Without this
-        # the tab rendered PZZA's 117% and WHR's 46.4% as "In line" while the caption beside them
-        # read "highly leveraged" — the annotation and the verdict contradicting each other.
-        if key == "debt_to_assets" and verdict != "opp" and _overlevered(r):
-            verdict = "bad"
+        # side is applied here. TWO independent triggers, either fires "bad":
+        #   (a) peer-relative -- this company sits in the worst quartile of ITS OWN peer group,
+        #       the same basis every other bad_high metric (goodwill/assets, SG&A%) already uses.
+        #   (b) the absolute/coverage-gated _overlevered() test the scored signal uses.
+        # D3 (regression, 2026-08-25): only (b) existed here. When the coverage guard suppresses
+        # (b) for a levered-but-cash-generative name (BBWI: 95.6% debt/assets, 4.20x interest
+        # cover), the chip read "in line" against a 29.5% peer cutoff while the card copy still
+        # called it "highly leveraged" -- the annotation and the verdict contradicting each other
+        # on the same page, the exact defect this block was originally written to prevent (see the
+        # PZZA/WHR example above). Restoring (a) lets the DISPLAY verdict (worse than peers, on
+        # this metric) and the SCORE trigger (does the balance sheet constrain the company enough
+        # to be a real vulnerability) legitimately differ without the page contradicting itself.
+        # The peer-relative path must honor the SAME suppression as every other metric (financials
+        # carve-out, multi-year outperformer, lease-heavy) -- _overlevered() already re-derives
+        # those guards internally, but a bare q3 comparison does not, so it needs the check
+        # explicit here too. Missing this let a 96%-levered bank read "bad" in testing.
+        if key == "debt_to_assets" and verdict != "opp" and not _suppress.get("debt_to_assets"):
+            _peer_bad = q3 is not None and v >= q3
+            if _peer_bad or _overlevered(r):
+                verdict = "bad"
+                cutoff = q3   # the high-side (bad) cutoff -- not the low-side (opp) one set above
         # Absolute sanity band (#35): flag an absolutely extreme value so a peer-relative
         # "in line" verdict is never read as unremarkable (e.g. a 43x EV/EBITDA in an
         # expensive sector). Additive annotation only — does not recolor or rescore.
