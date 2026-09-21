@@ -22,7 +22,7 @@ from email.utils import formataddr
 
 import requests
 
-from . import config, database, spotlight, news
+from . import config, database, spotlight, news, aithesis
 
 RESEND_URL = "https://api.resend.com/emails"
 SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
@@ -47,32 +47,12 @@ def _band(v):
     return "Moderate"
 
 
-def _eff_pitch(row):
-    """Effective pitch for a row: AI-polished thesis/points if present, else templated."""
-    try:
-        p = json.loads(row.get("pitch") or "{}")
-    except (ValueError, TypeError):
-        p = {}
-    ai = database.get_ai_pitch(row.get("cik")) or {}
-    if ai.get("pitch"):
-        try:
-            a = json.loads(ai["pitch"])
-        except (ValueError, TypeError):
-            a = {}
-        if a.get("thesis"):
-            p = dict(p)
-            p["thesis"] = a["thesis"]
-            if a.get("points"):
-                p["points"] = a["points"]
-    return p
-
-
 def build_digest_html(lead, targets, headlines, filings):
     site = config.SITE_URL.rstrip("/")
 
     # ---- Lead of the day -----------------------------------------------------
     if lead:
-        lp = _eff_pitch(lead)
+        lp = aithesis.effective_pitch(lead, database.get_ai_pitch(lead.get("cik")))
         thesis = _esc(lp.get("thesis") or lead.get("signals") or "")
         pts = "".join(
             f'<li style="margin:7px 0;line-height:1.45;">{_esc(p)}</li>'

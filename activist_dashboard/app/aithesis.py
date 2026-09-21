@@ -93,6 +93,50 @@ def _extract_json(text):
     return s[i:j + 1] if (i != -1 and j != -1 and j > i) else s
 
 
+def effective_pitch(row, ai_row):
+    """Templated pitch (row['pitch'], as computed by scoring/pitch.py), upgraded to the
+    AI-polished thesis/points from ai_row -- but ONLY when ai_row's stored hash still
+    matches the facts the template reflects RIGHT NOW.
+
+    D12: previously report.py and emailer.py each carried their own copy of this merge,
+    and both applied ai_row's thesis/points unconditionally whenever present, with no
+    check that the cached AI text was generated from the CURRENT facts. A cached rewrite
+    that predates a scoring or data fix (a corrected leverage flag, a cleared signal)
+    would then silently override the newly-correct template, or -- if the AI call had
+    failed that run -- an absent/failed cache write would let the fresh template through
+    by accident. Neither behavior is dependable, and the two copies had already drifted
+    (one render path got a fix the other didn't). Recomputing facts_hash here and
+    dropping any mismatch closes both: the template (always correct, always fresh) is
+    the fallback whenever the AI text can't be proven current.
+
+    `row` needs 'company', 'pitch' (json str) and 'evidence' (json str) -- the same shape
+    as a `scores` table row / dict. `ai_row` is whatever database.get_ai_pitch(cik)
+    returns ({} if this company has never been revoiced)."""
+    try:
+        pj = json.loads(row.get("pitch") or "{}")
+    except (ValueError, TypeError):
+        pj = {}
+    ai_row = ai_row or {}
+    try:
+        ai = json.loads(ai_row.get("pitch") or "{}")
+    except (ValueError, TypeError):
+        ai = {}
+    if not ai.get("thesis"):
+        return pj
+    try:
+        ev = json.loads(row.get("evidence") or "[]")
+    except (ValueError, TypeError):
+        ev = []
+    facts = [e.get("context") for e in ev if isinstance(e, dict) and e.get("context")][:8]
+    if facts_hash(row.get("company"), pj, facts) != ai_row.get("hash"):
+        return pj   # cached AI text no longer matches today's facts -- don't apply it
+    p = dict(pj)
+    p["thesis"] = ai["thesis"]
+    if ai.get("points"):
+        p["points"] = ai["points"]
+    return p
+
+
 def revoice(name, pitch, facts, api_key=None, mdl=None, timeout=30):
     """Return {'thesis': str, 'points': [str]} re-voiced by Haiku, or None on any failure."""
     api_key = api_key or key()

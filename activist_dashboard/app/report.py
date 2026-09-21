@@ -18,6 +18,8 @@ running app.
 import html
 import json
 
+from . import aithesis
+
 # ---- structural disqualifiers ---------------------------------------------------------
 # Names that must NOT be presented as proactive activist targets because a campaign is
 # structurally foreclosed — a government ownership stake, or a founder/family/PE holder who
@@ -124,18 +126,6 @@ def _loads(s, default):
         return default
 
 
-def _eff_pitch(row, ai_pitch):
-    """Templated pitch, upgraded to the AI-polished thesis/points when present (mirrors emailer)."""
-    p = _loads(row.get("pitch"), {})
-    a = ai_pitch or {}
-    if a.get("thesis"):
-        p = dict(p)
-        p["thesis"] = a["thesis"]
-        if a.get("points"):
-            p["points"] = a["points"]
-    return p
-
-
 def _metrics_for(fin_context, n=4):
     """Pick up to n telling fin_context metrics (peer verdict != 'mid' preferred), formatted."""
     by_key = {m.get("key"): m for m in (fin_context or []) if m.get("key")}
@@ -184,7 +174,7 @@ def assemble_board(rows, *, get_catalyst, get_ai_pitch, get_governance,
         if tkr in excl:
             continue                      # structural disqualifier (e.g. government stake)
         cik = r.get("cik")
-        pitch = _eff_pitch(r, get_ai_pitch(cik))
+        pitch = aithesis.effective_pitch(r, get_ai_pitch(cik))
         fin_context = _loads(r.get("fin_context"), [])
         band_name, band_cls = _band(r.get("vuln"))
         gov = get_governance(cik) or {}
@@ -471,7 +461,7 @@ def assemble(database, catalyst, news, *, limit=5, today=None, summarize=None, r
     board = assemble_board(
         chosen,
         get_catalyst=lambda cik: catalyst.for_company(cik, database, today=today),
-        get_ai_pitch=lambda cik: _loads((database.get_ai_pitch(cik) or {}).get("pitch"), {}),
+        get_ai_pitch=database.get_ai_pitch,
         get_governance=database.get_governance,
         exclude_tickers=exclude, limit=limit,
     )
