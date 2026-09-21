@@ -1719,7 +1719,8 @@ def refresh_ai_thesis():
     cand = list(database.get_scores(limit=ENRICH_TOP)) + list(database.get_active_situations(limit=40))
     rows = [s for s in cand if s.get("cik") in allowed]
     seen = set()
-    done = cached = 0
+    done = cached = failed = 0
+    failed_tickers = []
     for s in rows:
         cik = s.get("cik")
         if not cik or cik in seen:
@@ -1744,8 +1745,18 @@ def refresh_ai_thesis():
         if out:
             database.upsert_ai_pitch(cik, h, out)
             done += 1
+        else:
+            # D12: facts changed enough to need a fresh AI rewrite, but the API call didn't
+            # come back (network error, non-200, unparseable JSON). This used to be silent --
+            # neither counted nor logged -- which is exactly what made "revoiced 0 · cached 70"
+            # look like nothing had changed on a run where it had. The stored ai_pitch row (if
+            # any) is left untouched here; effective_pitch() will see its hash no longer
+            # matches and fall back to the plain template rather than show stale AI text.
+            failed += 1
+            failed_tickers.append(s.get("ticker") or cik)
         time.sleep(0.3)
-    print(f"[ai-thesis] revoiced {done} · cached {cached}")
+    print(f"[ai-thesis] revoiced {done} · cached {cached} · failed {failed}"
+          + (f" ({', '.join(failed_tickers)})" if failed_tickers else ""))
     return done
 
 
