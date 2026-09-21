@@ -114,7 +114,16 @@ def _fmt_metric(key, val):
     if key in _X_KEYS:
         return f"{val:.1f}×"
     if key in _PCT_KEYS:
-        return f"{val * 100:.0f}%"
+        pct = val * 100
+        s = f"{pct:.0f}"
+        # D15: a small negative (e.g. -0.3%) rounds to a bare zero at 0 decimals but KEEPS its
+        # minus sign -- "-0%" reads as a broken figure, not "roughly flat", and on PZZA it took
+        # a real revenue decline (SSS -3.3% after -4.9%, consensus -8.3%) and rendered it as the
+        # single least-alarming number on the card. Fall back to one more decimal only in that
+        # exact case, so an ordinary-magnitude value renders exactly as before.
+        if s == "-0":
+            s = f"{pct:.1f}"
+        return f"{s}%"
     return f"{val:.2f}"
 
 
