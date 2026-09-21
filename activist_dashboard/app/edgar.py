@@ -64,7 +64,16 @@ _INDEX_INCREMENTAL_DAYS = 14
 #             AHCO, whose Jul 20 2026 Cardinal Health divestiture (Diabetes Health Business,
 #             $235M, announced/pending) never appeared anywhere on the profile. Text-confirmed,
 #             seller-side only (see module docstring). Re-classification required to backfill.
-CLASSIFIER_VERSION = "2026-08-21-divestiture-r10"  # r9: miss-tiered-anchored (Item 2.02 exhibit read)
+# 2026-09-21: fixed two divestiture false readings confirmed against real filing text (D4).
+#             (1) AutoZone's and UHS's senior-notes 8-Ks (Items 1.01+2.03, no 2.01) were tagged
+#             "divestiture" from indenture covenant boilerplate ("...sell all or substantially all
+#             of its assets...") — now vetoed at the root when 2.03 fires without 2.01, plus a
+#             text-level strip of that specific boilerplate phrase. (2) Capri Holdings' real,
+#             completed Versace sale (Item 1.01 only, Apr 2025) was MISSED because the filing
+#             referred to it as "Capri's Versace business", never "the Company's" — is_divestiture
+#             now also recognizes the filer's own short-form name. Re-classification required for
+#             both fixes to reach already-stored filings.
+CLASSIFIER_VERSION = "2026-09-21-divestiture-r11"  # r10: added Item 1.01/2.01 divestiture detection
 
 _session = requests.Session()
 _session.headers.update(HEADERS)
@@ -220,25 +229,75 @@ _RAISE_NEAR_GUIDANCE = re.compile(
 # same bias as 5.02/2.02: a missed tag costs a signal, a false tag costs credibility.
 _DEAL_VERB = (r"(?:sell\w*|sold|sale\w*|divest\w*|dispos\w*|acquir\w*|purchas\w*|"
              r"spin[-\s]?off\w*|carve[-\s]?out\w*)")
-# The object noun for "its"/"the Company's" itself, kept a few words out so "its recently
-# announced ACQUISITION of ..." (a nominalized action, not a business being sold) doesn't match.
-_OWN_BIZ = (r"(?:the\s+company'?s|the\s+registrant'?s|its|our)"
-           r"(?!\s+(?:recent(?:ly)?|previously|planned|pending)?\s*(?:acquisition|purchase)\b)"
-           r"\s+(?:[a-z]+\s+){0,2}?"
-           r"(?:business(?:es)?|segment|division|subsidiary|unit|operations?|assets?|"
-           r"product\s+line)")
-_DIVEST_RE = re.compile(
-    r"(?:" + _DEAL_VERB + r"(?:\s+\S+){0,10}?\s+" + _OWN_BIZ +          # verb ... own-biz object
-    r"|" + _OWN_BIZ + r"(?:\s+\S+){0,10}?\s+" + _DEAL_VERB +            # own-biz object ... verb (passive)
-    r"|exit(?:ed|ing|s)?\s+(?:its|the)\s+[a-z]+(?:\s+[a-z]+){0,2}\s+business)",  # "exit its X business"
-    re.I)
+# The generic self-reference forms every 8-K can use regardless of company.
+_OWN_REF_GENERIC = r"(?:the\s+company'?s|the\s+registrant'?s|its|our)"
+# The object noun, kept a few words out so "its recently announced ACQUISITION of ..." (a
+# nominalized action, not a business being sold) doesn't match.
+_OWN_BIZ_OBJECT = (r"(?!\s+(?:recent(?:ly)?|previously|planned|pending)?\s*(?:acquisition|purchase)\b)"
+                   r"\s+(?:[a-z]+\s+){0,2}?"
+                   r"(?:business(?:es)?|segment|division|subsidiary|unit|operations?|assets?|"
+                   r"product\s+line)")
+_OWN_BIZ = _OWN_REF_GENERIC + _OWN_BIZ_OBJECT
+
+# Covenant boilerplate veto: an indenture/credit-agreement default covenant almost always reads
+# "...merge or consolidate with another entity or sell all or substantially all of its assets..."
+# — a hypothetical future restriction, not a divestiture being reported. It satisfies _OWN_BIZ's
+# generic "its ... assets" object exactly (confirmed against AutoZone's real Jul-2026 senior-notes
+# 8-K text), so a REAL divestiture press release almost never does: it names a specific business
+# ("Capri's Versace business"), never just the bare word "assets". We strip this narrow boilerplate
+# span before matching rather than block "assets" outright, so a filing that ALSO describes a real
+# divestiture elsewhere in the same document still tags on that separate text.
+_SUBSTANTIALLY_ALL_ASSETS_RE = re.compile(
+    r"(?:sell\w*|sold|sale\w*|dispos\w*|transfer\w*|convey\w*)"
+    r"(?:\s+\S+){0,6}?\s+(?:all\s+or\s+)?substantially\s+all\s+(?:of\s+)?"
+    r"(?:the\s+company'?s|the\s+registrant'?s|its|our)\s+assets\b", re.I)
+
+# Corporate-suffix / filler words that never make a usable short-form self-reference.
+_CORP_SUFFIX_WORDS = {"the", "inc", "corp", "corporation", "company", "co", "ltd", "limited",
+                      "holdings", "holding", "group", "plc", "llc", "lp"}
 
 
-def is_divestiture(deal_text):
+def _company_self_ref(company):
+    """A filer's own 8-K prose refers to a business IT is divesting by its short-form name
+    ("Capri's Versace business") at least as often as by "the Company's"/"its" — a real case
+    (Capri Holdings' April 2025 sale of Versace to Prada, Item 1.01 only) that the generic
+    pronoun-only pattern missed entirely, because the filing never once wrote "the Company's
+    Versace business". Returns a regex fragment matching "<name>'s" (case-insensitive; filing
+    text is lower-cased upstream) for the first distinctive word of `company`, or None if the
+    name yields nothing better than a generic corporate word."""
+    for w in re.split(r"[^A-Za-z]+", company or ""):
+        if len(w) >= 3 and w.lower() not in _CORP_SUFFIX_WORDS:
+            return re.escape(w.lower()) + r"'s"
+    return None
+
+
+def _divest_re(company=None):
+    self_ref = _company_self_ref(company) if company else None
+    own_ref = _OWN_REF_GENERIC if not self_ref else r"(?:" + _OWN_REF_GENERIC + "|" + self_ref + r")"
+    own_biz = own_ref + _OWN_BIZ_OBJECT
+    return re.compile(
+        r"(?:" + _DEAL_VERB + r"(?:\s+\S+){0,10}?\s+" + own_biz +       # verb ... own-biz object
+        r"|" + own_biz + r"(?:\s+\S+){0,10}?\s+" + _DEAL_VERB +         # own-biz object ... verb (passive)
+        r"|exit(?:ed|ing|s)?\s+(?:its|the)\s+[a-z]+(?:\s+[a-z]+){0,2}\s+business)",  # "exit its X business"
+        re.I)
+
+
+_DIVEST_RE = _divest_re()  # generic-only default, kept for any caller that doesn't pass a company
+
+
+def is_divestiture(deal_text, company=None):
     """True only when a deal verb (sell/acquire/divest/dispose/purchase/spin off/carve out) sits
     near an object phrased as the filer's OWN business/segment/subsidiary/unit/assets — see the
-    block comment above for why the object, not the verb, carries the buy/sell direction here."""
-    return bool(_DIVEST_RE.search(deal_text or ""))
+    block comment above for why the object, not the verb, carries the buy/sell direction here.
+
+    `company` (optional) is the filer's own name; when given, its short-form self-reference is
+    also recognized (see _company_self_ref) alongside the generic "the Company's"/"its"/"our"."""
+    t = deal_text or ""
+    if not t:
+        return False
+    stripped = _SUBSTANTIALLY_ALL_ASSETS_RE.sub(" ", t)
+    pattern = _divest_re(company) if company else _DIVEST_RE
+    return bool(pattern.search(stripped))
 
 
 def _weak_miss_hit(t):
@@ -342,7 +401,7 @@ def _exhibit_text(cik_int, accession_nodash):
     return _TAG.sub(" ", r2.text).lower()[:120000]
 
 
-def classify(form, item_codes, text, exhibit_text=""):
+def classify(form, item_codes, text, exhibit_text="", company=None):
     """Return sorted list of signal keys for this filing.
 
     `text` is the 8-K primary document; `exhibit_text` is a companion press-release exhibit
@@ -351,7 +410,10 @@ def classify(form, item_codes, text, exhibit_text=""):
     ONLY the primary document on purpose — a results press release is full of executive quotes
     and "transition"/"CEO" language that would otherwise manufacture false departure tags. The
     2.02 miss test and the 1.01/2.01 divestiture test read both, since the substantive language
-    for those isn't reliably confined to the primary document alone."""
+    for those isn't reliably confined to the primary document alone.
+
+    `company` (optional) is the filer's own name, threaded through to is_divestiture() so it can
+    also recognize the filer's short-form self-reference (see _company_self_ref)."""
     sigs = set()
     codes = re.findall(r"\d+\.\d+", item_codes or "")
     for c in codes:
@@ -387,9 +449,17 @@ def classify(form, item_codes, text, exhibit_text=""):
         # essentially always in the exhibit, never the cover.
         results_text = t + " " + (exhibit_text or "")
         sigs.add("earnings_miss" if is_earnings_miss(results_text) else "results_update")
-    if "1.01" in codes or "2.01" in codes:
+    # Item 2.03 ("Creation of a Direct Financial Obligation") without 2.01 ("Completion of
+    # Acquisition or Disposition of Assets") is the standard senior-notes/revolver signature
+    # (1.01+2.03+9.01) — a financing, never a completed disposition. Root-level veto (not just a
+    # display filter — see report._financing_mislabelled_as_divestiture, which this supersedes for
+    # scoring) so a financing never enters the divestiture signal at all. Confirmed against
+    # AutoZone's real Jul-2026 8-K (Items 1.01+2.03+9.01, no 2.01), whose "sell substantially all
+    # of its assets" is indenture covenant boilerplate, not a reported sale.
+    financing_only = "2.03" in codes and "2.01" not in codes
+    if ("1.01" in codes or "2.01" in codes) and not financing_only:
         deal_text = t + " " + (exhibit_text or "")
-        if is_divestiture(deal_text):
+        if is_divestiture(deal_text, company):
             sigs.add("divestiture")
         # else: routine agreement (1.01), a pure third-party acquisition, or text with no clear
         # deal-verb/own-business proximity -> no signal. See _DIVEST_RE comment above.
@@ -459,7 +529,7 @@ def fetch_recent_filings_for_cik(cik, ticker, company, days, existing):
         ex_text = (_exhibit_text(int(cik), acc_nodash)
                    if (form == "8-K" and ("2.02" in codes or "1.01" in codes or "2.01" in codes))
                    else "")
-        sigs = classify(form, codes, text, ex_text)
+        sigs = classify(form, codes, text, ex_text, company)
 
         if form != "8-K" and not sigs:
             continue  # keep 8-Ks for the feed; skip routine 10-K/10-Q
