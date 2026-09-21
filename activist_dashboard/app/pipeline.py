@@ -317,6 +317,33 @@ def _instant_dated(facts, tag):
     return rows[0]
 
 
+def _instant_avg(facts, tags, n=4):
+    """Trailing average of the last `n` reported balance-sheet dates for a concept -- same
+    tag-recency selection as _instant()/_usd() (whichever candidate tag's data is most recent
+    wins; that tag's own historical series is used for the average, never mixed with another
+    tag's). Smooths a single seasonal snapshot: Kohl's May cash balance is a holiday-inventory
+    build ($1.73B) against a $674M January fiscal year-end -- a single instant calls a normal
+    working-capital swing "idle capital." A trailing ~12-month average reads that correctly for
+    any company without needing to first decide which businesses are seasonal, and barely moves a
+    company whose balance is already stable quarter to quarter. The trade-off: for a company with
+    a genuine recent step-change (a large debt raise just banked, a big one-time cash outlay), this
+    lags the true current balance until older quarters roll off -- accepted here because the
+    smoothing fixes a confirmed, recurring defect and the lag is a bounded, disclosed cost.
+    Falls back to however many distinct dates ARE available (a young filer, or a recent tag
+    switch) rather than requiring a full `n`; returns None only when there's no data at all."""
+    rows = [(e["end"], e["val"]) for e in _usd(facts, tags)
+            if e.get("val") is not None and e.get("end")
+            and (not e.get("start") or e.get("start") == e.get("end"))]
+    if not rows:
+        return None
+    by_end = {}
+    for end, val in rows:
+        by_end.setdefault(end, val)
+    ends = sorted(by_end.keys(), reverse=True)[:n]
+    vals = [by_end[e] for e in ends]
+    return sum(vals) / len(vals)
+
+
 def _latest_instant_end(facts, tags):
     """Freshest 'end' date across a candidate tag LIST, using the same tag-recency selection
     _usd()/_instant() already apply (whichever candidate tag's data is most recent wins) --
@@ -634,10 +661,14 @@ def _extract(facts):
 
     assets = _instant(facts, _ASSETS)
     equity = _instant(facts, _EQUITY)
-    cash_c = _instant(facts, _CASH)
+    # Trailing 4-quarter average, not the single latest instant -- see _instant_avg() for why
+    # (a seasonal retailer's peak-inventory-buildup cash balance was reading as "idle capital").
+    cash_c = _instant_avg(facts, _CASH, n=4)
     # Staleness guard: if even the freshest candidate cash tag trails the current balance sheet
     # (the Assets tag) by more than _CASH_STALE_DAYS, every candidate has been abandoned -- treat
     # cash as unknown rather than surface a frozen figure as current (see _CASH comment above).
+    # Checked against the single freshest instant, same as before -- staleness is about whether
+    # there's CURRENT data at all, independent of how many of the trailing quarters get averaged.
     if cash_c is not None:
         _cash_end = _latest_instant_end(facts, _CASH)
         _assets_end, _ = _instant_dated(facts, _ASSETS[0])

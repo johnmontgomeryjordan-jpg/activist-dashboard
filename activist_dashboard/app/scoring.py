@@ -619,10 +619,18 @@ def _severity(key, r, t, e):
         o = h.get("ownership_pct") or 0.0
         return _clamp(0.55 + min(0.3, w * 6.0) + min(0.15, o * 3.0))
     if key == "overlevered":
-        # Scale by how far past the floor the funded leverage runs; negative equity pins it high.
-        _fl = _funded_leverage(r)
+        # Negative equity pins it high regardless of how the signal fired.
         if (r.get("book_equity") or 0) < 0 or (r.get("raw") or {}).get("book_equity", 0) < 0:
             return 1.0
+        # Caught on thin interest cover (the D3 catch side): scale by how far below COVERAGE_MIN
+        # it sits -- a company barely failing to cover its interest reads softer than one that
+        # can't cover it at all (AHCO's 0.54x vs a name limping in at 2.8x).
+        _cov = _interest_coverage(r)
+        if _cov is not None and _cov < COVERAGE_MIN:
+            return _clamp(0.4 + (COVERAGE_MIN - _cov) / COVERAGE_MIN)
+        # Else caught on the absolute floor tests (no interest-expense data to compute coverage):
+        # scale by how far past the floor the funded leverage runs.
+        _fl = _funded_leverage(r)
         if _fl is None:
             return 0.5
         return _clamp(0.4 + (_fl - OVERLEVERED_FLOOR) / 0.55)
@@ -778,12 +786,17 @@ def _overlevered(r):
     #     YUM   ~5x, AZO ~6-7x -> FALSE FIRE, the cases the outperformer guard already caught
     # Coverage separates all of them, because it asks the question the signal is actually about:
     # can the company carry the debt? A profitable filer covering interest several times over is
-    # making a capital-structure CHOICE, not labouring under a constraint. Suppression only for
-    # now -- the thin-cover CATCH side (AHCO, KSS) would newly flag names across the universe and
-    # move the whole board, so it waits for a cycle where that can be screened.
+    # making a capital-structure CHOICE, not labouring under a constraint. Decisive both ways when
+    # computable: clears the signal at/above COVERAGE_MIN (BBWI 4.20x, YUM ~5x, AZO ~6-7x all
+    # correctly drop here), and CATCHES it below COVERAGE_MIN (AHCO 0.54x, KSS 1.77x) without
+    # needing the absolute floor tests below -- both sat under the 45% funded-leverage floor
+    # (AHCO by half a point) and would otherwise never fire. Only falls through to those absolute
+    # tests when coverage itself can't be computed (no interest-expense data).
     _cov = _interest_coverage(r)
-    if _cov is not None and _cov >= COVERAGE_MIN:
-        return False
+    if _cov is not None:
+        if _cov >= COVERAGE_MIN:
+            return False
+        return True
     if OVERLEVERED_ON_NEGATIVE_EQUITY and _negative_equity(r):
         return True
     raw = r.get("raw") or {}
