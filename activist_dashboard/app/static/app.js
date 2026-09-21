@@ -856,15 +856,16 @@ function pkPickLead(){
   return top[idx];
 }
 function effPitch(d){
-  // Prefer the Haiku-polished pitch when present; fall back to the templated one. Keeps the
-  // archetype from the deterministic pitch. _ai flags that prose came from the AI layer.
-  const ai=(d&&d.ai_pitch)||{};
-  if(ai.thesis){
-    const p=Object.assign({}, d.pitch||{}, {thesis:ai.thesis, _ai:true});
-    if(ai.points&&ai.points.length) p.points=ai.points;
-    return p;
-  }
-  return (d&&d.pitch)||{};
+  // The server (main.py) already resolves the templated pitch vs. the Haiku-polished one --
+  // including the freshness check against today's facts (aithesis.effective_pitch) -- and sends
+  // the one result to show. This used to be redone here client-side with no freshness check at
+  // all (the same staleness bug D12 fixed server-side, just in the browser instead of the PDF/
+  // email); merging it in a second place let a cached AI rewrite outlive the facts it was written
+  // from. d.pitch_ai_polished says whether that resolved pitch is the AI-polished version, for
+  // the "AI-polished" badge -- no facts_hash knowledge needed here.
+  const p=Object.assign({}, (d&&d.pitch)||{});
+  p._ai=!!(d&&d.pitch_ai_polished);
+  return p;
 }
 function pkHero(d){
   const vi=vulnInfo(d.vuln); const pitch=effPitch(d); const points=pitch.points||[]; const o=d.overview||{};
