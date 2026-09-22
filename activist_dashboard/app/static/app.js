@@ -921,7 +921,13 @@ function divYield(f){
   if(st==="suspended") return `<span style="color:var(--hot)">Suspended</span>`;
   if(f.dividend_yield==null) return "—";
   const v=fmtPct(f.dividend_yield);
-  return st==="cut" ? `${v} <span style="color:var(--hot);font-size:12px;">· cut</span>` : v;
+  // Finnhub and our filings-based figure disagree by >35% and status isn't already cut/suspended --
+  // neither source is confidently right (see pipeline.py's DividendYieldUncertain comment), so flag
+  // it for a quick manual check instead of asserting either number.
+  const unc=f.dividend_yield_uncertain
+    ? ` <span class="chip opp" title="Vendor-reported yield disagrees with our filings-based figure by more than 35% — worth a quick check for a recent, not-yet-filed dividend change.">unconfirmed</span>`
+    : "";
+  return st==="cut" ? `${v} <span style="color:var(--hot);font-size:12px;">· cut</span>${unc}` : `${v}${unc}`;
 }
 function fmtMetricVal(key,v){
   if(v==null) return "—";

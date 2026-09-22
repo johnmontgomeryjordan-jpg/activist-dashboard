@@ -202,6 +202,8 @@ def _financials(d):
         if v is None and key not in fctx:
             continue
         val = _FMT[kind](v)
+        if key == "dividend_yield" and fin.get("dividend_yield_uncertain"):
+            val += ' <span class="chip opp">unconfirmed</span>'
         c = fctx.get(key)
         verdict_html = ""
         if c and c.get("verdict") in ("bad", "opp"):
