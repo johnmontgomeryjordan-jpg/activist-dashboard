@@ -56,6 +56,19 @@ ENRICH_TOP = 60
 # a much smaller set than the full ENRICH_TOP enrichment, which uses uncapped/free sources.
 TD_TOP = 30
 
+# Market-data enrich (dividend yield, P/B, P/E, 52-wk hi/lo — see _finnhub_metrics/_enrich)
+# is Finnhub-only: 2 calls/company, and Finnhub's free tier is 60 calls/min (see the module
+# docstring above _finnhub_metrics). Over one REFRESH_MINUTES (30 min) cycle that's headroom
+# for ~900 companies (60/min * 30min / 2calls) before the self-paced 0.2s-per-call loop would
+# even approach the ceiling -- comfortably above the `scores` table's size, since recompute_all()
+# already limits that table to names clearing LEAD_FLOOR/MIN_LEAD_VULN or an active situation,
+# not the full universe. Root-caused auditing MSM: it scored a real "flagged" profile (evidence,
+# first_flagged date) but sat below the old ENRICH_TOP=60 cutoff, so its dividend yield and P/B
+# were silently blank on the card despite paying a normal, uncut dividend per FactSet. Unlike
+# ENRICH_TOP (shared by news/TSR/earnings/FMP, each with their own tighter budgets) or TD_TOP
+# (Twelve Data's hard daily cap), this constant is scoped to ONLY the Finnhub market-data pass.
+ENRICH_MARKET_DATA_TOP = 100_000  # effectively "every name with a scores row"
+
 _HEADERS = {"User-Agent": config.SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
 _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik10}.json"
 _SUB_URL = "https://data.sec.gov/submissions/CIK{cik10}.json"
@@ -1943,7 +1956,7 @@ def refresh_enrichment(fetch_desc=True):
         print("[enrich] no FINNHUB_API_KEY set; skipping")
         return 0
     av_key = _av_key()
-    pairs = _tracked_pairs()
+    pairs = _tracked_pairs(top=ENRICH_MARKET_DATA_TOP)
     done = 0
     av_budget = _AV_DESC_PER_RUN
     for cik, tk in pairs.items():
