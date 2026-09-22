@@ -9,8 +9,19 @@ under "Auto Dealers." That put both names in the wrong peer set and produced mis
 This module maps a company's Finnhub industry string (which is keyed off the TICKER, so it is
 correct where SIC is not) to:
   * canon(industry)          -> a cleaned cohort label (or None if empty)
+  * sub_sector(industry)     -> (key, label) for a GICS-style INDUSTRY GROUP (e.g. "Health Care
+                                Equipment & Services" vs "Pharmaceuticals, Biotechnology & Life
+                                Sciences") -- a mid-tier rollup for a thin industry cohort, one
+                                notch narrower than the full sector. Root-caused auditing AHCO (a
+                                home-medical-equipment company): its specific industry cohort was
+                                too thin (< MIN_PEERS) and rolled ALL THE WAY UP to the full 56-66
+                                name "Health Care" sector -- mixing a DME distributor's EV/EBITDA
+                                against biotech and pharma multiples, which trade on an entirely
+                                different basis. There was no stop between "too thin to use" and
+                                "the whole sector."
   * broad_sector(industry)   -> (key, label) for one of ~11 GICS-style sectors, used to roll a
-                                thin industry cohort up to a larger, still-meaningful peer set
+                                thin industry cohort (or thin sub-sector) up to a larger,
+                                still-meaningful peer set
   * is_financial(industry)   -> True for banks / insurers / brokers / asset managers, which need
                                 the existing balance-sheet carve-out (reserves/float, not levers)
 
@@ -68,6 +79,61 @@ _SECTOR_RULES = [
      ("industrials", "Industrials")),
 ]
 
+# Mid-tier rollup: real GICS "industry group" splits within each sector above (kept a strict
+# subset of that sector's own keywords, so anything matching a sub-sector also matches its
+# parent). Only sectors broad/heterogeneous enough to need a stop between "too thin" and "the
+# whole sector" are split; Energy, Utilities, Materials and Real Estate are effectively single
+# industry groups already at this keyword granularity, so they're left un-split (falls straight
+# through to broad_sector). Ordered (first match wins), most specific first.
+_SUBSECTOR_RULES = [
+    # Health Care -> Pharma/Biotech/Life Sciences vs. Equipment & Services (the AHCO case: a DME
+    # distributor has nothing in common, multiple-wise, with a biotech burning cash on a pipeline).
+    (("pharmaceutic", "pharma", "biotech", "life scienc", "drug"),
+     ("health_pharma_biotech", "Pharmaceuticals, Biotechnology & Life Sciences")),
+    (("health", "medical", "hospital", "diagnostic", "managed care"),
+     ("health_equipment_services", "Health Care Equipment & Services")),
+    # Financials -> Banks vs. Insurance vs. everything else diversified
+    (("bank", "thrift"), ("fin_banks", "Banks")),
+    (("insurance", "insurer", "reinsurance"), ("fin_insurance", "Insurance")),
+    (("capital market", "asset management", "brokerage", "broker-dealer", "mortgage finance",
+      "consumer finance", "diversified financ", "financial servic", "financial exchange",
+      "credit servic"), ("fin_diversified", "Diversified Financials")),
+    # Communication Services -> Telecom vs. Media & Entertainment
+    (("telecom", "wireless", "cable", "communication servic"),
+     ("comm_telecom", "Telecommunication Services")),
+    (("media", "entertainment", "publishing", "advertising", "interactive media", "broadcast",
+      "gaming"), ("comm_media", "Media & Entertainment")),
+    # Information Technology -> Semis vs. Hardware vs. Software & Services
+    (("semiconduct",), ("it_semis", "Semiconductors & Semiconductor Equipment")),
+    (("electronic equipment", "hardware", "computer", "technology hardware"),
+     ("it_hardware", "Technology Hardware & Equipment")),
+    (("software", "it servic", "internet software", "information technolog", "fintech",
+      "payment", "data processing", "cloud"), ("it_software", "Software & Services")),
+    # Consumer Staples -> Food/Beverage/Tobacco vs. Household & Personal Products vs. Staples Retail
+    (("household product", "personal product"),
+     ("staples_household", "Household & Personal Products")),
+    (("staples", "grocery"), ("staples_retail", "Food & Staples Retailing")),
+    (("food", "beverage", "tobacco", "agricultur", "farm product"),
+     ("staples_food_bev", "Food, Beverage & Tobacco")),
+    # Consumer Discretionary -> Autos vs. Durables & Apparel vs. Consumer Services vs. Retailing
+    (("auto", "automobile", "vehicle"), ("disc_autos", "Automobiles & Components")),
+    (("apparel", "luxury", "textile", "footwear", "homebuild", "home builder",
+      "household durable"), ("disc_durables", "Consumer Durables & Apparel")),
+    (("hotel", "restaurant", "leisure", "casino", "cruise"),
+     ("disc_services", "Consumer Services")),
+    (("retail", "e-commerce", "distributors", "specialty consumer", "consumer discretion",
+      "consumer product"), ("disc_retail", "Retailing")),
+    # Industrials -> Capital Goods vs. Commercial & Professional Services vs. Transportation
+    (("aerospace", "defense", "machinery", "industrial", "construction", "engineering",
+      "building product", "electrical equipment", "trading compan", "conglomerate"),
+     ("ind_capital_goods", "Capital Goods")),
+    (("commercial servic", "professional servic", "business servic", "support servic",
+      "environmental", "waste", "human resource", "staffing"),
+     ("ind_commercial_services", "Commercial & Professional Services")),
+    (("road", "rail", "airline", "air freight", "logistics", "transport", "marine", "trucking"),
+     ("ind_transportation", "Transportation")),
+]
+
 # Financial industries that need the bank/insurer/broker balance-sheet carve-out (reserves, float,
 # structurally high leverage; no industrial "operating margin"/"SG&A"/EBITDA). Real estate/REITs are
 # intentionally excluded — they are not part of that carve-out.
@@ -102,6 +168,14 @@ def broad_sector(industry):
     """(sector_key, sector_label) for one of ~11 GICS-style sectors, or None if unclassifiable.
     Used to roll a thin industry cohort up to a larger peer set."""
     return _match(industry, _SECTOR_RULES)
+
+
+def sub_sector(industry):
+    """(subsector_key, subsector_label) for a GICS-style industry group, or None when `industry`
+    doesn't fall in one of the sectors split above (Energy/Utilities/Materials/Real Estate/
+    unclassifiable) -- the caller falls through to broad_sector() in that case. A mid-tier rollup
+    for a thin industry cohort, narrower than the full sector: see the module docstring."""
+    return _match(industry, _SUBSECTOR_RULES)
 
 
 def is_financial(industry):

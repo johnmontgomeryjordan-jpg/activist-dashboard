@@ -1646,22 +1646,38 @@ def recompute_all():
     # --- Peer cohorts (GICS-style) -------------------------------------------------------------
     # Primary cohort = the company's Finnhub industry (ticker-accurate, so a med-tech name groups
     # with Health Care, not "Electronic Computers"). A thin industry cohort (< MIN_PEERS) rolls up
-    # to its broad GICS sector; a name with no industry falls back to its 2-digit SIC (legacy
-    # behavior). This fixes both the peer LABEL and the peer CUTOFFS, and degrades safely where
-    # industry data is missing. PEER_TAXONOMY=0 forces the legacy SIC cohorts everywhere.
+    # to its GICS industry group (e.g. Health Care Equipment & Services), and a still-thin industry
+    # group rolls up to the full broad GICS sector; a name with no industry falls back to its
+    # 2-digit SIC (legacy behavior). This fixes both the peer LABEL and the peer CUTOFFS, and
+    # degrades safely where industry data is missing. PEER_TAXONOMY=0 forces legacy SIC cohorts.
+    #
+    # The industry-group step exists because going straight from "too thin" to "the whole sector"
+    # was itself a bug: auditing AHCO (a home-medical-equipment distributor) found its thin
+    # industry cohort rolling all the way up to the 56-66 name "Health Care" sector, benchmarking
+    # its EV/EBITDA against biotech and pharma multiples that trade on an entirely different basis.
     def _sic_cohort(r):
         return "sic:" + (r.get("sector") or "??"), ((r.get("raw") or {}).get("sector_desc") or "sector")
+    def _cohort_sizes():
+        sizes = {}
+        for r in recs:
+            sizes[r["_cohort"]] = sizes.get(r["_cohort"], 0) + 1
+        return sizes
     for r in recs:
         ind = taxonomy.canon(r.get("_industry")) if _use_taxonomy else None
         if ind:
             r["_cohort"], r["_cohort_label"] = "ind:" + ind.lower(), ind
         else:
             r["_cohort"], r["_cohort_label"] = _sic_cohort(r)
-    _sizes = {}
-    for r in recs:
-        _sizes[r["_cohort"]] = _sizes.get(r["_cohort"], 0) + 1
+    _sizes = _cohort_sizes()
     for r in recs:
         if r["_cohort"].startswith("ind:") and _sizes.get(r["_cohort"], 0) < MIN_PEERS:
+            sub = taxonomy.sub_sector(r.get("_industry"))
+            if sub:
+                r["_cohort"], r["_cohort_label"] = "sub:" + sub[0], sub[1]
+    _sizes = _cohort_sizes()
+    for r in recs:
+        if (r["_cohort"].startswith("ind:") or r["_cohort"].startswith("sub:")) \
+                and _sizes.get(r["_cohort"], 0) < MIN_PEERS:
             roll = taxonomy.broad_sector(r.get("_industry"))
             r["_cohort"], r["_cohort_label"] = (("sec:" + roll[0], roll[1]) if roll
                                                 else _sic_cohort(r))
