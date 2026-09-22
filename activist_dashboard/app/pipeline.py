@@ -1978,9 +1978,19 @@ def refresh_enrichment(fetch_desc=True):
         div_yield_fh = met.get("dividend_yield")
         if div_yield is None:
             div_yield = div_yield_fh                 # no XBRL dividend data -> vendor as fallback
+        # A large Finnhub/local mismatch while status reads "paying" (or is unknown) means the two
+        # sources disagree about whether a distribution change has happened -- and neither is
+        # trustworthy enough to silently overrule the other (audited both directions: MNRO's local
+        # 8.7% was the CORRECT one against a stale-low vendor figure, while PZZA's local 9.2% was
+        # stale-high because the declared-per-share XBRL series hadn't yet caught up to a
+        # suspension the vendor already reflected). "cut"/"suspended" already override div_yield
+        # above, so a mismatch there is expected and not flagged. Surface the disagreement on the
+        # card instead of only in this log line, so it doesn't take a manual FactSet audit to find.
+        div_yield_uncertain = False
         if div_yield_fh is not None and div_yield_local is not None:
             _base = max(div_yield_fh, div_yield_local, 1e-6)
             if abs(div_yield_fh - div_yield_local) / _base > 0.35:
+                div_yield_uncertain = div_status not in ("cut", "suspended")
                 print(f"[enrich] {tk}: dividend yield mismatch — Finnhub={div_yield_fh:.2%} "
                       f"local(XBRL)={div_yield_local:.2%} status={div_status or 'unknown'}")
         if mcap is not None and met.get("tsr_1y") is not None:
@@ -2010,6 +2020,7 @@ def refresh_enrichment(fetch_desc=True):
             "DividendStatus": raw.get("dividend_status"),
             "DividendYieldFinnhub": div_yield_fh,
             "DividendYieldLocal": div_yield_local,
+            "DividendYieldUncertain": div_yield_uncertain,
             "52WeekHigh": met.get("wk_hi"),
             "52WeekLow": met.get("wk_lo"),
         }

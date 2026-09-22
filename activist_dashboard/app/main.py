@@ -896,6 +896,10 @@ def _company_payload(cik: str):
             # 'paying' / 'cut' / 'suspended' from the declared per-share series (pipeline.py).
             # Drives the Financials readout so a suspended payout can't render as a live yield.
             "dividend_status": (av or {}).get("DividendStatus"),
+            # True when Finnhub and our own filings-based yield disagree by >35% and the status
+            # above isn't already "cut"/"suspended" -- i.e. the two sources disagree about whether
+            # a distribution change has happened and neither is confidently right. See pipeline.py.
+            "dividend_yield_uncertain": bool((av or {}).get("DividendYieldUncertain")),
             "week52_high": avf("52WeekHigh"),
             "week52_low": avf("52WeekLow"),
             "analyst_target": avf("AnalystTargetPrice"),
