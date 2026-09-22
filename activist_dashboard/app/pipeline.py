@@ -2033,22 +2033,35 @@ def refresh_enrichment(fetch_desc=True):
                 desc = d.get("Description")
             av_budget -= 1
             time.sleep(13)                         # respect AV free pace (only until cached)
+        # Market-cap/P-B/P-E/dividend fields fall back to the PREVIOUS cycle's value when this
+        # cycle's Finnhub call comes back empty (a timeout, a rate-limit blip, a momentary gap in
+        # Finnhub's own data) -- same pattern already used for Description/Sector/Industry/
+        # Exchange/OfficialSite above. Without it, a single bad fetch silently wipes a real,
+        # previously-fetched figure back to blank instead of just skipping that cycle's update.
+        # Root-caused auditing MSM: Finnhub had real data for it (logged, non-null) one evening,
+        # then its card went blank the next day with no code change in between -- a transient
+        # per-company fetch failure overwriting good data, not a coverage-eligibility issue.
+        _pe = pe if pe is not None else met.get("pe")
+        _wk_hi = met.get("wk_hi")
+        _wk_lo = met.get("wk_lo")
         overview = {
             "Description": desc or prev.get("Description"),
             "Sector": raw.get("sector_desc") or prev.get("Sector"),
             "Industry": prof.get("finnhubIndustry") or prev.get("Industry"),
             "Exchange": prof.get("exchange") or prev.get("Exchange"),
             "OfficialSite": prof.get("weburl") or prev.get("OfficialSite"),
-            "MarketCapitalization": mcap,
-            "PriceToBookRatio": pb,
-            "PERatio": pe if pe is not None else met.get("pe"),
-            "DividendYield": div_yield,
-            "DividendStatus": raw.get("dividend_status"),
-            "DividendYieldFinnhub": div_yield_fh,
-            "DividendYieldLocal": div_yield_local,
-            "DividendYieldUncertain": div_yield_uncertain,
-            "52WeekHigh": met.get("wk_hi"),
-            "52WeekLow": met.get("wk_lo"),
+            "MarketCapitalization": mcap if mcap is not None else prev.get("MarketCapitalization"),
+            "PriceToBookRatio": pb if pb is not None else prev.get("PriceToBookRatio"),
+            "PERatio": _pe if _pe is not None else prev.get("PERatio"),
+            "DividendYield": div_yield if div_yield is not None else prev.get("DividendYield"),
+            "DividendStatus": raw.get("dividend_status") or prev.get("DividendStatus"),
+            "DividendYieldFinnhub": div_yield_fh if div_yield_fh is not None else prev.get("DividendYieldFinnhub"),
+            "DividendYieldLocal": div_yield_local if div_yield_local is not None else prev.get("DividendYieldLocal"),
+            "DividendYieldUncertain": (div_yield_uncertain
+                                       if (div_yield_fh is not None and div_yield_local is not None)
+                                       else bool(prev.get("DividendYieldUncertain"))),
+            "52WeekHigh": _wk_hi if _wk_hi is not None else prev.get("52WeekHigh"),
+            "52WeekLow": _wk_lo if _wk_lo is not None else prev.get("52WeekLow"),
         }
         database.upsert_av_overview(cik, tk, overview)
         done += 1
