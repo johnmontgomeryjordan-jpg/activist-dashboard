@@ -1971,6 +1971,14 @@ def refresh_enrichment(fetch_desc=True):
             # request errors and return {}. Surface it so a per-company gap (e.g. MSM's) is
             # visible in the logs instead of looking identical to "nothing changed this cycle".
             print(f"[enrich] {tk}: Finnhub profile+metrics both empty this cycle")
+        if tk == "MSM":
+            # Temporary, ticker-scoped diagnostic (remove once resolved): MSM's price/book and
+            # dividend yield have stayed blank across every fix so far (Finnhub-pb fallback,
+            # shares_out fallback, active-situations coverage). It's confirmed to be neither an
+            # active situation nor excluded from _tracked_pairs, so the remaining candidate is a
+            # PARTIAL Finnhub response -- present (skips the both-empty print above) but missing
+            # the specific fields this function reads. Dump the raw dicts to settle it.
+            print(f"[enrich] MSM raw prof={prof!r} met={met!r}")
         mcap = _ff(prof.get("marketCapitalization"))
         mcap = mcap * 1e6 if mcap else None        # Finnhub reports market cap in millions
         try:
