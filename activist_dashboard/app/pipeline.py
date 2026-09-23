@@ -1962,6 +1962,12 @@ def refresh_enrichment(fetch_desc=True):
     for cik, tk in pairs.items():
         prof = _finnhub_profile(tk, key); time.sleep(0.2)
         met = _finnhub_metrics(tk, key); time.sleep(0.2)
+        if not prof and not met:
+            # Both calls came back empty (a timeout, a rate-limit blip, or Finnhub genuinely
+            # has nothing for this symbol) with no exception to log -- both helpers swallow
+            # request errors and return {}. Surface it so a per-company gap (e.g. MSM's) is
+            # visible in the logs instead of looking identical to "nothing changed this cycle".
+            print(f"[enrich] {tk}: Finnhub profile+metrics both empty this cycle")
         mcap = _ff(prof.get("marketCapitalization"))
         mcap = mcap * 1e6 if mcap else None        # Finnhub reports market cap in millions
         try:
@@ -2041,6 +2047,13 @@ def refresh_enrichment(fetch_desc=True):
         # Root-caused auditing MSM: Finnhub had real data for it (logged, non-null) one evening,
         # then its card went blank the next day with no code change in between -- a transient
         # per-company fetch failure overwriting good data, not a coverage-eligibility issue.
+        # P/B falls back to Finnhub's own reported multiple when the local book-equity-based
+        # calc above has nothing (mcap or book missing this cycle) -- same tier P/E already had
+        # (met.get("pe") a few lines up) but P/B was missing entirely, so any cycle where the
+        # local calc came back None skipped straight to the stale prev value instead of trying
+        # the vendor figure first. Left the local calc as primary since it's the more reliable
+        # source (see the P/B negative-book-equity note above); this only fills the gap.
+        _pb = pb if pb is not None else met.get("pb")
         _pe = pe if pe is not None else met.get("pe")
         _wk_hi = met.get("wk_hi")
         _wk_lo = met.get("wk_lo")
@@ -2051,7 +2064,7 @@ def refresh_enrichment(fetch_desc=True):
             "Exchange": prof.get("exchange") or prev.get("Exchange"),
             "OfficialSite": prof.get("weburl") or prev.get("OfficialSite"),
             "MarketCapitalization": mcap if mcap is not None else prev.get("MarketCapitalization"),
-            "PriceToBookRatio": pb if pb is not None else prev.get("PriceToBookRatio"),
+            "PriceToBookRatio": _pb if _pb is not None else prev.get("PriceToBookRatio"),
             "PERatio": _pe if _pe is not None else prev.get("PERatio"),
             "DividendYield": div_yield if div_yield is not None else prev.get("DividendYield"),
             "DividendStatus": raw.get("dividend_status") or prev.get("DividendStatus"),
