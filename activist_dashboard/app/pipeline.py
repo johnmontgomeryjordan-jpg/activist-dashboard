@@ -614,7 +614,14 @@ def _dividend_state(facts):
     if not prior or latest is None:
         return latest, None, None
     prior.sort()
-    run_rate = prior[len(prior) // 2]                # median of the preceding quarters
+    # True median: for an even count this averages the two middle values, not just the upper
+    # one. `prior[len(prior)//2]` alone silently picks the upper-middle value for the (typical)
+    # 4-quarter case, which broke on GIS -- its fiscal Q2 recurringly carries two declarations
+    # (confirmed via SEC XBRL: ~$0.60/$0.60/$1.20/$1.22 every year), so the old formula always
+    # landed on the doubled value as "run rate" and made every ordinary quarter since look like
+    # a 40%+ cut relative to it, when GIS's dividend has in fact grown every year.
+    n = len(prior)
+    run_rate = prior[n // 2] if n % 2 else (prior[n // 2 - 1] + prior[n // 2]) / 2
     if run_rate <= 0:
         return latest, run_rate, ("paying" if latest > 0 else None)
     if latest <= 0:
