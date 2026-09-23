@@ -2000,7 +2000,15 @@ def refresh_enrichment(fetch_desc=True):
         div_paid = raw.get("dividends_paid_ttm")
         div_yield_local = (abs(div_paid) / mcap) if (div_paid and mcap) else None
         div_status = raw.get("dividend_status")
-        shares_out = raw.get("shares") or (raw.get("book_equity") and None)
+        # Falls back to Finnhub's reported share count (same source/scaling as mcap above) when
+        # the DEI shares-outstanding tag doesn't populate this cycle. The old fallback here --
+        # `raw.get("book_equity") and None` -- was dead code: `X and None` is always falsy, so it
+        # never actually supplied a share count, silently dropping the "cut" branch below to the
+        # stale trailing-paid yield (caught auditing FLO: a cut from $0.2475 to $0.125/quarter
+        # displayed as 14.9% -- the pre-cut trailing blend -- instead of the correct ~8.4% run-rate,
+        # because shares_out came back None and the branch's `and shares_out` guard failed).
+        _shares_fh = _ff(prof.get("shareOutstanding"))
+        shares_out = raw.get("shares") or (_shares_fh * 1e6 if _shares_fh else None)
         if div_status == "suspended":
             div_yield = 0.0
         elif div_status == "cut" and raw.get("dividend_dps_latest") is not None and shares_out and mcap:
