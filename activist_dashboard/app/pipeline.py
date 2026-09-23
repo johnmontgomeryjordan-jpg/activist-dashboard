@@ -1407,7 +1407,10 @@ def _tracked_pairs(top=ENRICH_TOP):
     for s in database.get_scores(limit=top):
         if s.get("ticker"):
             pairs[s["cik"]] = s["ticker"]
-    for s in database.get_active_situations(limit=40):
+    # Was hardcoded to 40 regardless of `top` -- silently defeating a caller's wider `top`
+    # (e.g. ENRICH_MARKET_DATA_TOP's "effectively every name" intent) for any active-situation
+    # company ranked below the 40th by vuln. Scale with `top` like get_scores() above it.
+    for s in database.get_active_situations(limit=top):
         if s.get("ticker"):
             pairs.setdefault(s["cik"], s["ticker"])
     for w in database.get_watchlist():
