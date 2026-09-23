@@ -660,6 +660,15 @@ def _gated_company_news(ticker, name, limit=10):
     return (gated if gated else rows)[:limit]
 
 
+def _upcoming(iso_date):
+    """A parsed annual-meeting date is only meaningful as "next" while it hasn't passed. The
+    proxy that named it can sit unrefreshed for a year+ when the company hasn't filed a new
+    DEF 14A yet (confirmed on VYX/NCR Voyix: latest proxy on file still named a June 2025
+    meeting, shown on the live profile as "Next annual meeting" long after that date passed).
+    Suppress rather than show a stale date as upcoming."""
+    return iso_date if iso_date and iso_date >= _now_et().date().isoformat() else None
+
+
 def _company_payload(cik: str):
     """Full detail for one flagged company, or None if not found. Factored out of api_company()
     so the JSON endpoint and the PDF download (below) build the identical payload from one place
@@ -807,7 +816,7 @@ def _company_payload(cik: str):
             "dual_class": bool(gov.get("dual_class")),
             "proxy_url": gov.get("proxy_url"),
             "proxy_date": gov.get("proxy_date"),
-            "annual_meeting_date": gov.get("meeting_date"),
+            "annual_meeting_date": _upcoming(gov.get("meeting_date")),
             "nom_min_days": gov.get("nom_min_days"),
             "nom_max_days": gov.get("nom_max_days"),
         },
