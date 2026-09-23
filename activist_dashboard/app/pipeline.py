@@ -1965,20 +1965,14 @@ def refresh_enrichment(fetch_desc=True):
     for cik, tk in pairs.items():
         prof = _finnhub_profile(tk, key); time.sleep(0.2)
         met = _finnhub_metrics(tk, key); time.sleep(0.2)
-        if not prof and not met:
-            # Both calls came back empty (a timeout, a rate-limit blip, or Finnhub genuinely
-            # has nothing for this symbol) with no exception to log -- both helpers swallow
-            # request errors and return {}. Surface it so a per-company gap (e.g. MSM's) is
-            # visible in the logs instead of looking identical to "nothing changed this cycle".
+        # `met` isn't just {} on a request failure -- Finnhub can return 200 with a real but
+        # empty "metric" object, giving back this function's full key set with every value None
+        # (confirmed for MSM: prof={} outright, met={'tsr_1y': None, 'pb': None, ...}). That's
+        # not a transient blip to retry, it's the provider having no coverage for this symbol,
+        # and the original `not met` check missed it since a dict of Nones is still truthy.
+        _met_empty = not met or all(v is None for v in met.values())
+        if not prof and _met_empty:
             print(f"[enrich] {tk}: Finnhub profile+metrics both empty this cycle")
-        if tk == "MSM":
-            # Temporary, ticker-scoped diagnostic (remove once resolved): MSM's price/book and
-            # dividend yield have stayed blank across every fix so far (Finnhub-pb fallback,
-            # shares_out fallback, active-situations coverage). It's confirmed to be neither an
-            # active situation nor excluded from _tracked_pairs, so the remaining candidate is a
-            # PARTIAL Finnhub response -- present (skips the both-empty print above) but missing
-            # the specific fields this function reads. Dump the raw dicts to settle it.
-            print(f"[enrich] MSM raw prof={prof!r} met={met!r}")
         mcap = _ff(prof.get("marketCapitalization"))
         mcap = mcap * 1e6 if mcap else None        # Finnhub reports market cap in millions
         try:
