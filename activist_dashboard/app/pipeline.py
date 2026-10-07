@@ -215,6 +215,18 @@ _DIV_PER_SHARE = ["CommonStockDividendsPerShareDeclared",
 # the filer has abandoned the concept -- a suspension can't be told apart from a dropped tag, so
 # report none rather than a stale "paying" (mirrors _DEBT_STALE_DAYS / _CASH_STALE_DAYS).
 _DIV_STALE_DAYS = 400
+# A quarter with NO dividend often gets no XBRL entry at all rather than an explicit $0 -- some
+# variable-dividend payers skip the fact entirely for an unprofitable quarter instead of filing a
+# zero. Confirmed on Cal-Maine (2026-10-07 audit): its 10-Q states outright "we will not pay a
+# cash dividend... with respect to our first quarter of fiscal 2027" with a $94.5M cumulative
+# loss to recover before the next one -- an explicit suspension, live-confirmed by FactSet's own
+# $0 indicated yield -- yet the declared-dividend series simply has no entry for that quarter (or
+# the one before it): the real gap, verified against SEC XBRL, is 182 days (two skipped quarters).
+# Below _DIV_STALE_DAYS (the "abandoned the concept entirely" threshold) but comfortably past one
+# ordinary ~90-day quarter (with real slack for normal filing lag) and confidently under Cal-
+# Maine's actual 182-day gap, a silence this long for a filer with an established quarterly
+# cadence is itself the suspension signal, not silence to stay neutral on.
+_DIV_SKIP_DAYS = 150
 # Share repurchases (cash-flow statement). Cumulative treasury stock is the wrong measure -- it is
 # decades of history and would light up any long-lived company -- so we sum the trailing few YEARS
 # of actual buyback spend and compare it to what the company is worth today. PZZA: ~$1.1B of
@@ -656,9 +668,32 @@ def _dividend_state(facts):
     of the preceding four.
 
     status is one of: 'paying', 'cut', 'suspended', or None when there is not enough history.
-    Quarterly entries only (55-115 days) so an annual roll-up can't be mistaken for a quarter."""
-    q = [e for e in _flows(facts, _DIV_PER_SHARE, unit="USD/shares")
-         if 55 <= e["days"] <= 115 and e.get("end")]
+    Quarterly entries only (55-115 days) so an annual roll-up can't be mistaken for a quarter.
+
+    Each candidate tag in _DIV_PER_SHARE is evaluated SEPARATELY here, picking whichever has the
+    most recent QUARTERLY entry -- not the generic _flows()/_usd() "whichever tag's entry of ANY
+    duration is most recent" selection, which the other callers of _usd() correctly rely on.
+    A dividend concept is routinely filed BOTH quarterly (10-Q) and as an annual rollup (10-K)
+    under the same tag, and a company can let one tag's quarterly coverage lapse while its annual
+    rollup keeps going -- whose end date can still out-date another tag's still-current quarterly
+    entries. Confirmed on Cal-Maine: CommonStockDividendsPerShareDeclared's quarterly coverage
+    stopped in 2017 (only annual rollups since), but its FY2026 annual entry (2026-05-30) is
+    chronologically newer than CommonStockDividendsPerShareCashPaid's latest QUARTERLY entry
+    (2026-02-28) -- so the generic any-duration selection picked Declared, whose relevant
+    (quarterly) data is a decade stale, over CashPaid, which has the live, current picture
+    (including two silently skipped quarters an explicit dividend-suspension 10-Q disclosure
+    confirms). That read as over a DECADE of silence -- comfortably past even _DIV_STALE_DAYS,
+    so it fell back to "unknown" -- instead of the much more specific truth: a live quarterly
+    payer that had just gone quiet for 182 days (see _DIV_SKIP_DAYS below)."""
+    q = []
+    _best_end = ""
+    for _tag in _DIV_PER_SHARE:
+        _rows = [e for e in _flows(facts, [_tag], unit="USD/shares")
+                 if 55 <= e["days"] <= 115 and e.get("end")]
+        if _rows:
+            _mx = max(e["end"] for e in _rows)
+            if _mx > _best_end:
+                q, _best_end = _rows, _mx
     # Dedup by period end: the SAME quarter is re-filed across later 10-Qs/10-Ks, and an
     # undeduped duplicate would occupy two slots in the prior-quarter run-rate window below.
     # A dict keyed on end-date keeps whichever occurrence is LAST in the underlying facts
@@ -671,11 +706,16 @@ def _dividend_state(facts):
     # company's CURRENT balance sheet (the Assets tag's date). A filer that has abandoned this
     # concept looks identical to one that suspended -- stay silent rather than assert either.
     _bs_end, _ = _instant_dated(facts, _ASSETS[0])
-    if _bs_end:
-        _gap = _ddays(q[0]["end"], _bs_end)
-        if _gap is not None and _gap > _DIV_STALE_DAYS:
-            return None, None, None
+    _gap = _ddays(q[0]["end"], _bs_end) if _bs_end else None
+    if _gap is not None and _gap > _DIV_STALE_DAYS:
+        return None, None, None
     latest = q[0]["val"]
+    # A gap well past one ordinary quarter (but short of _DIV_STALE_DAYS) means a filer with an
+    # established quarterly cadence has gone quiet rather than declared and not been tagged --
+    # see _DIV_SKIP_DAYS. `latest` is still the last quarter that WAS paid, kept here for display,
+    # but the status itself is the skip, not whatever that old positive value would imply.
+    if _gap is not None and _gap > _DIV_SKIP_DAYS:
+        return latest, None, "suspended"
     prior = [e["val"] for e in q[1:5] if e["val"] is not None]
     if not prior or latest is None:
         return latest, None, None
