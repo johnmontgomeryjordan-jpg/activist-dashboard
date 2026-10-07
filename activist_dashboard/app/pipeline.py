@@ -337,31 +337,77 @@ def _instant_dated(facts, tag):
     return rows[0]
 
 
-def _instant_avg(facts, tags, n=4):
-    """Trailing average of the last `n` reported balance-sheet dates for a concept -- same
-    tag-recency selection as _instant()/_usd() (whichever candidate tag's data is most recent
-    wins; that tag's own historical series is used for the average, never mixed with another
-    tag's). Smooths a single seasonal snapshot: Kohl's May cash balance is a holiday-inventory
-    build ($1.73B) against a $674M January fiscal year-end -- a single instant calls a normal
-    working-capital swing "idle capital." A trailing ~12-month average reads that correctly for
-    any company without needing to first decide which businesses are seasonal, and barely moves a
-    company whose balance is already stable quarter to quarter. The trade-off: for a company with
-    a genuine recent step-change (a large debt raise just banked, a big one-time cash outlay), this
-    lags the true current balance until older quarters roll off -- accepted here because the
-    smoothing fixes a confirmed, recurring defect and the lag is a bounded, disclosed cost.
-    Falls back to however many distinct dates ARE available (a young filer, or a recent tag
-    switch) rather than requiring a full `n`; returns None only when there's no data at all."""
+def _instant_trail(facts, tags, n=4):
+    """The last `n` distinct reported balance-sheet dates for a concept, most recent first, as
+    (end, val) pairs -- same tag-recency selection as _instant()/_usd() (whichever candidate
+    tag's data is most recent wins; that tag's own historical series is used throughout, never
+    mixed with another tag's). Shared by _instant_avg() and _cash_level()'s step-change guard so
+    both read off the exact same underlying series."""
     rows = [(e["end"], e["val"]) for e in _usd(facts, tags)
             if e.get("val") is not None and e.get("end")
             and (not e.get("start") or e.get("start") == e.get("end"))]
     if not rows:
-        return None
+        return []
     by_end = {}
     for end, val in rows:
         by_end.setdefault(end, val)
     ends = sorted(by_end.keys(), reverse=True)[:n]
-    vals = [by_end[e] for e in ends]
+    return [(e, by_end[e]) for e in ends]
+
+
+def _instant_avg(facts, tags, n=4):
+    """Trailing average of the last `n` reported balance-sheet dates for a concept. Smooths a
+    single seasonal snapshot: Kohl's May cash balance is a holiday-inventory build ($1.73B)
+    against a $674M January fiscal year-end -- a single instant calls a normal working-capital
+    swing "idle capital." A trailing ~12-month average reads that correctly for any company
+    without needing to first decide which businesses are seasonal, and barely moves a company
+    whose balance is already stable quarter to quarter. The trade-off: for a company with a
+    genuine recent step-change (a large debt raise just banked, a big one-time cash outlay), this
+    lags the true current balance until older quarters roll off -- accepted here because the
+    smoothing fixes a confirmed, recurring defect and the lag is a bounded, disclosed cost (see
+    _cash_level() for the guard that bounds it further for cash specifically).
+    Falls back to however many distinct dates ARE available (a young filer, or a recent tag
+    switch) rather than requiring a full `n`; returns None only when there's no data at all."""
+    trail = _instant_trail(facts, tags, n)
+    if not trail:
+        return None
+    vals = [v for _, v in trail]
     return sum(vals) / len(vals)
+
+
+# _cash_level()'s step-change guard: how closely the two most recent quarters must agree to count
+# as a confirmed new level, and how far that level must then sit from the stale trailing average
+# before it's trusted over it. See _cash_level() docstring for the O-I Glass / Kohl's cases these
+# were picked to separate.
+_CASH_STEP_CLOSE = 0.20
+_CASH_STEP_GAP = 0.30
+
+
+def _cash_level(facts):
+    """Cash & equivalents for the liquidity read. Normally the trailing 4-quarter average (see
+    _instant_avg) -- but that average itself goes stale after a genuine, sustained level-shift,
+    not just a seasonal blip. Confirmed on O-I Glass: an $873M goodwill impairment in Q2 2026
+    (plus continued debt paydown) took cash from $759M to $317M to $339M over two quarters, while
+    the 4-quarter average still read ~$493M -- overstating current liquidity by 46% and calling a
+    shrinking cash pile "cash-heavy... idle capital an activist would push to return."
+
+    Distinguished from a one-quarter seasonal spike -- which only ONE quarter confirms -- by
+    requiring the two MOST RECENT quarters to agree with each other (within _CASH_STEP_CLOSE) AND
+    both sit meaningfully away from the older trailing average (at least _CASH_STEP_GAP). Kohl's
+    May spike fails this: its prior quarter (the January fiscal year-end, $674M) sits nowhere near
+    the May peak ($1.73B), so nothing confirms it and the smoothed average is kept, exactly as
+    before. A company whose balance is already stable also leaves the average untouched, since the
+    latest instant is then already close to it and the gap test doesn't clear."""
+    trail = _instant_trail(facts, _CASH, 4)
+    if not trail:
+        return None
+    avg = sum(v for _, v in trail) / len(trail)
+    if len(trail) < 2 or avg <= 0:
+        return avg
+    latest, prior = trail[0][1], trail[1][1]
+    close = abs(latest - prior) <= _CASH_STEP_CLOSE * max(abs(latest), abs(prior), 1)
+    gap = abs(avg - latest) >= _CASH_STEP_GAP * avg
+    return latest if (close and gap) else avg
 
 
 def _latest_instant_end(facts, tags):
@@ -688,9 +734,9 @@ def _extract(facts):
 
     assets = _instant(facts, _ASSETS)
     equity = _instant(facts, _EQUITY)
-    # Trailing 4-quarter average, not the single latest instant -- see _instant_avg() for why
-    # (a seasonal retailer's peak-inventory-buildup cash balance was reading as "idle capital").
-    cash_c = _instant_avg(facts, _CASH, n=4)
+    # Trailing 4-quarter average, not the single latest instant -- see _cash_level() for why,
+    # and for the guard that drops the average when a genuine step-change has made it stale.
+    cash_c = _cash_level(facts)
     # Staleness guard: if even the freshest candidate cash tag trails the current balance sheet
     # (the Assets tag) by more than _CASH_STALE_DAYS, every candidate has been abandoned -- treat
     # cash as unknown rather than surface a frozen figure as current (see _CASH comment above).
