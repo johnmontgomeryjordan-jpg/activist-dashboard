@@ -152,11 +152,7 @@ _ASSETS_CURRENT = ["AssetsCurrent"]
 # not 0%). Listed AFTER the more specific funded-debt totals so a company filing both is unaffected.
 _DEBT_TOTAL = ["LongTermDebt", "DebtLongtermAndShorttermCombinedAmount",
                "DebtInstrumentCarryingAmount", "NotesAndLoansPayable"]
-_DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations",
-                  # Baxter's own custom extension (bax:...) for the same concept -- "long-term
-                  # debt and lease obligation(s), excluding current maturities" -- with no
-                  # us-gaap equivalent filed at all. See _usd()'s custom-namespace fallback.
-                  "LongTermDebtAndLeaseObligationExcludingCurrentMaturities"]
+_DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"]
 # COMBINED instrument tags: each already includes BOTH current and noncurrent portions, so they
 # are NOT part of the noncurrent/current split above. Many issuers — especially REITs (Digital
 # Realty tags its ~$16B under plain "SeniorNotes", $432M under "UnsecuredDebt") — file only these
@@ -278,27 +274,13 @@ def _usd(facts, tags, unit="USD"):
     first tag with *any* data froze names like TMDX on a stale 2022 series under an abandoned
     tag. Ties (same latest end-date) fall back to the given preference order.
 
-    Checked under the standard us-gaap taxonomy FIRST; a tag name also falls back to the
-    filer's own custom extension namespace(s) (whatever else `facts['facts']` contains besides
-    'us-gaap'/'dei') when us-gaap doesn't have it. Confirmed on Baxter: its noncurrent long-term
-    debt is tagged bax:LongTermDebtAndLeaseObligationExcludingCurrentMaturities -- a company
-    extension element with no us-gaap equivalent at all, not merely an uncommon standard tag --
-    so every us-gaap candidate in this file's debt lists came back empty for it. A filer that
-    tags a concept BOTH ways is unaffected: us-gaap is tried first per tag and wins outright
-    when present, so a redundant custom duplicate is never preferred over the standard one.
-
     `unit` defaults to "USD" (every existing caller is unaffected); pass "USD/shares" for a
     perShareItemType concept -- e.g. the declared-dividend-per-share tags, which are filed
     under that unit and return an empty series against the default (see _DIV_PER_SHARE)."""
-    all_facts = facts.get("facts", {})
-    namespaces = ["us-gaap"] + [ns for ns in all_facts if ns != "us-gaap"]
+    us_gaap = facts.get("facts", {}).get("us-gaap", {})
     best, best_end = [], ""
     for t in tags:
-        node = None
-        for ns in namespaces:
-            node = all_facts.get(ns, {}).get(t)
-            if node:
-                break
+        node = us_gaap.get(t)
         if not node:
             continue
         u = node.get("units", {}).get(unit)
@@ -450,25 +432,32 @@ def _latest_instant_end(facts, tags):
     return max(rows) if rows else None
 
 
-# *AndCapitalLeaseObligations tags (and Baxter's custom *AndLeaseObligation... equivalent)
-# already bundle finance (capital) leases into the funded-debt figure, so when the funded total
-# comes from one of these we must NOT add finance leases again.
+# *AndCapitalLeaseObligations tags already bundle finance (capital) leases into the funded-debt
+# figure, so when the funded total comes from one of these we must NOT add finance leases again.
 _CAPLEASE_INCLUSIVE = ("LongTermDebtAndCapitalLeaseObligations",
-                       "LongTermDebtAndCapitalLeaseObligationsCurrent",
-                       "LongTermDebtAndLeaseObligationExcludingCurrentMaturities")
+                       "LongTermDebtAndCapitalLeaseObligationsCurrent")
 
 
 def _funded_debt(facts):
     """Funded debt, RECENCY-AWARE and robust to tag switches. Companies abandon XBRL tags over time:
     BLDR's "LongTermDebt" froze at 2015 ($408.9M) while it now reports debt under
     "LongTermDebtAndCapitalLeaseObligations" (2026 = $4.6B). So: read every candidate debt tag's
-    latest (date, value), find the company's most recent balance-sheet date, and build debt ONLY from
-    tags reporting at that date. Returns (funded_debt, via_caplease, current_portion) —
-    via_caplease True when the value came from a *AndCapitalLeaseObligations tag (which already
-    bundles finance leases); current_portion is the slice of funded_debt maturing within 12
-    months, or None when the filer's tags don't let us see that split (a single combined
-    LongTermDebt total tag, or a combined-instrument fallback) rather than reporting a false $0 —
-    see the maturity-wall signal in scoring.py, which depends on that None meaning "unknown"."""
+    latest (date, value) and drop any that's gone stale relative to the company's current balance
+    sheet (tag abandoned). Returns (funded_debt, via_caplease, current_portion) — via_caplease True
+    when the value came from a *AndCapitalLeaseObligations tag (which already bundles finance
+    leases); current_portion is the slice of funded_debt maturing within 12 months, or None when
+    the filer's tags don't let us see that split (a single combined LongTermDebt total tag, or a
+    combined-instrument fallback) rather than reporting a false $0 — see the maturity-wall signal
+    in scoring.py, which depends on that None meaning "unknown".
+
+    The noncurrent/current split is recency-anchored SEPARATELY on each side, not to one shared
+    "most recent debt tag overall" date. Baxter files its noncurrent total
+    (LongTermDebtAndCapitalLeaseObligations) only in the annual 10-K but its current-maturities
+    slice (...Current) every 10-Q; anchoring both to a single global latest date made the
+    quarterly current-portion tag "win" and silently dropped the (larger, annual-only) noncurrent
+    $9.47B, reading ~$844M total debt instead of ~$10.3B. Each side now uses its own most-recent
+    value once past the staleness guard, so a tag filed on a slower cadence than its sibling is
+    still counted."""
     dated = {}                                   # tag -> (end_date, value)
     for t in (_DEBT_TOTAL + _DEBT_NC_TOTAL + _DEBT_NC_PARTS
               + _DEBT_CUR_TOTAL + _DEBT_CUR_PARTS + _DEBT_COMBINED_PARTS):
@@ -477,54 +466,65 @@ def _funded_debt(facts):
             dated[t] = (ed, v)
     if not dated:
         return None, False, None
-    latest = max(ed for ed, _v in dated.values())
-    # Staleness guard: anchor to the company's CURRENT balance sheet (the Assets date). If the
-    # newest debt tag is far older than that, the debt is gone (tag abandoned) -> report none.
+
+    # Staleness guard: anchor to the company's CURRENT balance sheet (the Assets date). Any tag
+    # whose own latest entry is far older than that has been abandoned -> drop it, not just the
+    # single globally-newest one, so a sibling tag filed on a slower (e.g. annual) cadence isn't
+    # punished for some OTHER tag having gone stale.
     _bs_ed, _bs_v = _instant_dated(facts, _ASSETS[0])
-    if _bs_ed:
+
+    def _stale(ed):
+        if not _bs_ed:
+            return False
         try:
-            _gap = (datetime.strptime(_bs_ed[:10], "%Y-%m-%d")
-                    - datetime.strptime(str(latest)[:10], "%Y-%m-%d")).days
+            gap = (datetime.strptime(_bs_ed[:10], "%Y-%m-%d")
+                   - datetime.strptime(str(ed)[:10], "%Y-%m-%d")).days
         except (ValueError, TypeError):
-            _gap = 0
-        if _gap > _DEBT_STALE_DAYS:
-            return 0.0, False, 0.0
+            return False
+        return gap > _DEBT_STALE_DAYS
 
-    def src_at_latest(tags):                     # (value, tag) for first tag (pref order) at `latest`
+    dated = {t: ev for t, ev in dated.items() if not _stale(ev[0])}
+    if not dated:
+        return 0.0, False, 0.0
+
+    def best_of(tags):                    # (value, tag) for whichever of `tags` has its OWN most
+        best_t, best_ed = None, ""         # recent data; preference order breaks ties
         for t in tags:
-            if t in dated and dated[t][0] == latest:
-                return dated[t][1], t
-        return None, None
+            if t in dated and dated[t][0] > best_ed:
+                best_t, best_ed = t, dated[t][0]
+        return (dated[best_t][1], best_t) if best_t else (None, None)
 
-    def sum_at_latest(tags):                     # sum of ALL component tags reporting at `latest`
-        vals = [dated[t][1] for t in tags if t in dated and dated[t][0] == latest]
-        return sum(vals) if vals else None
+    def sum_latest(tags):                 # sum of component tags sharing THEIR OWN latest date
+        avail = [(t, dated[t]) for t in tags if t in dated]
+        if not avail:
+            return None
+        end = max(ev[0] for _t, ev in avail)
+        return sum(ev[1] for _t, ev in avail if ev[0] == end)
 
     # A single all-in total tag (per US-GAAP LongTermDebt already includes current maturities) —
     # current/noncurrent split unknown from this tag alone.
-    total, _tag = src_at_latest(_DEBT_TOTAL)
+    total, _tag = best_of(_DEBT_TOTAL)
     if total is not None:
         return total, False, None                # _DEBT_TOTAL tags are debt-only (no leases)
-    # Else build from noncurrent + current. Prefer a TOTAL tag on each side; only if none reports
-    # at the latest date do we SUM the instrument-level parts (so a proper total is never
-    # double-counted with its own components).
-    nc, nctag = src_at_latest(_DEBT_NC_TOTAL)
+    # Else build from noncurrent + current, each anchored to its own most-recent reporting date.
+    # Prefer a TOTAL tag on each side; only if none reports do we SUM the instrument-level parts
+    # (so a proper total is never double-counted with its own components).
+    nc, nctag = best_of(_DEBT_NC_TOTAL)
     if nc is None:
-        nc = sum_at_latest(_DEBT_NC_PARTS)
-    cur, curtag = src_at_latest(_DEBT_CUR_TOTAL)
+        nc = sum_latest(_DEBT_NC_PARTS)
+    cur, curtag = best_of(_DEBT_CUR_TOTAL)
     if cur is None:
-        cur = sum_at_latest(_DEBT_CUR_PARTS)
+        cur = sum_latest(_DEBT_CUR_PARTS)
     via_caplease = (nctag in _CAPLEASE_INCLUSIVE) or (curtag in _CAPLEASE_INCLUSIVE)
     if nc is None and cur is None:
-        # No current/noncurrent-split tags reported at the latest date. Many issuers (esp. REITs)
-        # instead file only plain COMBINED instrument tags (SeniorNotes / UnsecuredDebt /
-        # SecuredDebt — each already current+noncurrent). Sum those at the latest date BEFORE the
-        # last-resort stale fallback so DLR/FR/JBGS et al. get real debt instead of a false $0.
-        # Either way, the current/noncurrent split is unknown.
-        combined = sum_at_latest(_DEBT_COMBINED_PARTS)
+        # No current/noncurrent-split tags reported. Many issuers (esp. REITs) instead file only
+        # plain COMBINED instrument tags (SeniorNotes / UnsecuredDebt / SecuredDebt — each already
+        # current+noncurrent). Sum those at their shared latest date so DLR/FR/JBGS et al. get
+        # real debt instead of a false $0. Either way, the current/noncurrent split is unknown.
+        combined = sum_latest(_DEBT_COMBINED_PARTS)
         if combined is not None:
             return combined, False, None
-        # nothing from our known tags at the latest date — use the most recent value we do have
+        # nothing from our known tags survived — use the most recent value we do have
         return max(dated.values(), key=lambda ev: ev[0])[1], False, None
     return (nc or 0) + (cur or 0), via_caplease, cur
 
