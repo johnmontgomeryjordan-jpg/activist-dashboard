@@ -247,6 +247,16 @@ OVERLEVERED_ON_NEGATIVE_EQUITY = os.getenv("OVERLEVERED_ON_NEGATIVE_EQUITY", "1"
 # constraint and the over-leverage signal is suppressed. 3.0x sits clear of both sides of the
 # 2026-08-25 FactSet audit: PZZA at 2.25x stays flagged, BBWI at 4.20x drops. See _overlevered().
 COVERAGE_MIN = float(os.getenv("COVERAGE_MIN", "3.0"))
+# Minimum funded-debt/assets a coverage shortfall must clear before it ALONE can call a company
+# over-levered -- see _overlevered(). Below this there's too little debt for "deleveraging" to be
+# a plausible campaign remedy, whatever the coverage ratio says. Confirmed on Baxter (2026-10-07
+# audit): a ~$308M one-time operating loss (mostly an $485M goodwill impairment) took interest
+# coverage deeply negative against just $844M of funded debt -- 4.3% of assets, 0.1x equity, the
+# bottom quartile of its own Health Care peers (it separately, and correctly, also triggers
+# "under-levered" on that same ratio) -- yet coverage alone called it "over-levered... the
+# centerpiece of a campaign," firing both signals on the same balance sheet in the same report.
+# 0.10 sits well under both audited coverage catches (AHCO 44.5%, KSS 46.2%) so neither regresses.
+OVERLEVERED_COVERAGE_MIN_DEBT = float(os.getenv("OVERLEVERED_COVERAGE_MIN_DEBT", "0.10"))
 # Book equity below this share of total assets makes every equity-denominated ratio meaningless
 # -- see _thin_book(). Capri sat at 4.3%; a healthy filer is comfortably north of 20%.
 THIN_BOOK_FRAC = float(os.getenv("THIN_BOOK_FRAC", "0.10"))
@@ -793,10 +803,17 @@ def _overlevered(r):
     # (AHCO by half a point) and would otherwise never fire. Only falls through to those absolute
     # tests when coverage itself can't be computed (no interest-expense data).
     _cov = _interest_coverage(r)
+    fl = _funded_leverage(r)
     if _cov is not None:
         if _cov >= COVERAGE_MIN:
             return False
-        return True
+        # Poor coverage is only a LEVERAGE constraint if there's enough debt for "deleveraging"
+        # to be a plausible remedy -- see OVERLEVERED_COVERAGE_MIN_DEBT. A bad quarter on an
+        # otherwise lightly-levered balance sheet (Baxter: 4.3% funded leverage) isn't a leverage
+        # story; below the floor, fall through to the absolute tests below instead of trusting
+        # coverage alone -- which, for a balance sheet this lightly levered, correctly say no.
+        if fl is not None and fl >= OVERLEVERED_COVERAGE_MIN_DEBT:
+            return True
     if OVERLEVERED_ON_NEGATIVE_EQUITY and _negative_equity(r):
         return True
     raw = r.get("raw") or {}
@@ -810,7 +827,6 @@ def _overlevered(r):
     if (ev_debt is not None and eq and eq > 0 and not _thin_book(r)
             and (ev_debt / eq) >= OVERLEVERED_DE):
         return True
-    fl = _funded_leverage(r)
     return fl is not None and fl >= OVERLEVERED_FLOOR
 
 
@@ -1832,9 +1848,16 @@ def recompute_all():
         _lease_heavy = ((_ol is not None or _fl is not None) and _ta and _ta > 0
                         and ((_ol or 0) + (_fl or 0)) / _ta >= LEASE_HEAVY)
         # Over-leverage: the counterpart to under-levered. Measured on funded debt (ex operating
-        # leases) or negative book equity, so a lease-funded retailer isn't swept in. Mutually
-        # exclusive with underlevered by construction.
-        if _overlevered(r):
+        # leases) or negative book equity, so a lease-funded retailer isn't swept in. Meant to be
+        # mutually exclusive with underlevered "by construction" -- that held until Baxter: a
+        # coverage shortfall from a one-time operating loss fired "overlevered" on a balance sheet
+        # (4.3% funded leverage) that also, correctly, fired "underlevered" against its peers, so
+        # the same report called the same company both too indebted and not indebted enough. The
+        # root cause is fixed in _overlevered() (OVERLEVERED_COVERAGE_MIN_DEBT), but the mutual
+        # exclusivity is now also enforced explicitly here rather than left as an unchecked
+        # assumption in a comment.
+        _ovl = _overlevered(r)
+        if _ovl:
             trig.append("overlevered")
         # Near-term maturity wall: real debt due within a year that cash on hand can't cover and
         # that isn't just a trivial sliver of total borrowing. Independent of _overlevered (a
@@ -1854,7 +1877,8 @@ def recompute_all():
         if (_bb_ratio is not None and _bb_ratio >= BUYBACK_DRAG_MIN
                 and r.get("tsr_3y") is not None and r["tsr_3y"] <= BUYBACK_DRAG_TSR):
             trig.append("buyback_drag")
-        if low("debt_to_assets") and not _is_financial and not _strong_outperformer and not _lease_heavy:
+        if (low("debt_to_assets") and not _is_financial and not _strong_outperformer
+                and not _lease_heavy and not _ovl):
             trig.append("underlevered")
         # Governance red flags (from DEF 14A; only present for parsed names).
         g = gov.get(r["cik"]) or {}

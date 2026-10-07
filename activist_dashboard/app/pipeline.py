@@ -152,7 +152,11 @@ _ASSETS_CURRENT = ["AssetsCurrent"]
 # not 0%). Listed AFTER the more specific funded-debt totals so a company filing both is unaffected.
 _DEBT_TOTAL = ["LongTermDebt", "DebtLongtermAndShorttermCombinedAmount",
                "DebtInstrumentCarryingAmount", "NotesAndLoansPayable"]
-_DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"]
+_DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations",
+                  # Baxter's own custom extension (bax:...) for the same concept -- "long-term
+                  # debt and lease obligation(s), excluding current maturities" -- with no
+                  # us-gaap equivalent filed at all. See _usd()'s custom-namespace fallback.
+                  "LongTermDebtAndLeaseObligationExcludingCurrentMaturities"]
 # COMBINED instrument tags: each already includes BOTH current and noncurrent portions, so they
 # are NOT part of the noncurrent/current split above. Many issuers — especially REITs (Digital
 # Realty tags its ~$16B under plain "SeniorNotes", $432M under "UnsecuredDebt") — file only these
@@ -211,6 +215,18 @@ _DIV_PER_SHARE = ["CommonStockDividendsPerShareDeclared",
 # the filer has abandoned the concept -- a suspension can't be told apart from a dropped tag, so
 # report none rather than a stale "paying" (mirrors _DEBT_STALE_DAYS / _CASH_STALE_DAYS).
 _DIV_STALE_DAYS = 400
+# A quarter with NO dividend often gets no XBRL entry at all rather than an explicit $0 -- some
+# variable-dividend payers skip the fact entirely for an unprofitable quarter instead of filing a
+# zero. Confirmed on Cal-Maine (2026-10-07 audit): its 10-Q states outright "we will not pay a
+# cash dividend... with respect to our first quarter of fiscal 2027" with a $94.5M cumulative
+# loss to recover before the next one -- an explicit suspension, live-confirmed by FactSet's own
+# $0 indicated yield -- yet the declared-dividend series simply has no entry for that quarter (or
+# the one before it): the real gap, verified against SEC XBRL, is 182 days (two skipped quarters).
+# Below _DIV_STALE_DAYS (the "abandoned the concept entirely" threshold) but comfortably past one
+# ordinary ~90-day quarter (with real slack for normal filing lag) and confidently under Cal-
+# Maine's actual 182-day gap, a silence this long for a filer with an established quarterly
+# cadence is itself the suspension signal, not silence to stay neutral on.
+_DIV_SKIP_DAYS = 150
 # Share repurchases (cash-flow statement). Cumulative treasury stock is the wrong measure -- it is
 # decades of history and would light up any long-lived company -- so we sum the trailing few YEARS
 # of actual buyback spend and compare it to what the company is worth today. PZZA: ~$1.1B of
@@ -262,13 +278,27 @@ def _usd(facts, tags, unit="USD"):
     first tag with *any* data froze names like TMDX on a stale 2022 series under an abandoned
     tag. Ties (same latest end-date) fall back to the given preference order.
 
+    Checked under the standard us-gaap taxonomy FIRST; a tag name also falls back to the
+    filer's own custom extension namespace(s) (whatever else `facts['facts']` contains besides
+    'us-gaap'/'dei') when us-gaap doesn't have it. Confirmed on Baxter: its noncurrent long-term
+    debt is tagged bax:LongTermDebtAndLeaseObligationExcludingCurrentMaturities -- a company
+    extension element with no us-gaap equivalent at all, not merely an uncommon standard tag --
+    so every us-gaap candidate in this file's debt lists came back empty for it. A filer that
+    tags a concept BOTH ways is unaffected: us-gaap is tried first per tag and wins outright
+    when present, so a redundant custom duplicate is never preferred over the standard one.
+
     `unit` defaults to "USD" (every existing caller is unaffected); pass "USD/shares" for a
     perShareItemType concept -- e.g. the declared-dividend-per-share tags, which are filed
     under that unit and return an empty series against the default (see _DIV_PER_SHARE)."""
-    g = facts.get("facts", {}).get("us-gaap", {})
+    all_facts = facts.get("facts", {})
+    namespaces = ["us-gaap"] + [ns for ns in all_facts if ns != "us-gaap"]
     best, best_end = [], ""
     for t in tags:
-        node = g.get(t)
+        node = None
+        for ns in namespaces:
+            node = all_facts.get(ns, {}).get(t)
+            if node:
+                break
         if not node:
             continue
         u = node.get("units", {}).get(unit)
@@ -337,31 +367,77 @@ def _instant_dated(facts, tag):
     return rows[0]
 
 
-def _instant_avg(facts, tags, n=4):
-    """Trailing average of the last `n` reported balance-sheet dates for a concept -- same
-    tag-recency selection as _instant()/_usd() (whichever candidate tag's data is most recent
-    wins; that tag's own historical series is used for the average, never mixed with another
-    tag's). Smooths a single seasonal snapshot: Kohl's May cash balance is a holiday-inventory
-    build ($1.73B) against a $674M January fiscal year-end -- a single instant calls a normal
-    working-capital swing "idle capital." A trailing ~12-month average reads that correctly for
-    any company without needing to first decide which businesses are seasonal, and barely moves a
-    company whose balance is already stable quarter to quarter. The trade-off: for a company with
-    a genuine recent step-change (a large debt raise just banked, a big one-time cash outlay), this
-    lags the true current balance until older quarters roll off -- accepted here because the
-    smoothing fixes a confirmed, recurring defect and the lag is a bounded, disclosed cost.
-    Falls back to however many distinct dates ARE available (a young filer, or a recent tag
-    switch) rather than requiring a full `n`; returns None only when there's no data at all."""
+def _instant_trail(facts, tags, n=4):
+    """The last `n` distinct reported balance-sheet dates for a concept, most recent first, as
+    (end, val) pairs -- same tag-recency selection as _instant()/_usd() (whichever candidate
+    tag's data is most recent wins; that tag's own historical series is used throughout, never
+    mixed with another tag's). Shared by _instant_avg() and _cash_level()'s step-change guard so
+    both read off the exact same underlying series."""
     rows = [(e["end"], e["val"]) for e in _usd(facts, tags)
             if e.get("val") is not None and e.get("end")
             and (not e.get("start") or e.get("start") == e.get("end"))]
     if not rows:
-        return None
+        return []
     by_end = {}
     for end, val in rows:
         by_end.setdefault(end, val)
     ends = sorted(by_end.keys(), reverse=True)[:n]
-    vals = [by_end[e] for e in ends]
+    return [(e, by_end[e]) for e in ends]
+
+
+def _instant_avg(facts, tags, n=4):
+    """Trailing average of the last `n` reported balance-sheet dates for a concept. Smooths a
+    single seasonal snapshot: Kohl's May cash balance is a holiday-inventory build ($1.73B)
+    against a $674M January fiscal year-end -- a single instant calls a normal working-capital
+    swing "idle capital." A trailing ~12-month average reads that correctly for any company
+    without needing to first decide which businesses are seasonal, and barely moves a company
+    whose balance is already stable quarter to quarter. The trade-off: for a company with a
+    genuine recent step-change (a large debt raise just banked, a big one-time cash outlay), this
+    lags the true current balance until older quarters roll off -- accepted here because the
+    smoothing fixes a confirmed, recurring defect and the lag is a bounded, disclosed cost (see
+    _cash_level() for the guard that bounds it further for cash specifically).
+    Falls back to however many distinct dates ARE available (a young filer, or a recent tag
+    switch) rather than requiring a full `n`; returns None only when there's no data at all."""
+    trail = _instant_trail(facts, tags, n)
+    if not trail:
+        return None
+    vals = [v for _, v in trail]
     return sum(vals) / len(vals)
+
+
+# _cash_level()'s step-change guard: how closely the two most recent quarters must agree to count
+# as a confirmed new level, and how far that level must then sit from the stale trailing average
+# before it's trusted over it. See _cash_level() docstring for the O-I Glass / Kohl's cases these
+# were picked to separate.
+_CASH_STEP_CLOSE = 0.20
+_CASH_STEP_GAP = 0.30
+
+
+def _cash_level(facts):
+    """Cash & equivalents for the liquidity read. Normally the trailing 4-quarter average (see
+    _instant_avg) -- but that average itself goes stale after a genuine, sustained level-shift,
+    not just a seasonal blip. Confirmed on O-I Glass: an $873M goodwill impairment in Q2 2026
+    (plus continued debt paydown) took cash from $759M to $317M to $339M over two quarters, while
+    the 4-quarter average still read ~$493M -- overstating current liquidity by 46% and calling a
+    shrinking cash pile "cash-heavy... idle capital an activist would push to return."
+
+    Distinguished from a one-quarter seasonal spike -- which only ONE quarter confirms -- by
+    requiring the two MOST RECENT quarters to agree with each other (within _CASH_STEP_CLOSE) AND
+    both sit meaningfully away from the older trailing average (at least _CASH_STEP_GAP). Kohl's
+    May spike fails this: its prior quarter (the January fiscal year-end, $674M) sits nowhere near
+    the May peak ($1.73B), so nothing confirms it and the smoothed average is kept, exactly as
+    before. A company whose balance is already stable also leaves the average untouched, since the
+    latest instant is then already close to it and the gap test doesn't clear."""
+    trail = _instant_trail(facts, _CASH, 4)
+    if not trail:
+        return None
+    avg = sum(v for _, v in trail) / len(trail)
+    if len(trail) < 2 or avg <= 0:
+        return avg
+    latest, prior = trail[0][1], trail[1][1]
+    close = abs(latest - prior) <= _CASH_STEP_CLOSE * max(abs(latest), abs(prior), 1)
+    gap = abs(avg - latest) >= _CASH_STEP_GAP * avg
+    return latest if (close and gap) else avg
 
 
 def _latest_instant_end(facts, tags):
@@ -374,10 +450,12 @@ def _latest_instant_end(facts, tags):
     return max(rows) if rows else None
 
 
-# *AndCapitalLeaseObligations tags already bundle finance (capital) leases into the funded-debt
-# figure, so when the funded total comes from one of these we must NOT add finance leases again.
+# *AndCapitalLeaseObligations tags (and Baxter's custom *AndLeaseObligation... equivalent)
+# already bundle finance (capital) leases into the funded-debt figure, so when the funded total
+# comes from one of these we must NOT add finance leases again.
 _CAPLEASE_INCLUSIVE = ("LongTermDebtAndCapitalLeaseObligations",
-                       "LongTermDebtAndCapitalLeaseObligationsCurrent")
+                       "LongTermDebtAndCapitalLeaseObligationsCurrent",
+                       "LongTermDebtAndLeaseObligationExcludingCurrentMaturities")
 
 
 def _funded_debt(facts):
@@ -590,9 +668,32 @@ def _dividend_state(facts):
     of the preceding four.
 
     status is one of: 'paying', 'cut', 'suspended', or None when there is not enough history.
-    Quarterly entries only (55-115 days) so an annual roll-up can't be mistaken for a quarter."""
-    q = [e for e in _flows(facts, _DIV_PER_SHARE, unit="USD/shares")
-         if 55 <= e["days"] <= 115 and e.get("end")]
+    Quarterly entries only (55-115 days) so an annual roll-up can't be mistaken for a quarter.
+
+    Each candidate tag in _DIV_PER_SHARE is evaluated SEPARATELY here, picking whichever has the
+    most recent QUARTERLY entry -- not the generic _flows()/_usd() "whichever tag's entry of ANY
+    duration is most recent" selection, which the other callers of _usd() correctly rely on.
+    A dividend concept is routinely filed BOTH quarterly (10-Q) and as an annual rollup (10-K)
+    under the same tag, and a company can let one tag's quarterly coverage lapse while its annual
+    rollup keeps going -- whose end date can still out-date another tag's still-current quarterly
+    entries. Confirmed on Cal-Maine: CommonStockDividendsPerShareDeclared's quarterly coverage
+    stopped in 2017 (only annual rollups since), but its FY2026 annual entry (2026-05-30) is
+    chronologically newer than CommonStockDividendsPerShareCashPaid's latest QUARTERLY entry
+    (2026-02-28) -- so the generic any-duration selection picked Declared, whose relevant
+    (quarterly) data is a decade stale, over CashPaid, which has the live, current picture
+    (including two silently skipped quarters an explicit dividend-suspension 10-Q disclosure
+    confirms). That read as over a DECADE of silence -- comfortably past even _DIV_STALE_DAYS,
+    so it fell back to "unknown" -- instead of the much more specific truth: a live quarterly
+    payer that had just gone quiet for 182 days (see _DIV_SKIP_DAYS below)."""
+    q = []
+    _best_end = ""
+    for _tag in _DIV_PER_SHARE:
+        _rows = [e for e in _flows(facts, [_tag], unit="USD/shares")
+                 if 55 <= e["days"] <= 115 and e.get("end")]
+        if _rows:
+            _mx = max(e["end"] for e in _rows)
+            if _mx > _best_end:
+                q, _best_end = _rows, _mx
     # Dedup by period end: the SAME quarter is re-filed across later 10-Qs/10-Ks, and an
     # undeduped duplicate would occupy two slots in the prior-quarter run-rate window below.
     # A dict keyed on end-date keeps whichever occurrence is LAST in the underlying facts
@@ -605,11 +706,16 @@ def _dividend_state(facts):
     # company's CURRENT balance sheet (the Assets tag's date). A filer that has abandoned this
     # concept looks identical to one that suspended -- stay silent rather than assert either.
     _bs_end, _ = _instant_dated(facts, _ASSETS[0])
-    if _bs_end:
-        _gap = _ddays(q[0]["end"], _bs_end)
-        if _gap is not None and _gap > _DIV_STALE_DAYS:
-            return None, None, None
+    _gap = _ddays(q[0]["end"], _bs_end) if _bs_end else None
+    if _gap is not None and _gap > _DIV_STALE_DAYS:
+        return None, None, None
     latest = q[0]["val"]
+    # A gap well past one ordinary quarter (but short of _DIV_STALE_DAYS) means a filer with an
+    # established quarterly cadence has gone quiet rather than declared and not been tagged --
+    # see _DIV_SKIP_DAYS. `latest` is still the last quarter that WAS paid, kept here for display,
+    # but the status itself is the skip, not whatever that old positive value would imply.
+    if _gap is not None and _gap > _DIV_SKIP_DAYS:
+        return latest, None, "suspended"
     prior = [e["val"] for e in q[1:5] if e["val"] is not None]
     if not prior or latest is None:
         return latest, None, None
@@ -688,9 +794,9 @@ def _extract(facts):
 
     assets = _instant(facts, _ASSETS)
     equity = _instant(facts, _EQUITY)
-    # Trailing 4-quarter average, not the single latest instant -- see _instant_avg() for why
-    # (a seasonal retailer's peak-inventory-buildup cash balance was reading as "idle capital").
-    cash_c = _instant_avg(facts, _CASH, n=4)
+    # Trailing 4-quarter average, not the single latest instant -- see _cash_level() for why,
+    # and for the guard that drops the average when a genuine step-change has made it stale.
+    cash_c = _cash_level(facts)
     # Staleness guard: if even the freshest candidate cash tag trails the current balance sheet
     # (the Assets tag) by more than _CASH_STALE_DAYS, every candidate has been abandoned -- treat
     # cash as unknown rather than surface a frozen figure as current (see _CASH comment above).
