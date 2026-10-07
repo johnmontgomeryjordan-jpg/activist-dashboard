@@ -22,7 +22,7 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 # Bump when _SYSTEM / _prompt changes so cached re-voicings are invalidated and every name
 # re-voices under the new rules (the hash keys on draft content, not the prompt, so without
 # this a prompt change would only reach names whose facts also happened to change).
-_PROMPT_VERSION = 4
+_PROMPT_VERSION = 5
 
 _SYSTEM = (
     "You are a senior analyst at a shareholder-activism DEFENSE advisory firm. You turn an "
@@ -52,6 +52,11 @@ _SYSTEM = (
     "- Describe an executive or leadership departure neutrally (e.g. 'a recent leadership "
     "change' or 'a recent C-suite transition'); never call it a 'vacuum', a 'void', or "
     "something to 'exploit'.\n"
+    "- NEVER rephrase a return-differential given in 'points' or 'pts' (e.g. 'underperformed "
+    "by 110 points') as 'basis points'. They are not interchangeable — a basis point is "
+    "1/100th of a percentage point, so 'basis points' understates the real figure 100x and "
+    "changes a large, material gap into a trivial one. Keep the draft's own unit: 'points' or "
+    "'percentage points', never 'basis points', for a stock-return or index-relative figure.\n"
     "- Be concrete and tight. Plain professional English.\n"
     "- Return STRICT JSON only, no preamble, no code fences."
 )
