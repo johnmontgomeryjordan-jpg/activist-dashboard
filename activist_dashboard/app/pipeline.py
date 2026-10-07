@@ -152,7 +152,11 @@ _ASSETS_CURRENT = ["AssetsCurrent"]
 # not 0%). Listed AFTER the more specific funded-debt totals so a company filing both is unaffected.
 _DEBT_TOTAL = ["LongTermDebt", "DebtLongtermAndShorttermCombinedAmount",
                "DebtInstrumentCarryingAmount", "NotesAndLoansPayable"]
-_DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"]
+_DEBT_NC_TOTAL = ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations",
+                  # Baxter's own custom extension (bax:...) for the same concept -- "long-term
+                  # debt and lease obligation(s), excluding current maturities" -- with no
+                  # us-gaap equivalent filed at all. See _usd()'s custom-namespace fallback.
+                  "LongTermDebtAndLeaseObligationExcludingCurrentMaturities"]
 # COMBINED instrument tags: each already includes BOTH current and noncurrent portions, so they
 # are NOT part of the noncurrent/current split above. Many issuers — especially REITs (Digital
 # Realty tags its ~$16B under plain "SeniorNotes", $432M under "UnsecuredDebt") — file only these
@@ -262,13 +266,27 @@ def _usd(facts, tags, unit="USD"):
     first tag with *any* data froze names like TMDX on a stale 2022 series under an abandoned
     tag. Ties (same latest end-date) fall back to the given preference order.
 
+    Checked under the standard us-gaap taxonomy FIRST; a tag name also falls back to the
+    filer's own custom extension namespace(s) (whatever else `facts['facts']` contains besides
+    'us-gaap'/'dei') when us-gaap doesn't have it. Confirmed on Baxter: its noncurrent long-term
+    debt is tagged bax:LongTermDebtAndLeaseObligationExcludingCurrentMaturities -- a company
+    extension element with no us-gaap equivalent at all, not merely an uncommon standard tag --
+    so every us-gaap candidate in this file's debt lists came back empty for it. A filer that
+    tags a concept BOTH ways is unaffected: us-gaap is tried first per tag and wins outright
+    when present, so a redundant custom duplicate is never preferred over the standard one.
+
     `unit` defaults to "USD" (every existing caller is unaffected); pass "USD/shares" for a
     perShareItemType concept -- e.g. the declared-dividend-per-share tags, which are filed
     under that unit and return an empty series against the default (see _DIV_PER_SHARE)."""
-    g = facts.get("facts", {}).get("us-gaap", {})
+    all_facts = facts.get("facts", {})
+    namespaces = ["us-gaap"] + [ns for ns in all_facts if ns != "us-gaap"]
     best, best_end = [], ""
     for t in tags:
-        node = g.get(t)
+        node = None
+        for ns in namespaces:
+            node = all_facts.get(ns, {}).get(t)
+            if node:
+                break
         if not node:
             continue
         u = node.get("units", {}).get(unit)
@@ -420,10 +438,12 @@ def _latest_instant_end(facts, tags):
     return max(rows) if rows else None
 
 
-# *AndCapitalLeaseObligations tags already bundle finance (capital) leases into the funded-debt
-# figure, so when the funded total comes from one of these we must NOT add finance leases again.
+# *AndCapitalLeaseObligations tags (and Baxter's custom *AndLeaseObligation... equivalent)
+# already bundle finance (capital) leases into the funded-debt figure, so when the funded total
+# comes from one of these we must NOT add finance leases again.
 _CAPLEASE_INCLUSIVE = ("LongTermDebtAndCapitalLeaseObligations",
-                       "LongTermDebtAndCapitalLeaseObligationsCurrent")
+                       "LongTermDebtAndCapitalLeaseObligationsCurrent",
+                       "LongTermDebtAndLeaseObligationExcludingCurrentMaturities")
 
 
 def _funded_debt(facts):
